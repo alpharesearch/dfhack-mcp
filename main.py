@@ -13,8 +13,16 @@ Known DFHack RPC quirks (learned the hard way, encoded into the tools below):
   row-major: index = (x - map_x)*16 + (y - map_y), i.e. x = map_x + i%16,
   y = map_y + i//16. Verified against in-game designations and terrain.
 * RemoteFortressReader.SendDigCommand applies designations with x/y TRANSPOSED
-  (send (x,y) -> lands at (y,x); verified vs. in-game designations). send_dig_command
-  compensates by swapping them back.
+  for many layers (send (x,y) -> lands at (y,x)); send_dig_command compensates by
+  swapping them back, verified at the surface (stairwell) and tunnel floor.
+  The compensation is NOT uniform: designation acceptance is z-level dependent
+  (solid/undiscovered tiles silently drop), and some layers shift z by -1.
+  ALWAYS verify with get_block_list after sending, and keep dig-now bounding
+  boxes matched to where designations LANDED.
+* Designation acceptance appears tied to tile discovery and diggability rules
+  (floor tiles, known tile below). Room-scale carving through this RPC is
+  unreliable - designate big areas in-game (d key) and let miners work, or use
+  dig-now with verified designations for surgical cuts.
 * Game elevation = RPC z - 128 on this save (see get_map_info game_z_offset).
 * RemoteFortressReader only reports/designates DISCOVERED tiles; fog areas read
   empty. Run the DFHack `reveal` command first for map work in dark areas.
@@ -264,7 +272,7 @@ async def set_pause_state(request: Request):
 
 @app.post("/send-dig-command", operation_id="send_dig_command")
 async def send_dig_command(request: Request):
-    """Designate digging. designation: one of NO_DIG, DEFAULT_DIG, UP_DOWN_STAIR_DIG, CHANNEL_DIG, RAMP_DIG, DOWN_STAIR_DIG, UP_STAIR_DIG; locations: list of [x,y,z] (RPC z; RPC z = game elevation + 128). Only tiles the fort has DISCOVERED can be designated - run 'reveal' first for dark areas. No reply text: verify via get_block_list. Parameters: designation[str], locations[list[[int,int,int]]]"""
+    """Designate digging. designation: one of NO_DIG, DEFAULT_DIG, UP_DOWN_STAIR_DIG, CHANNEL_DIG, RAMP_DIG, DOWN_STAIR_DIG, UP_STAIR_DIG; locations: list of [x,y,z] (RPC z; RPC z = game elevation + 128). Only DISCOVERED, diggable tiles accept designations (run 'reveal' first for dark areas) and acceptance is z-dependent; NO replies are sent: ALWAYS verify with get_block_list (designations read at their LANDED coords, which may be x/y-transposed) before running dig-now with matching bounds."""
     body = await request.json()
     designation = body["designation"].upper()
     if designation not in DIG_DESIGNATIONS:
