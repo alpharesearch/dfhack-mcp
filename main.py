@@ -277,12 +277,28 @@ async def get_reports():
 async def copy_screen():
     """Capture the current game screen as ASCII text (rows joined) - shows menus, designation UI, announcements"""
     sc = await CopyScreen()
-    rows = []
     w, h = sc.width, sc.height
     tiles = list(sc.tiles)
+    def cp437(c):
+        if 32 <= c < 127:
+            return chr(c)
+        try:
+            return bytes([c]).decode("cp437")
+        except Exception:
+            return "?"
+    # ScreenCapture tiles are COLUMN-major (index = x*height + y).
+    # Map/graphics cells are duplicated in pairs; collapse consecutive repeats.
+    rows = []
     for y in range(h):
-        row = ''.join(chr(tiles[y*w+x].character) if tiles[y*w+x].character else ' ' for x in range(w))
-        rows.append(row.rstrip())
+        out = []
+        last = None
+        for x in range(w):
+            c = tiles[x*h+y].character
+            ch = cp437(c) if c else ' '
+            if ch != last:
+                out.append(ch)
+            last = ch
+        rows.append(''.join(out).rstrip())
     return {"width": w, "height": h, "rows": rows}
 
 @app.post("/pass-keyboard-event", operation_id="pass_keyboard_event")
