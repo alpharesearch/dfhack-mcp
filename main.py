@@ -35,6 +35,12 @@ Known DFHack RPC quirks (learned the hard way, encoded into the tools below):
   accepts stairs. The fort's surface->tunnel link is a down-stair shaft at
   x54-55,y118 (elev 39 -> 38 -> tunnel floor elev 37); tunnel/rooms are connected
   (ramps y116 -> room y117).
+* STAIR SHAFTS REQUIRE MULTI-Z DESIGNATION: designating the top tile alone digs a
+  1-level pit. Send DOWN_STAIR_DIG at every z the shaft passes through (one
+  designate+dig-now cycle per level; stair tiles at z carve their floor from z-1).
+  Proven: shaft from room floor z165 now descends stairs to z160 (elev 32).
+  RPC stair designations at room/tunnel bands land TRANSPOSED (send (20..22,117..119)
+  -> lands (117..119,20..22) at same z) - dig-now the landed box.
 * Designation acceptance appears tied to tile discovery and diggability rules
   (floor tiles, known tile below). Room-scale carving through this RPC is
   unreliable - designate big areas in-game (d key) and let miners work, or use
