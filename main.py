@@ -23,10 +23,18 @@ Known DFHack RPC quirks (learned the hard way, encoded into the tools below):
   <gamedir>/dfhack-config/blueprints/, apply with
   run_command quickfort ["run","<file>.csv","-c","<x,y,z>"].
   Designations land at cursor (x, y+3, z) on this map - calibrate cursor by -3 y.
+  (Offset is anchor-dependent: some anchors land y+1 - ALWAYS verify landing with
+  get_block_list before dig-now.)
   CSV rules: '#name <bp>' in cell A1 (description must avoid commas), one key per
   cell comma-separated. Dig keys: d=default, c=channel, i=up-down stairs.
   Verify via get_block_list, then dig-now the landed bbox. Ramp-top tiles refuse
   designation (game rule) - route doorways through floor tiles.
+  This build's quickfort supports the DIG mode only (no stockpile mode registered).
+  Surface tiles west of ~x56 refuse ALL designation vectors (RPC and quickfort) -
+  they are beyond the designable border; the dwarves-side band (~x50-55, y114-126)
+  accepts stairs. The fort's surface->tunnel link is a down-stair shaft at
+  x54-55,y118 (elev 39 -> 38 -> tunnel floor elev 37); tunnel/rooms are connected
+  (ramps y116 -> room y117).
 * Designation acceptance appears tied to tile discovery and diggability rules
   (floor tiles, known tile below). Room-scale carving through this RPC is
   unreliable - designate big areas in-game (d key) and let miners work, or use
