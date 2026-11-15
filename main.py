@@ -19,6 +19,14 @@ Known DFHack RPC quirks (learned the hard way, encoded into the tools below):
   (solid/undiscovered tiles silently drop), and some layers shift z by -1.
   ALWAYS verify with get_block_list after sending, and keep dig-now bounding
   boxes matched to where designations LANDED.
+* RELIABLE BULK DESIGNATION: write quickfort blueprint CSVs to
+  <gamedir>/dfhack-config/blueprints/, apply with
+  run_command quickfort ["run","<file>.csv","-c","<x,y,z>"].
+  Designations land at cursor (x, y+3, z) on this map - calibrate cursor by -3 y.
+  CSV rules: '#name <bp>' in cell A1 (description must avoid commas), one key per
+  cell comma-separated. Dig keys: d=default, c=channel, i=up-down stairs.
+  Verify via get_block_list, then dig-now the landed bbox. Ramp-top tiles refuse
+  designation (game rule) - route doorways through floor tiles.
 * Designation acceptance appears tied to tile discovery and diggability rules
   (floor tiles, known tile below). Room-scale carving through this RPC is
   unreliable - designate big areas in-game (d key) and let miners work, or use
@@ -316,6 +324,26 @@ async def pass_keyboard_event(request: Request):
         await PassKeyboardEvent(input = KeyboardEvent(type = KEY_TYPE_UP, which = 0, state = 0,
             scancode = 0, sym = sym, mod = 0, unicode = sym))
     return {"key": key, "sym": sym, "sent": repeat, "success": True}
+
+import os
+BLUEPRINT_DIR = os.getenv("DFHACK_BLUEPRINT_DIR", "")
+
+@app.post("/apply-blueprint", operation_id="apply_blueprint")
+async def apply_blueprint(request: Request):
+    """Write a quickfort dig blueprint and apply it (the reliable bulk-designation path). grid: list of rows, each a list of single dig keys (d=default, c=channel, i=up-down stairs, x=up, u=down...); cursor: [x,y,z] where the TOP-LEFT cell should land - this tool pre-compensates the known +3 y offset. Set DFHACK_BLUEPRINT_DIR to the game's dfhack-config/blueprints path to enable. Returns quickfort stats; verify with get_block_list then run dig-now on the landed box."""
+    body = await request.json()
+    if not BLUEPRINT_DIR:
+        return {"error": "DFHACK_BLUEPRINT_DIR not configured; set it to <gamedir>/dfhack-config/blueprints"}
+    name = str(body["name"]).replace(" ", "_")
+    grid = body["grid"]
+    cur = body["cursor"]
+    rows = ["#name " + name] + [",".join(str(c) for c in r) for r in grid]
+    path = os.path.join(BLUEPRINT_DIR, name + ".csv")
+    with open(path, "w") as f:
+        f.write("\n".join(rows) + "\n")
+    out = await RunCommand(input = CoreRunCommandRequest(command = "quickfort",
+        arguments = ["run", name + ".csv", "-c", f"{int(cur[0])},{int(cur[1])-3},{int(cur[2])}"]))
+    return {"blueprint": path, "target_top_left": cur, "success": True}
 
 @app.get("/get-pause-state", operation_id="get_pause_state")
 async def get_pause_state():
