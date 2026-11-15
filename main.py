@@ -41,6 +41,14 @@ Known DFHack RPC quirks (learned the hard way, encoded into the tools below):
   Proven: shaft from room floor z165 now descends stairs to z160 (elev 32).
   RPC stair designations at room/tunnel bands land TRANSPOSED (send (20..22,117..119)
   -> lands (117..119,20..22) at same z) - dig-now the landed box.
+ * STAIRS ON CARVED VOID: once the material is gone you cannot DESIGNATE stairs
+   (no dig target). Build them instead: quickfort build-mode blueprint
+   ('#build ...' modeline, cells b(stairs/up-down)) applied on the floor tiles,
+   then run_command build-now to finish instantly. Proven: stair line built along
+   the elev-34 tunnel at y21 (18 buildings via 9 stepped blueprint applies).
+   Build applies land at cursor y+1..y+3; a 1-wide floor band yields 1 tile per
+   apply - step the cursor along the band.
+   (User lesson, wiki: https://dwarffortresswiki.org/index.php/Building)
 * Designation acceptance appears tied to tile discovery and diggability rules
   (floor tiles, known tile below). Room-scale carving through this RPC is
   unreliable - designate big areas in-game (d key) and let miners work, or use
