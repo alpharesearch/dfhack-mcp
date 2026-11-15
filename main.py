@@ -35,6 +35,10 @@ Known DFHack RPC quirks (learned the hard way, encoded into the tools below):
 * CoreProtocol RunLua takes module+function, NOT a code string. The DFHack `lua`
   command also cannot eval code. No arbitrary Lua eval over RPC.
 * CoreTextNotification carries `fragments` (CoreTextFragment.text), not `.text`.
+* RemoteFortressReader.PassKeyboardEvent injects SDL1.2 key events (type 700/701,
+  sym = ascii/SDL1 key code) - this can drive the real game UI, e.g. toggle the
+  keyboard cursor (`toggle-kbd-cursor`), move it with arrows, and press `d` to
+  designate like a player. Verify cursor position via get_view_info.
 """
 
 from contextlib import asynccontextmanager
@@ -44,11 +48,24 @@ from dfhack_client_python.dfhack_remote import (connect, close, ensure_connectio
                                                 connection_state, DFHackTransportError)
 from dfhack_client_python.dfhack import (GetVersion, GetDFVersion, GetUnitList, GetWorldInfo,
 GetViewInfo, ListUnits, RunCommand, GetMapInfo, GetBlockList, GetTiletypeList, GetReports,
-GetPauseState, SetPauseState, SendDigCommand)
+GetPauseState, SetPauseState, SendDigCommand, PassKeyboardEvent, CopyScreen)
 from dfhack_client_python.py_export.BasicApi_pb2 import ListUnitsIn, GetWorldInfoOut
 from dfhack_client_python.py_export.CoreProtocol_pb2 import CoreRunCommandRequest
 from dfhack_client_python.py_export.RemoteFortressReader_pb2 import (BlockRequest, DigCommand,
-Coord, SingleBool)
+Coord, SingleBool, KeyboardEvent)
+
+# SDL1.2 key codes (DF runs on SDL1): KeyboardEvent mirrors SDL_Event.key
+# (type, which, state, scancode, sym, mod, unicode). scancode is unused by SDL1.
+KEY_TYPE_DOWN, KEY_TYPE_UP = 700, 701
+SDL1_SYM = {
+    "up": 273, "down": 274, "right": 275, "left": 276,
+    "enter": 13, "return": 13, "escape": 27, "backspace": 8, "tab": 9, "space": 32,
+    "pageup": 315, "pagedown": 316, "home": 312, "end": 317,
+}
+for i, c in enumerate("abcdefghijklmnopqrstuvwxyz"):
+    SDL1_SYM[c] = 97 + i     # lowercase ascii; uppercase keys use "A" -> 65
+for i in range(10):
+    SDL1_SYM[str(i)] = 48 + i
 
 # RemoteFortressReader DigDesignation enum (proto): name -> number
 DIG_DESIGNATIONS = {v.name: v.number for v in
@@ -255,6 +272,34 @@ async def get_reports():
             "repeatCount": int(r.repeat_count)
         })
     return {"reportCount": len(reports), "reports": reports[-100:]}
+
+@app.get("/copy-screen", operation_id="copy_screen")
+async def copy_screen():
+    """Capture the current game screen as ASCII text (rows joined) - shows menus, designation UI, announcements"""
+    sc = await CopyScreen()
+    rows = []
+    w, h = sc.width, sc.height
+    tiles = list(sc.tiles)
+    for y in range(h):
+        row = ''.join(chr(tiles[y*w+x].character) if tiles[y*w+x].character else ' ' for x in range(w))
+        rows.append(row.rstrip())
+    return {"width": w, "height": h, "rows": rows}
+
+@app.post("/pass-keyboard-event", operation_id="pass_keyboard_event")
+async def pass_keyboard_event(request: Request):
+    """Inject a key press into the game - drives the real UI (menus, d-designation with the keyboard cursor). Parameters: key[str] (up/down/left/right/enter/escape/pageup/pagedown/home/end/tab/space/backspace/a-z/0-9), repeat[int] (optional, default 1), hold[int] (optional, send N presses without releases)"""
+    body = await request.json()
+    key = str(body["key"]).lower()
+    if key not in SDL1_SYM:
+        return {"error": f"unknown key '{key}'", "known": sorted(SDL1_SYM)}
+    sym = SDL1_SYM[key]
+    repeat = int(body.get("repeat", 1))
+    for _ in range(max(1, min(repeat, 500))):
+        await PassKeyboardEvent(input = KeyboardEvent(type = KEY_TYPE_DOWN, which = 0, state = 1,
+            scancode = 0, sym = sym, mod = 0, unicode = sym))
+        await PassKeyboardEvent(input = KeyboardEvent(type = KEY_TYPE_UP, which = 0, state = 0,
+            scancode = 0, sym = sym, mod = 0, unicode = sym))
+    return {"key": key, "sym": sym, "sent": repeat, "success": True}
 
 @app.get("/get-pause-state", operation_id="get_pause_state")
 async def get_pause_state():
