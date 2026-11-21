@@ -1315,7 +1315,13 @@ class WorldModel:
         bld: dict = {}
         items: dict = {}
         des: dict = {}
+        want_z = elev + GAME_Z_OFFSET
         for b in blocks:
+            # The block window is INCLUSIVE, so it hands us the level above as well - and a
+            # survey that mixes levels reports the floor above's designations as this one's
+            # (measured: in-game 35 claimed 77 designations that all belong to 36).
+            if int(b.map_z) != want_z:
+                continue
             for bb in b.buildings:
                 for xx in range(bb.pos_x_min, bb.pos_x_max + 1):
                     for yy in range(bb.pos_y_min, bb.pos_y_max + 1):
