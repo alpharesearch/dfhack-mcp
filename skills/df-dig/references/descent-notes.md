@@ -267,3 +267,46 @@ My first plans used 1-tile walls - the player's verdict was right: **not enough 
 - Reuse of space: when re-spacing, **NO_DIG the tiles you are giving up** (272 thin-walled room
   tiles cleared, 1,020 grid tiles returned to wall) - a designation you mean to abandon is a
   job you are making dwarves do.
+
+## 16. Plan in Z: one district per level, on the strata map
+A shaft is not an inconvenience, it is the spine of the fort. Order per **elevation**, chosen
+by what the strata allow (measured on this world, in-game numbers):
+Strata table for this world: [references/descent-notes.md](references/descent-notes.md)
+
+Per level: `4x4 landing` on the stair column -> `1-wide hall` -> `4x4 rooms` with 1-tile
+openings and 2-tile walls. A level without a landing is rock with a hole in it.
+Rules:
+- The stairwell **head** is designated per level with `UP_DOWN_STAIR_DIG`; a level above the
+  current top needs its own stair head (the farm level at 37 was opened that way).
+- Gates per level, not per plan: `hazards` + `depth-profile` + `survey` on each elevation
+  before ordering it. The same x/y box can be legal at 32 and fatal at 34.
+- Watch the stack with `scripts/dig_levels.py` (per-level walls/fog/floor/pend); levels
+  complete in whatever order the crew reaches them.
+
+## 17. Walls are the design, not the leftover
+2 tiles minimum between room and hall and between rooms; pitch >= 6 (4-tall rooms + 2 wall rows); 2 wall columns between bands; openings 1 tile **through the whole wall thickness** with a door; **diagonal contact is a connection** (dwarves, water, vermin, miasma, ambush) so separation must be corner-clean; count open area, not rooms; NO_DIG tiles you abandon. Full rules and measurements: [references/descent-notes.md](references/descent-notes.md)
+
+## 18. A wagon road follows the surface - the hill *is* the road
+Wagons refuse stairs, so a depot needs a 3-wide ramped route to the map edge. My first plan
+tunnelled a corridor down through in-game 37/37 - the player's verdict: *not how DF works; a few
+ramps outside and the hill connects to the plain that connects to the map edge.* The measured
+surface profile east of the depot (in-game 38, y=120) says why:
+
+Measured profile: the hill steps 38 -> 37 -> 36 east of the depot (references has it).
+
+
+Method and the measured profile: [references/descent-notes.md](references/descent-notes.md).
+
+## 19. Dig needs material; a path in the air is BUILT - and both are allowed
+The player's rule: **you can dig a path, build a path, or use both at once**, and
+**dig only works where there is material to remove**. My `RAMP_DIG` designations at the x68
+and x73 steps were cancelled by the game because those tiles are `OpenSpace` - there was
+nothing to dig. Per tile, the decision is:
+
+| Tile at the target level | Action |
+|---|---|
+| wall / stone / soil (material) | **dig**: `DEFAULT_DIG`, `RAMP_DIG` to carve a ramp through it, `*_STAIR_DIG` for a shaft |
+| open air, no material | **build**: `place_building(building="Ramp"/..., material:"log"/"block"/"boulder")` - a construction queued for a builder. Ramps build **on floors**: a ramp in mid-air answers `construct: nil` |
+| floor / existing ramp / stairs | **nothing** - and never designate over it |
+
+Measured payoff on this fort: the wagon road needed **zero digging** - the hill already carries a 3-wide ramp chain, proven by `/wagon-path` (1,989 tiles, reaches x=191). Detail in references.
