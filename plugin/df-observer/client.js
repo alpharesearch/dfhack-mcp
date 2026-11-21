@@ -163,6 +163,10 @@ window.__ModuleLoader__.load({
         // Ack uses (`/df-panel`): the briefing wire is ledger-first and cannot
         // carry boxes/piles/rungs on top of a 30-row ledger at the Config cap.
         const [extra, setExtra] = React.useState(null)
+        // Provenance, visible: which data path the page is showing. Measured: the
+        // command rows appear, so the command runs - if the sections stay empty the
+        // merge is the failure, and that must be readable, not silent.
+        const [pull, setPull] = React.useState({ ok: 0, fail: 0, tick: null, note: null })
         React.useEffect(() => {
           if (!asPage || !sessionId) return undefined
           let stop = false
@@ -178,9 +182,13 @@ window.__ModuleLoader__.load({
               const end = String(raw).lastIndexOf('}')
               if (start < 0 || end <= start) return
               const j = JSON.parse(String(raw).slice(start, end + 1))
-              if (!stop && j && j.tick != null) setExtra(j)
-            } catch {
-              // the folded wire keeps the panel alive - no alert, no crash
+              if (stop || j?.tick == null) return
+              setExtra(j)
+              setPull((s) => ({ ok: s.ok + 1, fail: s.fail, tick: j.tick, note: null }))
+            } catch (e) {
+              // the folded wire keeps the panel alive - no alert, no crash, and the
+              // reason stays on screen
+              if (!stop) setPull((s) => ({ ok: s.ok, fail: s.fail + 1, tick: s.tick, note: String(e?.message ?? e).slice(0, 60) }))
             }
           }
           pull()
@@ -242,6 +250,10 @@ window.__ModuleLoader__.load({
                 style: { ...S.rung, background: r.done ? DOT.run : DOT.pause },
                 title: r.title,
               })))),
+          asPage ? h('div', { style: S.note },
+            pull.ok
+              ? `panel data: /df-panel pull #${pull.ok}${pull.tick != null ? ` (model tick ${pull.tick})` : ''}`
+              : `panel data: wire only${pull.fail ? ` - /df-panel pull failed (${pull.note ?? 'no JSON in result'})` : ' - first pull pending'}`) : null,
           open ? h('div', { style: S.body },
             snap.next ? h('div', { style: S.sec },
               h('div', { style: S.secTitle }, t('ladder.next')),

@@ -678,6 +678,14 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
   return 'designation summary survives every lean level, under 260 chars'
 })
 
+test('the page states which data path it is showing (pull vs wire)', () => {
+  const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
+  assert.match(client, /panel data: \/df-panel pull #/, 'a successful pull is named with its count')
+  assert.match(client, /panel data: wire only/, 'and so is the fallback')
+  assert.match(client, /pull failed \(\$\{pull\.note/, 'with the reason, not silence')
+  return 'panel provenance is on screen'
+})
+
 test('panel labels resolve from the dictionary (no raw key strings on screen)', () => {
   const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
   const en = client.slice(client.indexOf('const UI_EN = {'), client.indexOf('const UI_ZH = {'))
