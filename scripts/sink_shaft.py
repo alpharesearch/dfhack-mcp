@@ -60,6 +60,9 @@ def main():
     ap.add_argument("--from", dest="from_e", type=int, required=True)
     ap.add_argument("--to", dest="to_e", type=int, required=True)
     ap.add_argument("--width", type=int, default=2, help="stair tiles along x")
+    ap.add_argument("--depth", type=int, default=2,
+                    help="stair tiles along y - a MAIN staircase is 2x2 (or 3x3): a 1-wide "
+                         "stair is where a dwarf hauling a barrel, a log or a block stops the fort")
     ap.add_argument("--every", type=int, default=15)
     ap.add_argument("--per-level", type=int, default=1200)
     ap.add_argument("--through-damp", action="store_true",
@@ -71,9 +74,10 @@ def main():
 
     damp_levels = []
     for elev in range(a.from_e, a.to_e - 1, -1):
-        tiles = [[a.x + i, a.y, elev + Z_OFF] for i in range(a.width)]
+        # Stair footprint = width x depth on every level (main stairs 2x2, never 1-wide).
+        tiles = [[a.x + i, a.y + j, elev + Z_OFF] for i in range(a.width) for j in range(a.depth)]
         sent = post("/send-dig-command", {"designation": "UP_DOWN_STAIR_DIG", "locations": tiles}).get("tiles")
-        print(f"[elev {elev} / ui {elev-1}] stair designations accepted: {sent}/{a.width}", flush=True)
+        print(f"[elev {elev}] stair designations accepted: {sent}/{len(tiles)} ({a.width}x{a.depth})", flush=True)
         if not sent:
             print(f"  refused at elev {elev}: fog or invalid site - stop, probe a neighbour", flush=True)
             return 3
