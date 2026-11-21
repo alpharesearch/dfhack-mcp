@@ -23,6 +23,10 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const PANEL_ID = '@local/df-observer/panel'
+    // The right-Sidebar tab kind; the launcher is filled in by the lazy
+    // sidebarRight inject, so an absent face leaves the dock panel working.
+    const TAB_KIND = 'df-observer'
+    let openRightTab = null
     const ALERT_KIND = 'df-alert'
     const NS = 'dfObserver'
 
@@ -48,6 +52,9 @@ window.__ModuleLoader__.load({
       'notes': 'Notes',
       'gameSays': 'Game says',
       'designations': 'Designations',
+      'guide.title': 'Open the fort observer',
+      'guide.description': 'Live fort state: ladder, dig faces, piles, ledger, alerts.',
+      'open.right': 'Open in right panel',
       'collapsed': 'Observer',
       'empty': 'Observer is idle: no game read yet.',
       'box': 'box',
@@ -80,6 +87,9 @@ window.__ModuleLoader__.load({
       'notes': '备注',
       'gameSays': '游戏提示',
       'designations': '设计标注',
+      'guide.title': '打开要塞观察面板',
+      'guide.description': '实时要塞状态：进度梯、挖掘面、堆区、待办、警报。',
+      'open.right': '在右侧面板打开',
       'collapsed': '观察器',
       'empty': '观察器空闲：尚无游戏读取。',
       'box': '区块',
@@ -138,13 +148,15 @@ window.__ModuleLoader__.load({
       return DOT.idle
     }
 
-    function Panel(ctx) {
+    // `asPage` = rendered inside a right-Sidebar tab: no collapse toggle, the
+    // sections are the page. The dock copy keeps the chip + expand behaviour.
+    function Panel(ctx, asPage = false) {
       return function DfObserverPanel(props) {
         const sessionId = props.sessionId
         // The Host computes this from the session log (projection `wire.view`);
         // the framework re-renders us when the view reference changes.
         const snap = props.useProjection('dfObserver')
-        const [open, setOpen] = React.useState(false)
+        const [open, setOpen] = React.useState(asPage)
         if (!snap || snap.tick === 0) {
           return h('div', { style: S.panel },
             h('div', { style: S.head },
@@ -164,7 +176,10 @@ window.__ModuleLoader__.load({
             h('span', null, b.to_dig === null
               ? t('noData')
               : `${t('to_dig')} ${b.to_dig} · ${t('dug')} ${b.dug} · ${t('pending')} ${b.pending}`)))
-        return h('div', { style: S.panel },
+        const shell = asPage
+          ? { ...S.panel, maxWidth: 'none', width: '100%', margin: 0, maxHeight: '100%', overflow: 'auto', boxSizing: 'border-box' }
+          : S.panel
+        return h('div', { style: shell },
           h('div', { style: S.head },
             h('span', { style: { ...S.rung, borderRadius: '50%', background: dotColor(snap) } }),
             h('span', { style: S.title }, t('title')),
@@ -179,7 +194,12 @@ window.__ModuleLoader__.load({
                 ? h('span', { key: 'fl' }, `filter ${snap.filter.live ? 'live' : 'spawning'}${snap.filter.verdictTick != null ? ` @${snap.filter.verdictTick}` : ''}${snap.filter.fallback ? ' (fallback)' : ''}`)
                 : null,
               snap.sessionFolded ? h('span', { key: 'sf' }, t('session.folded')) : null),
-            h('button', {
+            asPage ? null : h('button', {
+              // The dock chip hands the full GUI to the right Sidebar on demand.
+              style: S.toggle, type: 'button', title: t('open.right'),
+              onClick: () => { if (openRightTab) openRightTab(sessionId) },
+            }, '⤢'),
+            asPage ? null : h('button', {
               style: S.toggle, type: 'button', 'aria-expanded': open,
               onClick: () => setOpen((v) => !v),
             }, open ? '▾' : '▸'),
@@ -320,6 +340,14 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** The right-Sidebar tab chip's title row: name + the tick it is showing. */
+    function PanelTitle() {
+      return function DfObserverTitle(props) {
+        const snap = props.useProjection?.('dfObserver')
+        return h('span', null, `${t('title')}${snap?.tick ? ` · ${snap.tick}` : ''}`)
+      }
+    }
+
     // Context PROPERTIES, not service ids - and the `remote` face needs the
     // DEEP path of every namespace the module reads (measured: declaring bare
     // 'remote' leaves ctx.remote.dfObserver undefined; 'remote.dfObserver' works,
@@ -336,6 +364,29 @@ window.__ModuleLoader__.load({
         ctx.effect(() => ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
           name: 'conversation.chat.node', key: ALERT_KIND, locale: NS,
         }, AlertRow(ctx))), 'df-observer: alert row')
+        // The full GUI lives in the right Sidebar as its own tab. Lazy inject:
+        // if the right-sidebar faces are absent the module row still loads and
+        // only the dock chip is offered (measured: a bare face name in the static
+        // inject list aborts the whole client module).
+        ctx.inject(['sidebarRight', 'sidebarRightTabs'], (scope) => {
+          scope.effect(() => {
+            openRightTab = (sessionId) => {
+              if (sessionId && scope.sidebarRight?.openTabIn) scope.sidebarRight.openTabIn(sessionId, TAB_KIND)
+              else scope.sidebarRight?.openTab?.(TAB_KIND)
+            }
+          }, 'df-observer: right launcher')
+          scope.effect(() => scope.sidebarRightTabs.register({
+            id: PANEL_ID, kind: TAB_KIND, multiple: false, priority: 'extension',
+            title: () => t('title'),
+            guide: [{ id: 'open', order: 40, title: () => t('guide.title'), description: () => t('guide.description') }],
+          }), 'df-observer: right tab type')
+          scope.effect(() => scope.slots.inject('sidebar.right.pane.tab', () => scope.slots.register({
+            name: 'sidebar.right.pane.tab', key: PANEL_ID, locale: NS,
+          }, Panel(scope, true))), 'df-observer: right tab body')
+          scope.effect(() => scope.slots.inject('sidebar.right.pane.tab.title', () => scope.slots.register({
+            name: 'sidebar.right.pane.tab.title', key: PANEL_ID,
+          }, PanelTitle)), 'df-observer: right tab title')
+        })
       },
     }
   },

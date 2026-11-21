@@ -1215,6 +1215,10 @@ test('client: factory registers, apply wires slots, panel renders with token-onl
     },
     uiConversation: { events: { register: (def) => { calls.push(['events', def.kind, def.target]); return () => {} } } },
     remote: { commands: { execute: async () => ({ commandId: 'c1', result: { kind: 'success' } }) } },
+    // Context-level lazy inject (the shipped right-Sidebar tab plugins use it).
+    inject: (names, fn) => { calls.push(['lazy', names.join('+')]); fn(ctx); return () => {} },
+    sidebarRight: { openTabIn: (s, k) => calls.push(['openTabIn', s, k]), openTab: (k) => calls.push(['openTab', k]) },
+    sidebarRightTabs: { register: (def) => { calls.push(['tabType', def.kind, def.id, def.priority]); return () => {} } },
   }
   const plugin = factory((name) => { if (name === 'react') return fakeReactOf(); throw new Error(name) })
   assert.equal(plugin.inject.join(','), 'slots,uiConversation,remote,remote.commands,locale')
@@ -1225,6 +1229,11 @@ test('client: factory registers, apply wires slots, panel renders with token-onl
   assert.ok(names.some((n) => n.startsWith('register:conversation.input.dock')), 'panel registered')
   assert.ok(names.includes('events:df-alert:chat'), 'alert definition registered for chat')
   assert.ok(names.some((n) => n.startsWith('inject:conversation.chat.node')), 'chat row injected')
+  // The full GUI is a right-Sidebar tab: type + keyed body + keyed title.
+  assert.ok(names.some((n) => n.startsWith('lazy:sidebarRight+sidebarRightTabs')), 'right-sidebar faces are lazily injected')
+  assert.ok(names.includes('tabType:df-observer:@local/df-observer/panel:extension'), `tab type registered (${names.filter(n => n.startsWith('tabType')).join(' | ')})`)
+  assert.ok(names.some((n) => n.startsWith('inject:sidebar.right.pane.tab')), 'tab body injected into the keyed seat')
+  assert.ok(names.some((n) => n.startsWith('inject:sidebar.right.pane.tab.title')), 'tab title injected')
   // Render path: rebuild with a component spy and render the dock panel with data.
   let component = null
   const registered = {}
@@ -1239,6 +1248,9 @@ test('client: factory registers, apply wires slots, panel renders with token-onl
     },
     uiConversation: { events: { register: () => () => {} } },
     remote: { commands: { execute: async () => ({ commandId: 'c1', result: { kind: 'success' } }) } },
+    inject: (names, fn) => { fn(renderCtx); return () => {} },
+    sidebarRight: { openTabIn: () => {}, openTab: () => {} },
+    sidebarRightTabs: { register: () => () => {} },
   }
   registered.reg.factory((name) => { if (name === 'react') return fakeReactOf(); throw new Error(name) }).apply(renderCtx)
   assert.equal(typeof component, 'function', 'panel component captured')
