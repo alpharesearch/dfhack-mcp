@@ -110,8 +110,12 @@ if start is None:
     print("  no df-observer row in the profile")
 else:
     keys = ("briefing_max_tokens", "filter_briefing_max_tokens", "filter_enabled",
-            "panel_full_briefing", "tool_docs", "rules_mode", "poll_running_ms", "poll_paused_ms")
-    body = lines[start:start + 60]
+            "panel_full_briefing", "panel_title_rows", "panel_title_chars",
+            "tool_docs", "rules_mode", "poll_running_ms", "poll_paused_ms")
+    end = start + 1
+    while end < len(lines) and not lines[end].startswith("- "):
+        end += 1
+    body = lines[start:end]   # the whole row: a fixed window skipped the later keys
     found = {}
     for l in body:
         m = re.match(r"^\s+([a-z_]+):\s*(.*)$", l)
@@ -121,6 +125,7 @@ else:
         print(f"  {k}: {found.get(k, '(Config default)')}")
     print("  measured: 340 -> ids-only rows, 480 -> titles + scan on the filtered wire;")
     print("            panel_full_briefing adds ~622 tokens/briefing for the panel sections")
+    print("            with 44-char titles: 480 -> 3/10 titled, 520 -> 6/10, 560 -> 10/10, 600 -> 10/10 + scan")
 PY
 
   say "storage domain (durable ledger)"
