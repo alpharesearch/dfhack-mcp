@@ -529,7 +529,7 @@ test('client: factory registers, apply wires slots, panel renders with token-onl
     remote: { dfObserver: { panel: async () => fakeSnapshotForRender, ackAlert: async () => ({ ok: true }) } },
   }
   const plugin = factory((name) => { if (name === 'react') return fakeReactOf(); throw new Error(name) })
-  assert.equal(plugin.inject.join(','), 'slots,uiConversation,remote,locale')
+  assert.equal(plugin.inject.join(','), 'slots,uiConversation,remote,remote.dfObserver,locale')
   plugin.apply(ctx)
   const names = calls.map((c) => c.join(':'))
   assert.ok(names.includes('locale:dfObserver:en+zh'), 'dictionaries registered (en+zh)')

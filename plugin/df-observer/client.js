@@ -314,11 +314,12 @@ window.__ModuleLoader__.load({
       }
     }
 
-    // Context PROPERTIES, not service ids: 'remote' is the face that serves
-    // ctx.remote.<serviceKey>.<endpoint>() (measured: 'remoteAccess' leaves
-    // ctx.remote as "cannot get property remote without inject").
+    // Context PROPERTIES, not service ids - and the `remote` face needs the
+    // DEEP path of every namespace the module reads (measured: declaring bare
+    // 'remote' leaves ctx.remote.dfObserver undefined; 'remote.dfObserver' works,
+    // the same way dsh-dox declares 'remote.workspaceFiles').
     return {
-      inject: ['slots', 'uiConversation', 'remote', 'locale'],
+      inject: ['slots', 'uiConversation', 'remote', 'remote.dfObserver', 'locale'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { en: UI_EN, zh: UI_ZH }), 'df-observer: dictionaries')
         ctx.effect(() => ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
