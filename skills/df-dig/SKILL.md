@@ -136,9 +136,7 @@ Rules:
   complete in whatever order the crew reaches them.
 
 ## 17. Walls are the design, not the leftover
-My first room plans used the thinnest wall that technically separates two rooms (1 tile), and
-the player's verdict was correct: **not enough wall**. The rules that fix it, in the order that
-matters:
+My first plans used 1-tile walls - the player's verdict was right: **not enough wall**.
 - **2 tiles of wall minimum** between a room and a hall, and between adjacent rooms. 1-tile
   walls are weak (they read as thin as a doorframe), give no privacy, no support, and no space
   for a door + frame.
