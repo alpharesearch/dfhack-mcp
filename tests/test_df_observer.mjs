@@ -716,6 +716,23 @@ test('title coverage is partial, never all-or-nothing', () => {
   return sawPartial ? 'partial coverage observed on the way down' : 'titles held at every cap tested'
 })
 
+test('the Sidebar page body is uncapped; only the dock keeps a cap', () => {
+  // Measured in the player's page: the Sidebar tab scrolled with a 340px box around
+  // its sections because the page shared the dock body (`open ? h('div', { style:
+  // dockBody(...) })` - the page starts expanded, so asPage hit the dock cap).
+  const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
+  assert.match(client, /asPage \? pageBody\(\) : dockBody\(snap\.dockMaxHeight\)/, 'the render picks the style by mode')
+  const lines = client.split('\n')
+  const pageLine = lines.findIndex((l) => l.includes('const pageBody = () =>'))
+  const dockLine = lines.findIndex((l) => l.includes('const dockBody = (max)'))
+  assert.ok(pageLine > 0 && dockLine > pageLine, 'both helpers exist inside Panel')
+  const pageSrc = lines[pageLine]
+  assert.match(pageSrc, /maxHeight: 'none'/, 'the page body has no cap')
+  assert.match(pageSrc, /minHeight: 0/, 'the page body can shrink (flex)')
+  assert.ok(!/maxHeight: 340/.test(pageSrc), 'no 340px cap on the page path')
+  return 'page fills the pane; dock keeps the Config cap'
+})
+
 test('the dock height cap is Config-driven and reaches the client', () => {
   const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
   assert.match(index, /dock_max_height: z\.number\(\)\.int\(\)\.min\(0\)\.max\(4000\)\.default\(340\)/, 'knob declared')

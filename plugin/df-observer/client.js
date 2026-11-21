@@ -155,6 +155,7 @@ window.__ModuleLoader__.load({
     function Panel(ctx, asPage = false) {
   // Dock body height follows Config (`dock_max_height`; 0 = no cap). Defined here so
   // it closes over the theme-token styles - a module-level helper could not see S.
+  const pageBody = () => ({ ...S.body, maxHeight: 'none', overflow: 'visible', flex: 1, minHeight: 0 })
   const dockBody = (max) => {
     const cap = Number.isFinite(max) ? max : 340
     return { ...S.body, maxHeight: cap > 0 ? cap : 'none', overflow: cap > 0 ? 'auto' : 'visible' }
@@ -265,10 +266,11 @@ window.__ModuleLoader__.load({
             pull.ok
               ? `panel data: /df-panel pull #${pull.ok}${pull.tick != null ? ` (model tick ${pull.tick})` : ''}`
               : `panel data: wire only${pull.fail ? ` - /df-panel pull failed (${pull.note ?? 'no JSON in result'})` : ' - first pull pending'}`) : null,
-          // The dock cap is Config-driven (`dock_max_height`; 0 = no cap): the Sidebar
-          // page fills its pane (measured scrollHeight == clientHeight), the dock is the
-          // one surface that scrolls a long ledger.
-          open ? h('div', { style: dockBody(snap.dockMaxHeight) },
+          // Measured in the player's page: the Sidebar tab SCROLLED because this body
+          // was shared with the dock - the 340 px cap nested the page's sections in a
+          // scrolling box (content 409 px). The page is uncapped and fills its pane;
+          // the dock keeps the Config cap (`dock_max_height`, 0 = no cap).
+          open ? h('div', { style: asPage ? pageBody() : dockBody(snap.dockMaxHeight) },
             snap.next ? h('div', { style: S.sec },
               h('div', { style: S.secTitle }, t('ladder.next')),
               h('div', { style: S.line }, h('span', null, `${snap.next.id ?? ''} ${snap.next.title ?? ''}`)),
