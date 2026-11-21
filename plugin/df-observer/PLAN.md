@@ -963,3 +963,37 @@ or if a rung is undone while its building exists on the map.
 Side effects found on the way (0.1.81): box-less completions printed bare
 `dig_complete` with `coord: ""` (A30–A33) — now `#210 buildings_kw`; and
 `df_status boxes` printed a phantom `4t/undefinedblk` field.
+
+## 32. Panel readability + the mute button (0.1.79 - 0.1.85)
+
+**Title budget is Config, and the ladders score instead of first-fit.** The player
+asked for to-do text "three times as long" and, before that, for the cryptic ids.
+Measured on a 10-open ledger (titles ~65 chars):
+
+| cap | first-fit ladder | preference-scored ladder |
+|---|---|---|
+| 480 | 7/7 titled | **7/7 titled, avg 65 chars** (475 tokens) |
+| 600 | **0 titled** | **7/7** (517) |
+| 700 | 6/7 | **7/7** (517) |
+| 800 | **0 titled** | **7/7** (517) |
+| 900 | 7/7 | 7/7 (517) |
+
+First-fit is **non-monotonic**: a bigger budget buys a richer payload that
+outvotes the words, so the panel loses its titles when you give it MORE room. Both
+`buildBriefing` and `buildFilteredBriefing` now enumerate every
+(level, candidate, body) that fits and ship the highest score, weighted
+**titled rows > ledger evidence > payload level > panel fields > prose richness**.
+An unaffordable budget is labelled `overBudget`, never passed off.
+
+Config: `panel_title_rows` (10 = the rows the panel lists), `panel_title_chars`
+(44 default, ceiling 200, this profile runs 130), `dock_max_height` (0 = no cap).
+
+**Layout facts (measured in the player's DOM):** the Sidebar page is uncapped and
+fills its pane (936 = 936; the pane is 937); the earlier scroll was the page sharing
+the dock body's 340 px cap (`useState(asPage)` starts expanded).
+
+**The mute button.** `panel_pause_button` renders **⏸ pause briefings** in the panel
+header; it runs `/df-quiet on|off`, which suppresses this plugin's briefings and
+wakes, counts them (`BRIEFINGS PAUSED - N injection(s) suppressed`), persists in
+storage (a reload does not un-mute), and never touches the game: a test spies
+`transport.setPause` and asserts **zero** writes while muting and un-muting.

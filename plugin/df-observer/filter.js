@@ -143,22 +143,40 @@ export function buildFilteredBriefing(verdict, payload, { maxTokens }) {
   // while my commentary survived. Panel readability outranks filter prose, so the
   // ladder tries to KEEP the payload as rich as possible and trims the text first;
   // titles are dropped only when even the shortest text cannot pay for them.
+  // Same preference search as the briefing (measured non-monotonicity in the filter
+  // path: cap 480 -> 7/7 titled, 600 -> 0, 800 -> 0, 900 -> 7/7). Score every
+  // combination that fits and ship the best: titled rows first, then evidence, then
+  // payload level, then panel fields, then prose richness.
+  const scored = []
   for (let level = 0; level <= SHRINK_MAX; level += 1) {
     const full = shrinkPayloadLevel(payload, level)
-    // Sugar last: titles stay as long as anything does; then the scan.
-    // The ledger (ids + states) is never part of the strip ladder.
-    // Partial coverage beats all-or-nothing (measured live: with a long verdict
-    // headline the cap bought ZERO titles; with a short one it bought all).
-    for (const data of [full, withoutScan(full), withoutScan(withTitleBudget(full, titleBudget().rows)),
-      withoutScan(withTitleBudget(full, 6)), withoutScan(withTitleBudget(full, 3)),
-      withoutTitles(withoutScan(full))]) {
-      const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: payload.tick, data })}`
+    const cands = [
+      { d: full, fields: 1 },
+      { d: withoutScan(full), fields: 0 },
+      { d: withoutScan(withTitleBudget(full, titleBudget().rows)), fields: 0, rows: titleBudget().rows },
+      { d: withoutScan(withTitleBudget(full, 6)), fields: 0, rows: 6 },
+      { d: withoutScan(withTitleBudget(full, 3)), fields: 0, rows: 3 },
+      { d: withoutTitles(withoutScan(full)), fields: 0, rows: 0 },
+    ]
+    for (const c of cands) {
+      const openRows = (c.d.todos ?? []).filter((t) => t.state !== 'done')
+      const rows = c.rows ?? openRows.filter((t) => t.title).length
+      const ev = (c.d.todos ?? []).filter((t) => t.evidence).length
+      const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: payload.tick, data: c.d })}`
       for (let textLevel = 0; textLevel < texts.length; textLevel += 1) {
         const out = `${texts[textLevel]}\n${stateLine}`
         const tokens = estimateTokens(out)
-        if (tokens <= maxTokens) return { text: out, tokens, payloadLevel: level, textLevel }
+        if (tokens > maxTokens) continue
+        scored.push({ out, tokens, level, textLevel, fields: c.fields,
+          score: rows * 10000 + ev * 300 + level * 40 + c.fields * 4 + (texts.length - 1 - textLevel) })
+        break
       }
     }
+  }
+  if (scored.length) {
+    scored.sort((a, b) => b.score - a.score)
+    const best = scored[0]
+    return { text: best.out, tokens: best.tokens, payloadLevel: best.level, textLevel: best.textLevel }
   }
   const data = withoutScan(withoutTitles(shrinkPayloadLevel(payload, SHRINK_MAX)))
   const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: payload.tick, data })}`

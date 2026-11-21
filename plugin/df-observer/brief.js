@@ -387,38 +387,51 @@ export function buildBriefing(payload, { maxTokens, form = 'briefing' }) {
     for (const key of Object.keys(fill)) if (out[key] === undefined) out[key] = fill[key]
     return out
   }
+  // Preference search, not first-fit (measured non-monotonicity in the filter path:
+  // cap 700 -> 10/10 titled rows + scan; cap 800 -> ZERO titles, because a richer
+  // payload outvoted the words). Score every candidate that fits and ship the best:
+  // TITLED ROWS first, then payload level (sections/evidence), then extra fields,
+  // then prose richness.
+  const scored = []
+  const bodyCaps = (b) => ({
+    ladderOpen: Math.max(0, 5 - b),
+    todos: Math.max(1, 12 - 2 * b),
+    alerts: maxTokens >= 500 ? Math.max(2, 8 - b) : Math.max(0, 8 - 2 * b),
+    health: Math.max(0, 6 - 2 * b),
+    reports: Math.max(0, 4 - 2 * b),
+    evidence: Math.max(40, 160 - 15 * b),
+  })
   for (let level = 0; level <= SHRINK_MAX; level += 1) {
     const data = shrinkPayloadLevel(payload, level)
-    // The panel renders from this wire line (the @Remote panel surface is not
-    // reachable by a third-party bundle - measured), so the panel's sections ride
-    // along WHEN THE BUDGET PAYS: tried first, plain data as the fallback.
     const filled = withPanelSections(data)
-    // Priority (measured, same rule as the filter ladder): PANEL WORDS over filter
-    // prose over payload level. So: for each payload level, try the richest title
-    // candidate, and trim the BODY before ever dropping a title.
     const lean = withLeanFields(filled)
-    const candidates = [filled, lean, withTitleBudget(lean, TITLE_ROWS), withTitleBudget(lean, 6),
-      withTitleBudget(lean, 3), withoutAnyTitles(lean)]
-    // Trim order (player-facing): the ALERT ADVICE is the actionable line, so it
-    // outlives ladder prose; reports/health/ladder go first.
-    const bodyCaps = (body) => ({
-      ladderOpen: Math.max(0, 5 - body),
-      todos: Math.max(1, 12 - 2 * body),
-      // The alert-advice floor only applies when the budget can afford it (measured:
-      // a floor of 2 put a 300-token briefing at 319).
-      alerts: maxTokens >= 500 ? Math.max(2, 8 - body) : Math.max(0, 8 - 2 * body),
-      health: Math.max(0, 6 - 2 * body),
-      reports: Math.max(0, 4 - 2 * body),
-      evidence: Math.max(40, 160 - 15 * body),
-    })
-    for (const cand of candidates) {
-      const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form, tick: payload.tick, data: cand })}`
-      for (let body = 0; body <= 7; body += 1) {
-        const out = `${bodyOf(bodyCaps(body))}\n${stateLine}`
+    const cands = [
+      { d: filled, fields: 1 },
+      { d: lean, fields: 0 },
+      { d: withTitleBudget(lean, TITLE_ROWS), fields: 0, rows: TITLE_ROWS },
+      { d: withTitleBudget(lean, 6), fields: 0, rows: 6 },
+      { d: withTitleBudget(lean, 3), fields: 0, rows: 3 },
+      { d: withoutAnyTitles(lean), fields: 0, rows: 0 },
+    ]
+    for (const c of cands) {
+      const openRows = (c.d.todos ?? []).filter((t) => t.state !== 'done')
+      const rows = c.rows ?? openRows.filter((t) => t.title).length
+      const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form, tick: payload.tick, data: c.d })}`
+      for (let b = 0; b <= 7; b += 1) {
+        const out = `${bodyOf(bodyCaps(b))}\n${stateLine}`
         const tokens = estimateTokens(out)
-        if (tokens <= maxTokens) return { text: out, tokens, payloadLevel: level, textLevel: body }
+        if (tokens > maxTokens) continue
+        const ev = (c.d.todos ?? []).filter((t) => t.evidence).length
+        scored.push({ out, tokens, level, b, fields: c.fields, rows, ev,
+          score: rows * 10000 + ev * 300 + level * 40 + c.fields * 4 + (7 - b) })
+        break
       }
     }
+  }
+  if (scored.length) {
+    scored.sort((a, b) => b.score - a.score)
+    const best = scored[0]
+    return { text: best.out, tokens: best.tokens, payloadLevel: best.level, textLevel: best.b }
   }
   // Last resort: the leanest payload AND the leanest fields AND no titles, header-only
   // body, and the over-budget result labelled - the caller must never read a bust as

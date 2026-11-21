@@ -56,6 +56,10 @@ window.__ModuleLoader__.load({
       'guide.title': 'Open the fort observer',
       'guide.description': 'Live fort state: ladder, dig faces, piles, ledger, alerts.',
       'open.right': 'Open in right panel',
+      'quiet.on': '⏸ pause briefings',
+      'quiet.off': '▶ resume briefings',
+      'quiet.title': "Pause this plugin's context injections (briefings and alert wakes). The game is never touched by this button.",
+      'quiet.note': (v) => `BRIEFINGS PAUSED - ${v} injection(s) suppressed. The game is untouched; the panel keeps updating.`,
       'collapsed': 'Observer',
       'empty': 'Observer is idle: no game read yet.',
       'box': 'box',
@@ -92,6 +96,10 @@ window.__ModuleLoader__.load({
       'guide.title': '打开要塞观察面板',
       'guide.description': '实时要塞状态：进度梯、挖掘面、堆区、待办、警报。',
       'open.right': '在右侧面板打开',
+      'quiet.on': '⏸ 暂停简报',
+      'quiet.off': '▶ 恢复简报',
+      'quiet.title': '暂停本插件的上下文注入（简报与警报唤醒）。此按钮绝不操作游戏。',
+      'quiet.note': (v) => `简报已暂停 - 已抑制 ${v} 次注入。游戏未受影响；面板继续更新。`,
       'collapsed': '观察器',
       'empty': '观察器空闲：尚无游戏读取。',
       'box': '区块',
@@ -236,6 +244,13 @@ window.__ModuleLoader__.load({
           h('div', { style: S.head },
             h('span', { style: { ...S.rung, borderRadius: '50%', background: dotColor(snap) } }),
             h('span', { style: S.title }, t('title')),
+            // The player asked for a pause button: it mutes THIS plugin's injections
+            // (`/df-quiet`), never the game - the game pause stays behind Config
+            // `pause_authority` (default off) and is not wired to this control.
+            h('button', {
+              key: 'quiet', type: 'button', style: { ...S.ack, marginLeft: 6 }, title: t('quiet.title'),
+              onClick: () => { void ctx.remote.commands.execute(sessionId, snap.quiet ? '/df-quiet off' : '/df-quiet on', []).then(() => { }) },
+            }, snap.quiet ? t('quiet.off') : t('quiet.on')),
             h('span', { style: S.meta },
               h('span', { key: 'h' }, health),
               snap.pauseSource ? h('span', { key: 'ps' }, t(`health.pauseSource.${snap.pauseSource}`)) : null,
@@ -243,6 +258,8 @@ window.__ModuleLoader__.load({
               h('span', { key: 'tk' }, `${t('health.tick')} ${snap.tick}`),
               h('span', { key: 'p' }, `${t('health.poll')} ${snap.poll == null ? '?' : `${Math.round(snap.poll / 1000)}s`}`),
               h('span', { key: 'pa' }, `${t('pause.authority')} ${snap.pauseAuthority ?? '?'}`),
+              snap.quiet ? h('span', { key: 'q', style: { color: 'var(--dsw-alias-state-warn-primary)' } },
+                t('quiet.note', (snap.suppressed?.briefings ?? 0) + (snap.suppressed?.wakes ?? 0))) : null,
               snap.filter?.enabled
                 ? h('span', { key: 'fl' }, `filter ${snap.filter.live ? 'live' : 'spawning'}${snap.filter.verdictTick != null ? ` @${snap.filter.verdictTick}` : ''}${snap.filter.fallback ? ' (fallback)' : ''}`)
                 : null,

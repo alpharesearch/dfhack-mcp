@@ -716,6 +716,60 @@ test('title coverage is partial, never all-or-nothing', () => {
   return sawPartial ? 'partial coverage observed on the way down' : 'titles held at every cap tested'
 })
 
+test('the panel mute pauses injections only - never the game', async () => {
+  const registered = []
+  const ctx = {
+    // The Cordis base registers the service: ctx.reflect.provide(name, self).
+    reflect: { provide: () => {} },
+    isolate: {},
+    effect: (fn) => { fn(); return () => {} },
+    commands: { register: (def) => { registered.push(def.name); return () => {} } },
+    tools: { register: () => () => {} },
+    agents: { list: () => [], on: () => () => {} },
+    systemPrompt: { section: () => () => {} },
+    sessionProjections: { register: () => () => {} },
+    timers: { register: () => () => {} },
+    storage: { open: async () => ({ table: () => ({ entries: () => [], put: () => {}, get: () => null }), close: () => {} }) },
+  }
+  const inst = new DFObserver(ctx, Config.parse({ panel_pause_button: true }))
+  assert.equal(inst.quiet, false, 'starts unmuted')
+  // The game-write path is spied: the mute must never touch it.
+  let pauseWrites = 0
+  inst.transport.setPause = async () => { pauseWrites += 1; return { ok: true } }
+  const first = inst.setQuiet(true, 'test')
+  assert.equal(first.quiet, true, 'setQuiet mutes')
+  assert.equal(first.changed, true, 'reports the change')
+  await inst.dispatchBriefing()
+  await inst.dispatchAlerts([{ id: 'A1', kind: 'dig_complete', evidence: 'x', coord: '' }])
+  await inst.dispatchFilterWakes()
+  assert.equal(inst.model.suppressed.briefings, 1, 'the suppressed briefing is counted, not silently dropped')
+  assert.equal(inst.model.suppressed.wakes, 1, 'the suppressed wake is counted')
+  assert.equal(pauseWrites, 0, 'NOT ONE write to the game pause - the button mutes injections only')
+  const payload = inst.model.payload()
+  assert.equal(payload.quiet, true, 'the wire carries the mute so the panel can show it')
+  assert.equal(payload.suppressed.briefings, 1, 'the wire carries the counter')
+  const view = viewOf({ ...payload, _view: undefined })
+  assert.equal(view.quiet, true, 'the client-visible view carries it (4-place sync)')
+  const res = await inst.setQuiet(false, 'test')
+  assert.equal(res.quiet, false, 'un-mutes')
+  await inst.dispatchBriefing()
+  assert.equal(inst.model.suppressed.briefings, 1, 'un-muted briefings are not counted as suppressed')
+  assert.equal(pauseWrites, 0, 'still zero game writes after un-muting')
+  // the command exists and the client exposes the button in both locales
+  const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  assert.match(index, /name: 'df-quiet'/, '/df-quiet is registered as a session command')
+  const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
+  assert.match(client, /'\/df-quiet (on|off)'/, 'the panel button runs the command with its argument')
+  const dictCount = (client.match(/'open\.right':/g) ?? []).length
+  assert.ok(dictCount >= 2, `the client carries >= 2 locale dictionaries (saw ${dictCount})`)
+  for (const key of ['quiet.on', 'quiet.off', 'quiet.title', 'quiet.note']) {
+    const hits = (client.match(new RegExp("'" + key + "'", 'g')) ?? []).length
+    assert.ok(hits >= 2, `${key} is present in BOTH locales (en + zh), saw ${hits}`)
+  }
+  assert.match(client, /snap\.quiet \? t\('quiet\.off'\) : t\('quiet\.on'\)/, 'the button toggles its label with the state')
+  return 'mute pauses injections, counts them, and never writes to the game'
+})
+
 test('the Sidebar page body is uncapped; only the dock keeps a cap', () => {
   // Measured in the player's page: the Sidebar tab scrolled with a 340px box around
   // its sections because the page shared the dock body (`open ? h('div', { style:
@@ -767,7 +821,7 @@ test('the Sidebar page fills the pane height (no half-height scroll)', () => {
 test('panel title budget is Config-driven and the ladder steps it down', () => {
   const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
   assert.match(index, /panel_title_rows: z\.number\(\)\.int\(\)\.min\(0\)\.max\(30\)\.default\(10\)/, 'rows knob declared')
-  assert.match(index, /panel_title_chars: z\.number\(\)\.int\(\)\.min\(8\)\.max\(80\)\.default\(44\)/, 'chars knob declared')
+  assert.match(index, /panel_title_chars: z\.number\(\)\.int\(\)\.min\(8\)\.max\(200\)\.default\(44\)/, 'chars knob declared (ceiling raised to 200)')
   assert.match(index, /setTitleBudget\(\{ rows: config\.panel_title_rows, chars: config\.panel_title_chars \}\)/, 'applied at activation')
   const brief = fs.readFileSync(path.join(pluginDir, 'brief.js'), 'utf8')
   assert.match(brief, /row\.title = String\(t\.title \?\? ''\)\.slice\(0, TITLE_CHARS\)/, 'the lean ledger honours the char budget')

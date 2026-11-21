@@ -125,11 +125,14 @@ export const Config = z.object({
    * carry a title on the wire, and how many characters each title gets. Titles
    * cost ~5 tokens per row at 24 chars, ~10 at 44 (measured). */
   panel_title_rows: z.number().int().min(0).max(30).default(10),
-  panel_title_chars: z.number().int().min(8).max(80).default(44),
+  panel_title_chars: z.number().int().min(8).max(200).default(44),
   /** Max height (px) of the composer dock's expanded body; 0 = no cap (measured:
    * the Sidebar page fills its pane with no scroll, the dock is the one capped
    * surface - 340 px scrolls a 14-row ledger at 495 px). */
   dock_max_height: z.number().int().min(0).max(4000).default(340),
+  /** Show the panel's mute button (pauses THIS PLUGIN's injections - briefings and
+   * wakes - never the game; the game pause stays behind `pause_authority`). */
+  panel_pause_button: z.boolean().default(true),
   /** A pile this full on a small area is reported as full. */
   pile_full_items: z.number().int().min(10).default(150),
 
@@ -208,6 +211,11 @@ export default class DFObserver extends TypertRemoteService {
   constructor(ctx, config = Config.parse({})) {
     super(ctx, 'dfObserver')
     this.config = config
+    // Mute state (panel button): suppresses briefings/wakes only. Restored from
+    // storage at activation so a reload does not un-mute the player's choice.
+    this.quiet = false
+    // The counters live on the model (its payload is the wire the panel
+    // folds) - keeping a second copy here is how they drifted apart (measured).
     // The panel's word budget is Config-driven (measured: 24-char titles read as
     // clipped nonsense, and title-less rows left the panel listing bare ids).
     setTitleBudget({ rows: config.panel_title_rows, chars: config.panel_title_chars })
@@ -324,6 +332,24 @@ export default class DFObserver extends TypertRemoteService {
         return { kind: 'success', text: `df-ack: ${alert.id} (${alert.kind}) silenced until its condition clears.` }
       },
     }), 'df-observer: /df-ack command')
+
+    // Mute the observer's own injections (the panel's pause button). The game is
+    // NOT touched: pausing the game stays behind `pause_authority` (default off).
+    ctx.effect(() => ctx.commands.register({
+      name: 'df-quiet',
+      description: 'Pause (or resume) the DF observer\'s context injections - briefings and alert wakes. The game keeps running: /df-quiet [on|off]',
+      input: { hint: '[on|off] (toggles when omitted)' },
+      handler: ({ agent, rawInput }) => {
+        const arg = String(rawInput ?? '').trim().toLowerCase().split(/\s+/)[0]
+        const next = arg === 'on' ? true : arg === 'off' ? false : !this.quiet
+        const changed = next !== this.quiet
+        this.setQuiet(next, changed ? 'command' : 'command (no change)')
+        void agent
+        return { kind: 'success', text: `df-quiet: injections ${next ? 'PAUSED' : 'running'}`
+          + ` (${this.model.suppressed.briefings} briefings and ${this.model.suppressed.wakes} wakes suppressed so far)`
+          + (changed ? '' : ' - no change') }
+      },
+    }), 'df-observer: /df-quiet command')
 
     // The panel's own data pull. The briefing wire is ledger-first (measured: at
     // the Config cap of 700 there is no room for boxes/piles/rungs on top of a
@@ -501,6 +527,19 @@ export default class DFObserver extends TypertRemoteService {
   // Briefing (inject, delta-gated, bounded) and wakes (followup, whitelisted)
   // ---------------------------------------------------------------------
 
+  /** Flip the mute and remember it (storage + notes + the panel wire). */
+  setQuiet(on, why = 'panel') {
+    const next = Boolean(on)
+    const changed = next !== this.quiet
+    this.quiet = next
+    this.model.setQuiet(next, this.model.suppressed)
+    if (changed) this.note(next
+      ? `injections PAUSED (${why}): briefings and wakes are suppressed; the game is untouched`
+      : `injections resumed (${why}): ${this.model.suppressed.briefings} briefings and ${this.model.suppressed.wakes} wakes were suppressed while paused`)
+    try { this.ledger?.table?.('meta')?.put?.('quiet', { quiet: next, why, at: Date.now() }) } catch { /* labelled below */ }
+    return { quiet: next, changed, suppressed: { ...this.model.suppressed } }
+  }
+
   async openLedger() {
     const storage = this.ctx.get('storageDomain')
     if (storage === undefined) {
@@ -529,6 +568,12 @@ export default class DFObserver extends TypertRemoteService {
       if (stored.length) this.model.restoreTodos(stored)
       const boxes = [...domain.table('boxes').entries()].map(([, v]) => v)
       if (boxes.length) this.model.restoreBoxes(boxes)
+      const meta = domain.table('meta').get('quiet')
+      if (meta?.quiet) {
+        this.quiet = true
+        this.model.setQuiet(true, { briefings: 0, wakes: 0 })
+        this.note(`injections are PAUSED (restored from storage${meta.why ? `, set by ${meta.why}` : ''}): briefings and wakes are suppressed; the game is untouched`)
+      }
       this.note(`ledger restored: ${stored.length} to-dos, ${boxes.length} watched boxes`)
     } catch (error) {
       this.note(`ledger load failed (starting fresh, labelled): ${error?.message ?? error}`)
@@ -562,6 +607,10 @@ export default class DFObserver extends TypertRemoteService {
 
   async dispatchBriefing() {
     if (this.config.briefing_mode === 'off') return
+    // The panel's mute button (player request): pause THIS plugin's context
+    // injections - briefings and wakes - without touching the game. Counted, so the
+    // mute is visible, never a silent hole in the log.
+    if (this.quiet) { this.model.suppressed.briefings += 1; return }
     const payload = this.model.payload()
     const now = Date.now()
     const verdict = this.filterEnabled() ? this.freshVerdict(payload) : null
@@ -607,6 +656,7 @@ export default class DFObserver extends TypertRemoteService {
 
   /** Filter-proposed wakes are plugin-approved: kind must be in Config.alert_wakes. */
   async dispatchFilterWakes() {
+    if (this.quiet) return
     if (!this.filterEnabled()) return
     const verdict = this.filterVerdict
     if (!verdict?.wake?.length) return
@@ -632,6 +682,7 @@ export default class DFObserver extends TypertRemoteService {
 
   async dispatchAlerts(alerts) {
     if (!alerts?.length) return
+    if (this.quiet) { this.model.suppressed.wakes += alerts.length; return }
     const payload = this.model.payload()
     const now = Date.now()
     for (const alert of alerts) {
