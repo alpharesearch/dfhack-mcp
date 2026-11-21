@@ -107,3 +107,24 @@ Every projection prints the in-game elevation (`ui` = z−129) next to ours, plu
    no-access, water, slope) as the gate before any designation.
 4. Game-side announcer script in `deployables/scripts/` feeding `get_reports`.
 5. Then the deferred RAG phase — with the store, embedding tiles/events is trivial.
+
+## Correction from the player (measured right after): designations are not gated by fog
+The player's rule: **"you should be able to designate anywhere; whether the dwarves can dig
+or build is answered by the game when time comes."** Tested: `DEFAULT_DIG` on
+`x48,y122-124,elev36` - all three tiles `hidden=True` - came back `tiles: 3, success: true`,
+and `world-objects` shows `dig 3 tiles x48-48 y122-124`. So designation in fog **works**.
+
+Consequences, all implemented in `scripts/dig_run.py`:
+1. **Order the plan, then measure.** No visibility gate, no reachability gate, no probed-roof
+   gate before designating. `dig_adit.py`'s fog refusal (`exit 3: unexplored`) was an
+   *agent-side* obstacle - the tunnel stopped at x48 for no game reason.
+2. **Progress = wall tiles remaining** in the box (tile transitions). Designation count is a
+   *queue*, not progress: pending designations mean "the game has not made this reachable
+   yet", and a box that stops shrinking with nothing pending means the game cancelled the
+   rest (no access / invalid site / hazard). Both are reported as facts.
+3. Middle rows first in a band (courtesy to pathfinding), flanks after - ordering, not gating.
+4. Reachability (`dig_reachable`, `reach-map`) stays in the model as an **explanation** tool
+   for why a plan stalls - not as a precondition that blocks design.
+5. `tile_at` does not surface `dig_designation` on hidden tiles (the designation is recorded -
+   `world-objects` reports it), so designation state on fog tiles must be read from
+   `world-objects` clusters, not per tile. Fix the tile-level read in the store design.
