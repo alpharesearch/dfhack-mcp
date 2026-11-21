@@ -209,7 +209,7 @@ function statusBody(state, scope, config) {
   if (scope === 'summary') {
     const lines = [
       `tick ${state.tick} | ${state.online === false ? 'GAME OFFLINE' : state.paused ? 'paused' : 'running'}${state.pauseSource ? ` (last pause: ${state.pauseSource})` : ''} | gen ${state.generation ?? '?'}`,
-      facts ? `pop ${num(facts.pop)} miners ${num(facts.miners)}/${num(facts.picks)} picks | food ${num(facts.food)} drink ${num(facts.drink)} wood ${num(facts.wood)} stone ${num(facts.stone)} | pending dig ${num(facts.pending_dig)}`
+      facts ? `pop ${num(facts.pop)} miners ${num(facts.miners)}/${facts.picks == null ? '? (deep probe has no data)' : num(facts.picks)} picks | food ${num(facts.food)} drink ${num(facts.drink)} wood ${num(facts.wood)} stone ${num(facts.stone)} | pending dig ${num(facts.pending_dig)}`
         : 'facts: NO DATA this tick',
       ...(state.boxes ?? []).map((b) => `elev${b.elev} x${b.box[0]}-${b.box[2]} y${b.box[1]}-${b.box[3]}: to_dig ${b.to_dig} dug ${b.dug} pending ${b.pending}`),
       ...(state.rungs ?? []).filter((r) => !r.done).slice(0, 6).map((r) => `[ ] ${r.id}: ${short(r.title, 90)}`),

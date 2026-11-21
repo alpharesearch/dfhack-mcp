@@ -1245,7 +1245,7 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
         notes.append("no shafts requested: monitored columns not checked")
 
     picks = None
-    if req.get("picks", True):
+    if req.get("picks", False):
         try:
             picks = observe_parse_picks(await LO._lua(OBSERVE_PICKS_LUA, settle=OBSERVE_LUA_SETTLE))
         except LO.LuaOpError as e:
