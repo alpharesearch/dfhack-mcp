@@ -577,6 +577,31 @@ test('GAME SAYS: the game reports are quoted in the briefing', () => {
 
 // ---------------------------------------------------------------------------
 // wake boundary: steer reaches a busy agent at its next step
+test('idle-plan stall: pending 0 with dug frozen raises dig_stalled after stall_ticks', () => {
+  const model = freshModel()
+  const box = { elev: 35, box: [45, 121, 66, 122], to_dig: 44, dug: 0, pending: 0 }
+  const ingest = () => model.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 79, dwarves: 21, miners: 3, picks: 3, food: 40, drink: 0, wood: 0, stone: 138, metal: 0, barrels: 21, pending_dig: 0 },
+    buildings: [], boxes: [{ ...box }], shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [] })
+  ingest(); model.evaluate(model.cfg)                 // baseline
+  const need = model.cfg.stall_ticks
+  for (let i = 1; i <= need; i += 1) {
+    ingest()
+    const r = model.evaluate(model.cfg)
+    const hit = r.find((a) => a.kind === 'dig_stalled')
+    if (i < need) assert.ok(!hit, `no stall claim before stall_ticks (i=${i}, tick ${model.tick})`)
+    else {
+      assert.ok(hit, 'the frozen face raises dig_stalled')
+      assert.match(hit.evidence, new RegExp(`unchanged for ${need} reads`), hit.evidence)
+      assert.match(hit.suggested, /designate ROCK tiles only/, 'the advice names the safe order')
+    } }
+  // progress clears it: dug rises -> no new stall claim
+  box.to_dig = 40; box.dug = 4; box.pending = 4
+  ingest(); const r2 = model.evaluate(model.cfg)
+  assert.ok(!r2.some((a) => a.kind === 'dig_stalled' && a.evidence.includes('x45-66 y121-122')), 'work at the face stops the claim')
+  return 'idle-plan stall covered; progress clears it'
+})
+
 test('verdict capture: the session/event shape is parsed', async () => {
   const { verdictFromEvent } = await import(path.join(pluginDir, 'index.js'))
   const line = '[df-verdict] {"tick":12,"significance":"high","headline":"Tunnel face drained with no dug change","changes":["box x45-66 y121-122 to_dig 44 pending 0"],"next":{"id":"water","title":"Water adit","keys":"m","at":"x45 y121 elev35"},"wake":[{"kind":"dig_stalled","evidence":"to_dig 44, dug 0, pending 0"}],"notes":["drink 0"]}'

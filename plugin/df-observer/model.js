@@ -528,16 +528,30 @@ export class FortModel {
         this.trim('digEvents', 40)
         raise('dig_complete', `dig-${key}`, `${ev} (accept: to_dig==0 && dug>0 MET)`, `x${box.box[0]}-${box.box[2]} y${box.box[1]}-${box.box[3]} elev${box.elev}`)
       }
-      const drained = prev.pending > 0 && box.pending === 0 && box.to_dig === prev.to_dig && box.dug === prev.dug
-      if (drained) {
+      // Stagnation, one writer per box (measured bug: the drained-else reset
+      // `stagnant` to 0 on every non-drained read, so an idle face never counted).
+      // Two kinds of frozen face:
+      //   drained: designations were queued, drained to 0, nothing dug;
+      //   idle:    nothing queued, nothing dug for stall_ticks reads (the filter
+      //            kept reporting "Ten game days, zero tiles dug, pending 0").
+      const unchanged = box.to_dig === prev.to_dig && box.dug === prev.dug
+      const drained = prev.pending > 0 && box.pending === 0 && unchanged
+      const idle = box.pending === 0 && box.to_dig > 0 && unchanged
+      if (drained || idle) {
         const stagnant = (prev.stagnant ?? 0) + 1
         if (stagnant >= cfg.stall_ticks) {
-          const ev = `x${box.box[0]}-${box.box[2]} y${box.box[1]}-${box.box[3]} elev${box.elev}: pending 0, to_dig ${box.to_dig} unchanged ${stagnant} ticks, dug ${box.dug} unchanged - designations drained with no dug change`
+          const coord = `x${box.box[0]}-${box.box[2]} y${box.box[1]}-${box.box[3]} elev${box.elev}`
+          const ev = drained
+            ? `${coord}: pending 0, to_dig ${box.to_dig} unchanged ${stagnant} reads, dug ${box.dug} unchanged - designations drained with no dug change`
+            : `${coord}: to_dig ${box.to_dig}, pending 0, dug ${box.dug} unchanged for ${stagnant} reads - nothing queued and nothing dug (the plan is idle at this face)`
           this.digEvents.push({ tick: this.tick, kind: 'stalled', box: box.box, elev: box.elev, evidence: ev })
           this.trim('digEvents', 40)
-          raise('dig_stalled', `stall-${key}`, ev, `x${box.box[0]}-${box.box[2]} y${box.box[1]}-${box.box[3]} elev${box.elev}`)
+          raise('dig_stalled', `stall-${key}`, ev, coord,
+            drained
+              ? 'no access to the rest: read dig_reachable from a dwarf-occupied tile, order the band middle-first (df-dig §5)'
+              : 'queue the next face: survey it, designate ROCK tiles only (never over floors/stairs), middle-first so each dug tile is the next access (df-dig §5)')
         }
-        this.lastBoxState.set(key, { ...prev, stagnant })
+        this.lastBoxState.set(key, { ...prev, to_dig: box.to_dig, dug: box.dug, pending: box.pending, stagnant })
       } else {
         this.lastBoxState.set(key, { to_dig: box.to_dig, dug: box.dug, pending: box.pending, stagnant: 0, lastDug: box.dug })
       }
