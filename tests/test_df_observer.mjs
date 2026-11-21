@@ -83,7 +83,7 @@ test('config defaults and ranges', () => {
   assert.equal(baseCfg.poll_paused_ms, 60000)
   assert.equal(baseCfg.pause_authority, 'off')
   assert.equal(baseCfg.auto_resume, false)
-  assert.deepEqual(baseCfg.alert_wakes, ['water', 'dig_complete', 'dig_stalled', 'tile_state_lost', 'game_crashed', 'game_offline'])
+  assert.deepEqual(baseCfg.alert_wakes, ['water', 'dig_complete', 'dig_stalled', 'tile_state_lost', 'game_says', 'game_crashed', 'game_offline'])
   assert.equal(baseCfg.overload_todos, 20, 'a normal embark ledger is not an overload')
   assert.throws(() => Config.parse({ poll_running_ms: 16000 }))
   assert.throws(() => Config.parse({ pause_authority: 'manual_suggestion' }))
@@ -660,6 +660,7 @@ test('water growth in the band raises the whitelisted water alert', () => {
   assert.ok(hit, 'the +61 flood raises the water alert')
   assert.match(hit.evidence, /1030 -> 1091 \(\+61 tiles\)/, hit.evidence)
   assert.ok(model.cfg.alert_wakes.includes('water'), 'water is on the wake whitelist')
+  assert.ok(model.cfg.alert_wakes.includes('game_says'), 'game_says wakes (player-approved 2026-11-21)')
   assert.match(hit.suggested, /clear the DAMP designations/, 'the advice names the fix')
   // growth stops -> the alert clears
   ingestWater(1091); model.evaluate(model.cfg)

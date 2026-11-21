@@ -768,3 +768,10 @@ Action for the plugin (worth keeping): when the game channel is degraded, say so
 in the answer - `df_status` already labels `NO DATA` per field; add the
 staleness stamp (`tick`, seconds since the last successful read) so an agent
 reading a snapshot knows its age.
+
+Player decisions (2026-11-21, asked and answered in-session): `filter_enabled`
+stays **true** (filtered briefings, 250-290 vs 456-538 tokens), and **`game_says`
+joins the wake whitelist** - a noteworthy report (caravan arrived, fight, flood,
+"Your fortress is out of food!", a dwarf withdrawing from work) steers the play
+agent at its next step, once per report alert. Default list now
+`[water, dig_complete, dig_stalled, tile_state_lost, game_says, game_crashed, game_offline]`.
