@@ -520,3 +520,12 @@ The player asked to recreate their built structure south of the wagon. Recipe th
 Tool this suggests for the plan: `mirror_structure?from_box&to_elev&to_xy` - read a dug
 footprint (tunnel rows + room + stair columns) and emit the designation list for a target
 site, validating hazards/depth/explored **per part** before sending anything.
+
+### Damp designations must be cleared, not left running (applied)
+The player's 152 designations crossed the aquifer (elev 34 = in-game 33). Mining them would
+breach the aquifer and flood the works, so they were cleared with NO_DIG (verified: elev 34
+designations = none) before unpausing, and only the dry, depth-checked recreation (52 tiles)
+was left running. `hazards` is the gate for that decision; the layer should be able to say
+"these N designations are damp, clear them" - planned as `warnings` (P1) which lists live
+designations whose columns carry aquifer/water/magma, so the agent catches this state
+without being told.
