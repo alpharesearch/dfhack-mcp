@@ -100,3 +100,16 @@ channel` now diagnoses exactly this: `poll GET /observe-stats` + `read GET
 dead session binding, 406/400 = endpoint alive. The observer's own `df_*` tools
 answer from the live model, so a session can always read the fort; reconnect the
 MCP client for the `mcp__dfhack__*` tools.
+
+## 7. Running the fresh-embark test in one command
+
+```bash
+bash plugin/df-observer/deploy.sh embark      # backs up the row, auto band, nothing watched
+#   ... start / load the NEW embark in the game, watch the first briefings ...
+bash plugin/df-observer/deploy.sh embark-restore   # byte-identical restore of the measured row
+```
+
+`embark` clears `monitored_boxes` / `pile_ids` / `shafts` and sets `elev0/elev1: 0`
+(auto fort band), so the plugin must earn every statement from live reads: ladder
+seeding, NO DATA labels, the designation scan naming the backlog, and quiet
+completion/stall rules. Expectations are §5; the probe recipe is §6.
