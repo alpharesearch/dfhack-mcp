@@ -84,21 +84,30 @@ def walls_in(elev, x0, x1, y0, y1):
 
 
 def pending_in(elev, x0, x1, y0, y1):
+    """Designation tiles pending inside a box on one elevation.
+
+    Line form from the server: "dig 66 tiles x27-42 y121-126 [DEFAULT_DIGx66]" - the x
+    range is field 3, NOT field 2 ("tiles"). An earlier version indexed p[2]/p[3], the
+    parse threw, and every read said pending 0: a finished plan then looked like
+    "STALLED: nothing designated". Parse with a pattern, and treat 'no match' as no data
+    rather than as zero.
+    """
+    import re
     t = get("/world-objects", {"e0": elev, "e1": elev, "max_tokens": 1200})["text"]
     n = 0
+    seen = False
     for l in t.splitlines():
         s = l.strip()
         if not s.startswith("dig "):
             continue
-        p = s.split()
-        try:
-            dx0, dx1 = map(int, p[2].split("-"))
-            dy0, dy1 = map(int, p[3].split("-"))
-        except (IndexError, ValueError):
+        m = re.search(r"x(\d+)-(\d+) y(\d+)-(\d+)", s)
+        if not m:
             continue
+        seen = True
+        dx0, dx1, dy0, dy1 = map(int, m.groups())
         if dx0 <= x1 and dx1 >= x0 and dy0 <= y1 and dy1 >= y0:
-            n += int(p[1])
-    return n
+            n += int(s.split()[1])
+    return n if seen or not any(l.strip().startswith("dig ") for l in t.splitlines()) else -1
 
 
 def main():
@@ -146,7 +155,7 @@ def main():
             print(f"TIMEOUT after {a.timeout}s: walls {w}, pending {pd}. "
                   f"Pending designations = the game has not made this reachable.", flush=True)
             return 2
-        if stall_at is not None and stamp - stall_at > 0 and w > 0 and pd == 0 and stamp > 60:
+        if stall_at is not None and stamp - stall_at > 40 and w > 0 and pd == 0 and stamp > 90:
             print(f"STALLED at {stamp}s: {w} wall tiles left and nothing designated - "
                   f"the game cancelled the rest (no access, invalid site, or hazard)", flush=True)
             return 2
