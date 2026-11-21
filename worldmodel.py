@@ -1305,42 +1305,50 @@ class WorldModel:
     async def designation_clusters(self, e0: int, e1: int, limit: int = 12) -> dict:
         """Where the game's dig designations physically are, per in-game elevation.
 
-        Block-granularity scan (16x16 tiles) over the band: every block that carries
-        designations is counted, and adjacent designated blocks are merged into one
-        rectangle. The plugin uses this to name the backlog the watched boxes do not
-        explain (measured: "pending dig 103, watched boxes 0")."""
+        Tiles are enumerated with the SAME lookup box_state uses (block key
+        (x - x%16, y - y%16), index (y%16)*16 + (x%16)) - the first version grouped
+        by b.map_x/b.map_y and produced rectangles that did not match the game's
+        tile coordinates. Designated points are merged by 4-neighbour adjacency, so
+        a face reads as one box. The plugin uses this to name the backlog that the
+        watched boxes do not explain (measured: "pending dig 103, watched boxes 0")."""
         gen = await self._gen()
+        # The model already caches the tile extent (GetMapInfo block_size * 16).
+        map_w, map_h, _z = await self.cache.extent()  # tiles, from GetMapInfo blocks * 16
         memo = getattr(self, "_desig_memo", None)
         if memo is None or memo.get("gen") != gen:
             memo = self._desig_memo = {"gen": gen, "cells": {}}
         out = []
         for elev in range(int(e0), int(e1) + 1):
             z = elev + GAME_Z_OFFSET
-            blocks = await self.cache.blocks(z, z + 1, gen)
-            hits = {}
-            for b in blocks:
-                key = (int(b.map_x), int(b.map_y))
-                cell = memo["cells"].get(key)
-                if cell is None:
-                    n = 0
-                    names = dig_names()
-                    desig = b.tile_dig_designation
-                    for i in range(len(desig)):
+            key = (z, map_w, map_h)
+            pts = memo["cells"].get(key)
+            if pts is None:
+                blocks = await self.cache.blocks(z, z + 1, gen)
+                by_xy = {(int(b.map_x), int(b.map_y)): b for b in blocks}
+                names = dig_names()
+                found = set()
+                for tx in range(map_w):
+                    bx = tx - (tx % 16)
+                    for ty in range(map_h):
+                        b = by_xy.get((bx, ty - (ty % 16)))
+                        if b is None:
+                            continue
+                        desig = b.tile_dig_designation
+                        i = (ty % 16) * 16 + (tx % 16)
+                        if i >= len(desig):
+                            continue
                         dn = names.get(int(desig[i]))
                         if dn and dn != "NO_DIG":
-                            n += 1
-                    cell = memo["cells"][key] = n
-                if cell:
-                    hits[key] = cell
-            if not hits:
+                            found.add((tx, ty))
+                pts = memo["cells"][key] = sorted(found)
+            if not pts:
                 continue
-            # Merge orthogonally adjacent designated blocks into components.
             seen = set()
             clusters = []
-            for start in hits:
-                if start in seen:
+            for p0 in pts:
+                if p0 in seen:
                     continue
-                stack = [start]
+                stack = [p0]
                 group = []
                 while stack:
                     cur = stack.pop()
@@ -1348,24 +1356,23 @@ class WorldModel:
                         continue
                     seen.add(cur)
                     group.append(cur)
-                    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                        nb = (cur[0] + dx, cur[1] + dy)
-                        if nb in hits and nb not in seen:
-                            stack.append(nb)
+                    cx, cy = cur
+                    for nb in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                        # Measured: with the inverted test (`nb not in seen`) the
+                        # merge only walked ALREADY-VISITED tiles, so four adjacent
+                        # stairwell tiles came back as four 1-tile clusters.
+                        if nb in seen or nb not in pts:
+                            continue
+                        stack.append(nb)
                 xs = [g[0] for g in group]
                 ys = [g[1] for g in group]
-                clusters.append({
-                    "x0": min(xs) * 16, "x1": max(xs) * 16 + 15,
-                    "y0": min(ys) * 16, "y1": max(ys) * 16 + 15,
-                    "tiles": sum(hits[g] for g in group),
-                    "blocks": len(group),
-                })
+                clusters.append({"x0": min(xs), "x1": max(xs), "y0": min(ys), "y1": max(ys),
+                                 "tiles": len(group)})
             clusters.sort(key=lambda c: -c["tiles"])
-            if clusters:
-                out.append({"elev": elev, "clusters": clusters[:limit],
-                            "designated_tiles": sum(c["tiles"] for c in clusters)})
+            out.append({"elev": elev, "clusters": clusters[:limit],
+                        "designated_tiles": len(pts)})
         return {"band": [int(e0), int(e1)], "by_elev": out,
-                "designated_total": sum(c["tiles"] for e in out for c in e["clusters"])}
+                "designated_total": sum(e["designated_tiles"] for e in out)}
 
     async def survey(self, elev: int, x0: int, y0: int, x1: int, y1: int) -> dict:
         """Pre-flight check for a designation box: what is on every tile, and what is safe to

@@ -1293,6 +1293,18 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
         out["shafts"] = []
         notes.append("no shafts requested: monitored columns not checked")
 
+    # Designation clusters (deep ticks): where the game's dig designations physically
+    # are, as merged 16x16-block rectangles per in-game elevation. The plugin asks
+    # for `designations: N` and labels the field NO DATA when this route is absent.
+    if req.get("designations"):
+        try:
+            limit = max(1, min(int(req["designations"]), 40))
+            out["designations"] = await world.designation_clusters(int(e0), int(e1), limit=limit)
+        except Exception as e:
+            out["designations"] = None
+            notes.append(f"designation scan unavailable: {e}")
+
+
     obs2 = {"picks": None, "site_id": None, "seeds": None, "date": None}
     if req.get("status_probe", False):
         try:
