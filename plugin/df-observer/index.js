@@ -464,7 +464,7 @@ export default class DFObserver extends TypertRemoteService {
     let domain
     try {
       domain = await storage.open({
-      name: 'dfObserver',
+      name: 'df_observer', // UNIT_NAME_RE ^[a-z][a-z0-9_]*$ - camelCase is rejected
       version: 1,
       layout: 'per-record',
         tables: {
