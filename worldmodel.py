@@ -1442,6 +1442,13 @@ class WorldModel:
                            "here floods the works")
             elif d is not None and d < min_depth:
                 verdict = f"shallow: depth {d} < {min_depth} - a surface cut, not a tunnel"
+            elif d is None:
+                # The LOCAL SURFACE is unknown here (fog in this column), so depth cannot be
+                # computed. That is not "shallow" and not a veto: the game accepts the
+                # designation and it queues. Judging fog as shallow silently cancelled 732
+                # tiles of a 50-room grid - the same absence-as-fact bug family.
+                verdict = ("fog surface: depth unknown (no explored surface in this column) - "
+                           "designation is accepted and queues; re-check depth after the reveal")
             else:
                 verdict = f"probe here: solid, depth {d}"
             out.append({"elev": e, "ui_elev": ui_elev(e + GAME_Z_OFFSET), "glyph": g,
