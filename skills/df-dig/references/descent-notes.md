@@ -190,3 +190,18 @@ Method, in order:
 5. The natural plain at 37 already reaches the map edge: no designations past x73.
 So: order the **ramps**, not a tunnel; check for already-open ground first, and never
 designate over stuff.
+
+## A ramp occupies two levels (measured on the wagon road)
+Per-tile profile east of the depot, three rows y119/120/121:
+```
+ elev 39 (in-game 38):  .........^^^     x58-66 floors, x67-69 RampTop
+ elev 38 (in-game 37):  .........^^^     same columns read as floors + RampTop
+ elev 37 (in-game 36):  #########///^^^  walls x58-66, ramp faces x67-69, floors x70-72, ramp x73
+ elev 36 (in-game 35):  ##############/.......  walls to x71, ramp x72, plain from x73
+```
+The identical rows at 39 and 38 are not a bug: a ramp is a **two-level structure** - `^`
+(RampTop) on the upper level and `/` (ramp face) on the lower. So when you plan a route, the
+ramp's *usable* tile is at the lower elevation and the slope shows above it; judging a route
+from one elevation alone will mislead you (mine did: I read `OpenSpace` at in-game 37, x68 and
+concluded the step needed a dug ramp - there was nothing to dig, and the slope was already
+there on the level below).
