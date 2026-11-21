@@ -1940,6 +1940,33 @@ class WorldModel:
         """Levels between game elevations e0..e1 inclusive."""
         return await self.levels_z(e0 + GAME_Z_OFFSET, e1 + GAME_Z_OFFSET, force)
 
+    async def buildings_mapwide(self) -> list[dict]:
+        """Every building on the map, WITHOUT the per-level tile census.
+
+        Why: the facts band (the elevations the player asked to watch) is the right
+        window for dig/water facts, but a BUILDING is a fort-wide fact. Measured on
+        the live save: with the band 22-45 the rollup showed no Farm Plot, so the
+        ladder's `farm` rung read undone and the briefing said "farm plot still
+        unbuilt" - absence from a partial window, which the plugin forbids as a fact.
+        Scanning 0-128 found `Farm Plot x1` and `Farmer's Workshop x1`.
+        Blocks are already cached, so this is a list walk over b.buildings.
+        """
+        gen = await self._gen()
+        dec = await self._dec(gen)
+        zmax = (await self.cache.extent())[2] if hasattr(self.cache, "extent") else None
+        blocks = await self.cache.blocks(0, (zmax - 1) if zmax else 127, gen)
+        out: list[dict] = []
+        for b in blocks:
+            for bd in b.buildings:
+                out.append({"x": bd.pos_x_min, "y": bd.pos_y_min, "z": bd.pos_z_min,
+                            "elev": bd.pos_z_min - GAME_Z_OFFSET,
+                            "name": dec.building_name(bd.building_type),
+                            "w": bd.pos_x_max - bd.pos_x_min + 1,
+                            "h": bd.pos_y_max - bd.pos_y_min + 1,
+                            "items": len(bd.items), "active": bd.active,
+                            "room": bool(bd.is_room)})
+        return out
+
     async def fort_band(self, window: int = MAX_Z_WINDOW,
                         force_recompute: bool = False) -> tuple[int, int]:
         """The z-window of `window` levels where the action is, scored from unit density,

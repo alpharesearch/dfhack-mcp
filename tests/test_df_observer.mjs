@@ -682,6 +682,20 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
   return 'designation summary survives every lean level, under 260 chars'
 })
 
+test('tool text never prints undefined (measured: the boxes scope said "4t/undefinedblk")', () => {
+  const model = freshModel()
+  const withScan = { ...model.payload(), designations: { designated_total: 107,
+    by_elev: [{ elev: 22, clusters: [{ x0: 43, y0: 121, x1: 44, y1: 122, tiles: 4 }], designated_tiles: 4 },
+      { elev: 41, clusters: [{ x0: 38, y0: 113, x1: 48, y1: 122, tiles: 83 }], designated_tiles: 83 }] } }
+  for (const scope of ['boxes', 'summary', 'full']) {
+    const out = tools.runTool('df_status', { scope, __payload: withScan })
+    const text = typeof out === 'string' ? out : JSON.stringify(out)
+    assert.ok(!/undefined/.test(text), `scope ${scope} printed the word undefined: ${text.slice(0, 200)}`)
+    assert.ok(!/null/.test(text.replace(/\bnull\b(?!,|\n)/g, '')) || !/undefined/.test(text), `scope ${scope} keeps nulls out of prose`)
+  }
+  return 'boxes/summary/full render without undefined'
+})
+
 test('title coverage is partial, never all-or-nothing', () => {
   // Measured live: with a long verdict headline the cap bought ZERO titles while a
   // short one bought all - a cliff. The ladder now steps titles down 10 -> 8 -> 4 -> 0.

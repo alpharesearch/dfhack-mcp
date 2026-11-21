@@ -277,7 +277,9 @@ function statusBody(state, scope, config) {
     const des = state.designations
     const desLines = des?.by_elev?.length
       ? ['designations (server scan):',
-        ...des.by_elev.map((e) => `  elev${e.elev}: ${e.clusters.map((c) => `x${c.x0}-${c.x1} y${c.y0}-${c.y1} ${c.tiles}t/${c.blocks}blk`).join(' | ')} = ${e.designated_tiles} tiles`),
+        // The scan's clusters carry {x0,y0,x1,y1,tiles}; a `blocks` field never
+        // existed and printed "undefinedblk" (measured in `df_status boxes`).
+        ...des.by_elev.map((e) => `  elev${e.elev}: ${e.clusters.map((c) => `x${c.x0}-${c.x1} y${c.y0}-${c.y1} ${c.tiles}t`).join(' | ')} = ${e.designated_tiles} tiles`),
         `  total designated: ${des.designated_total}`]
       : ['designations: NO DATA (the server has no designation scan at this build - run deploy.sh server / add the route)']
     return { boxes: state.boxes, designations: des ?? null, digEvents: (state.digEvents ?? []).slice(0, 20), digest,

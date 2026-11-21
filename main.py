@@ -1220,9 +1220,28 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
             "buildings_total": len(facts.buildings),
         }
         if req.get("buildings", True):
-            roll = Counter(b["name"] for b in facts.buildings)
+            # Buildings are a fort-wide fact: scan the whole map so a plot outside
+            # the watched band is never reported as missing (measured: Farm Plot
+            # invisible at band 22-45, found at 0-128). The ladder reads the same
+            # map-wide list, so rung labels stop lying about unbuilt buildings.
+            band_names = Counter(b["name"] for b in facts.buildings)
+            mapwide: list[dict] = []
+            try:
+                mapwide = await world.buildings_mapwide()
+            except Exception as e:
+                notes.append(f"map-wide building scan unavailable: {e}")
+            pool = mapwide or facts.buildings
+            # FortFacts derives `built_names` in __init__, so replacing the list
+            # without it leaves every rung predicate reading the STALE band names
+            # (measured: Farm Plot found map-wide, `farm` rung still done=false).
+            facts.buildings = pool
+            facts.built_names = [b["name"].lower() for b in pool]
+            roll = Counter(b["name"] for b in pool)
             out["buildings"] = [{"name": k, "count": v} for k, v in sorted(roll.items(),
                                                                            key=lambda kv: -kv[1])[:40]]
+            out["buildings_scope"] = "map-wide" if mapwide else "watched band only"
+            out["buildings_band_only"] = [{"name": k, "count": v} for k, v in sorted(band_names.items(),
+                                                                                     key=lambda kv: -kv[1])[:40]]
     if facts is not None and req.get("rungs", True):
         rungs = [{"id": rid, "title": rung, "done": bool(done(facts)), "keys": keys, "why": why}
                  for (rid, rung, done, keys, why) in WM._LADDER]
