@@ -1,0 +1,3487 @@
+[
+ {
+  "id": 0,
+  "name": "Void",
+  "caption": "void"
+ },
+ {
+  "id": 1,
+  "name": "RampTop",
+  "caption": "ramp top"
+ },
+ {
+  "id": 2,
+  "name": "MurkyPool",
+  "caption": "murky pool"
+ },
+ {
+  "id": 3,
+  "name": "MurkyPoolRamp",
+  "caption": "murky pool slope"
+ },
+ {
+  "id": 4,
+  "name": "UnderworldGateStairU",
+  "caption": "underworld gate up"
+ },
+ {
+  "id": 5,
+  "name": "UnderworldGateStairD",
+  "caption": "underworld gate down"
+ },
+ {
+  "id": 6,
+  "name": "UnderworldGateStairUD",
+  "caption": "underworld gate up/down"
+ },
+ {
+  "id": 7,
+  "name": "TreeCapInterior",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 8,
+  "name": "TreeCapWallThickSW",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 9,
+  "name": "TreeCapWallThickSE",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 10,
+  "name": "TreeCapWallThickNW",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 11,
+  "name": "TreeCapWallThickNE",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 12,
+  "name": "TreeCapWallThickN",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 13,
+  "name": "TreeCapWallThickS",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 14,
+  "name": "TreeCapWallThickW",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 15,
+  "name": "TreeCapWallThickE",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 16,
+  "name": "TreeCapWallNSWE",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 17,
+  "name": "TreeCapWallNSW",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 18,
+  "name": "TreeCapWallNSE",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 19,
+  "name": "Driftwood",
+  "caption": "driftwood"
+ },
+ {
+  "id": 20,
+  "name": "TreeCapWallNWE",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 21,
+  "name": "TreeCapWallSWE",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 22,
+  "name": "TreeCapWallNS",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 23,
+  "name": "TreeCapWallWE",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 24,
+  "name": "Unused999",
+  "caption": ""
+ },
+ {
+  "id": 25,
+  "name": "FrozenStairUD",
+  "caption": "ice stair up/down"
+ },
+ {
+  "id": 26,
+  "name": "FrozenStairD",
+  "caption": "ice stair down"
+ },
+ {
+  "id": 27,
+  "name": "FrozenStairU",
+  "caption": "ice stair up"
+ },
+ {
+  "id": 28,
+  "name": "Unused9999",
+  "caption": ""
+ },
+ {
+  "id": 29,
+  "name": "Unused99999",
+  "caption": ""
+ },
+ {
+  "id": 30,
+  "name": "Unused999999",
+  "caption": ""
+ },
+ {
+  "id": 31,
+  "name": "TreeDeadCapInterior",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 32,
+  "name": "OpenSpace",
+  "caption": "open space"
+ },
+ {
+  "id": 33,
+  "name": "TreeDeadCapWallThickSW",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 34,
+  "name": "Shrub",
+  "caption": "shrub"
+ },
+ {
+  "id": 35,
+  "name": "Chasm",
+  "caption": "chasm"
+ },
+ {
+  "id": 36,
+  "name": "LavaStairUD",
+  "caption": "obsidian stair up/down"
+ },
+ {
+  "id": 37,
+  "name": "LavaStairD",
+  "caption": "obsidian stair down"
+ },
+ {
+  "id": 38,
+  "name": "LavaStairU",
+  "caption": "obsidian stair up"
+ },
+ {
+  "id": 39,
+  "name": "SoilStairUD",
+  "caption": "soil stair up/down"
+ },
+ {
+  "id": 40,
+  "name": "SoilStairD",
+  "caption": "soil stair down"
+ },
+ {
+  "id": 41,
+  "name": "SoilStairU",
+  "caption": "soil stair up"
+ },
+ {
+  "id": 42,
+  "name": "EeriePit",
+  "caption": "eerie pit"
+ },
+ {
+  "id": 43,
+  "name": "StoneFloorSmooth",
+  "caption": "smooth stone floor"
+ },
+ {
+  "id": 44,
+  "name": "LavaFloorSmooth",
+  "caption": "smooth obsidian floor"
+ },
+ {
+  "id": 45,
+  "name": "FeatureFloorSmooth",
+  "caption": "smooth featstone floor"
+ },
+ {
+  "id": 46,
+  "name": "MineralFloorSmooth",
+  "caption": "smooth vein floor"
+ },
+ {
+  "id": 47,
+  "name": "FrozenFloorSmooth",
+  "caption": "smooth ice floor"
+ },
+ {
+  "id": 48,
+  "name": "TreeDeadCapWallThickSE",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 49,
+  "name": "Grass1StairUD",
+  "caption": "light grass stair up/down"
+ },
+ {
+  "id": 50,
+  "name": "Grass1StairD",
+  "caption": "light grass stair down"
+ },
+ {
+  "id": 51,
+  "name": "Grass1StairU",
+  "caption": "light grass stair up"
+ },
+ {
+  "id": 52,
+  "name": "Grass2StairUD",
+  "caption": "dark grass stair up/down"
+ },
+ {
+  "id": 53,
+  "name": "Grass2StairD",
+  "caption": "dark grass stair down"
+ },
+ {
+  "id": 54,
+  "name": "Grass2StairU",
+  "caption": "dark grass stair up"
+ },
+ {
+  "id": 55,
+  "name": "StoneStairUD",
+  "caption": "stone stair up/down"
+ },
+ {
+  "id": 56,
+  "name": "StoneStairD",
+  "caption": "stone stair down"
+ },
+ {
+  "id": 57,
+  "name": "StoneStairU",
+  "caption": "stone stair up"
+ },
+ {
+  "id": 58,
+  "name": "MineralStairUD",
+  "caption": "vein stair up/down"
+ },
+ {
+  "id": 59,
+  "name": "MineralStairD",
+  "caption": "vein stair down"
+ },
+ {
+  "id": 60,
+  "name": "MineralStairU",
+  "caption": "vein stair up"
+ },
+ {
+  "id": 61,
+  "name": "FeatureStairUD",
+  "caption": "featstone stair up/down"
+ },
+ {
+  "id": 62,
+  "name": "FeatureStairD",
+  "caption": "featstone stair down"
+ },
+ {
+  "id": 63,
+  "name": "FeatureStairU",
+  "caption": "featstone stair up"
+ },
+ {
+  "id": 64,
+  "name": "TreeDeadCapWallThickNW",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 65,
+  "name": "StoneFortification",
+  "caption": "stone fortification"
+ },
+ {
+  "id": 66,
+  "name": "TreeDeadCapWallThickNE",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 67,
+  "name": "Campfire",
+  "caption": "campfire"
+ },
+ {
+  "id": 68,
+  "name": "TreeDeadCapWallThickN",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 69,
+  "name": "TreeDeadCapWallThickS",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 70,
+  "name": "Fire",
+  "caption": "fire"
+ },
+ {
+  "id": 71,
+  "name": "BurningTreeTrunk",
+  "caption": "fire"
+ },
+ {
+  "id": 72,
+  "name": "BurningTreeBranches",
+  "caption": "fire"
+ },
+ {
+  "id": 73,
+  "name": "BurningTreeTwigs",
+  "caption": "fire"
+ },
+ {
+  "id": 74,
+  "name": "BurningTreeCapWall",
+  "caption": "fire"
+ },
+ {
+  "id": 75,
+  "name": "BurningTreeCapRamp",
+  "caption": "fire"
+ },
+ {
+  "id": 76,
+  "name": "BurningTreeCapFloor",
+  "caption": "fire"
+ },
+ {
+  "id": 77,
+  "name": "TreeDeadCapWallThickW",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 78,
+  "name": "TreeDeadCapWallThickE",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 79,
+  "name": "StonePillar",
+  "caption": "stone pillar"
+ },
+ {
+  "id": 80,
+  "name": "LavaPillar",
+  "caption": "obsidian pillar"
+ },
+ {
+  "id": 81,
+  "name": "FeaturePillar",
+  "caption": "featstone pillar"
+ },
+ {
+  "id": 82,
+  "name": "MineralPillar",
+  "caption": "vein pillar"
+ },
+ {
+  "id": 83,
+  "name": "FrozenPillar",
+  "caption": "ice pillar"
+ },
+ {
+  "id": 84,
+  "name": "TreeDeadCapWallNSWE",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 85,
+  "name": "TreeDeadCapWallNSW",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 86,
+  "name": "TreeDeadCapWallNSE",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 87,
+  "name": "TreeDeadCapWallNWE",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 88,
+  "name": "TreeDeadCapWallSWE",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 89,
+  "name": "Waterfall",
+  "caption": "waterfall"
+ },
+ {
+  "id": 90,
+  "name": "RiverSource",
+  "caption": "river source"
+ },
+ {
+  "id": 91,
+  "name": "TreeRootSloping",
+  "caption": "sloping roots"
+ },
+ {
+  "id": 92,
+  "name": "TreeRoots",
+  "caption": "roots"
+ },
+ {
+  "id": 93,
+  "name": "TreeTrunkPillar",
+  "caption": "trunk pillar"
+ },
+ {
+  "id": 94,
+  "name": "TreeTrunkSloping",
+  "caption": "sloping trunk"
+ },
+ {
+  "id": 95,
+  "name": "TreeTrunkThickN",
+  "caption": "trunk (N)"
+ },
+ {
+  "id": 96,
+  "name": "TreeTrunkThickS",
+  "caption": "trunk (S)"
+ },
+ {
+  "id": 97,
+  "name": "TreeTrunkThickE",
+  "caption": "trunk (E)"
+ },
+ {
+  "id": 98,
+  "name": "TreeTrunkThickW",
+  "caption": "trunk (W)"
+ },
+ {
+  "id": 99,
+  "name": "TreeTrunkThickNW",
+  "caption": "trunk (NW)"
+ },
+ {
+  "id": 100,
+  "name": "TreeTrunkThickNE",
+  "caption": "trunk (NE)"
+ },
+ {
+  "id": 101,
+  "name": "TreeTrunkThickSW",
+  "caption": "trunk (SW)"
+ },
+ {
+  "id": 102,
+  "name": "TreeTrunkThickSE",
+  "caption": "trunk (SE)"
+ },
+ {
+  "id": 103,
+  "name": "TreeTrunkBranchN",
+  "caption": "trunk branch (N)"
+ },
+ {
+  "id": 104,
+  "name": "TreeTrunkBranchS",
+  "caption": "trunk branch (S)"
+ },
+ {
+  "id": 105,
+  "name": "TreeTrunkBranchE",
+  "caption": "trunk branch (E)"
+ },
+ {
+  "id": 106,
+  "name": "TreeTrunkBranchW",
+  "caption": "trunk branch (W)"
+ },
+ {
+  "id": 107,
+  "name": "TreeBranchNS",
+  "caption": "branch (NS)"
+ },
+ {
+  "id": 108,
+  "name": "TreeBranchEW",
+  "caption": "branch (EW)"
+ },
+ {
+  "id": 109,
+  "name": "TreeBranchesSmooth",
+  "caption": "smooth branch"
+ },
+ {
+  "id": 110,
+  "name": "TreeDeadBranchesSmooth",
+  "caption": "smooth dead branch"
+ },
+ {
+  "id": 111,
+  "name": "TreeBranchNW",
+  "caption": "branch (NW)"
+ },
+ {
+  "id": 112,
+  "name": "TreeBranchNE",
+  "caption": "branch (NE)"
+ },
+ {
+  "id": 113,
+  "name": "TreeBranchSW",
+  "caption": "branch (SW)"
+ },
+ {
+  "id": 114,
+  "name": "TreeBranchSE",
+  "caption": "branch (SE)"
+ },
+ {
+  "id": 115,
+  "name": "TreeBranches",
+  "caption": "branches"
+ },
+ {
+  "id": 116,
+  "name": "TreeTwigs",
+  "caption": "twigs"
+ },
+ {
+  "id": 117,
+  "name": "TreeCapRamp",
+  "caption": "cap ramp"
+ },
+ {
+  "id": 118,
+  "name": "TreeCapPillar",
+  "caption": "cap pillar"
+ },
+ {
+  "id": 119,
+  "name": "TreeCapWallN",
+  "caption": "cap wall (N)"
+ },
+ {
+  "id": 120,
+  "name": "TreeCapWallS",
+  "caption": "cap wall (S)"
+ },
+ {
+  "id": 121,
+  "name": "TreeCapWallE",
+  "caption": "cap wall (E)"
+ },
+ {
+  "id": 122,
+  "name": "TreeCapWallW",
+  "caption": "cap wall (W)"
+ },
+ {
+  "id": 123,
+  "name": "TreeCapWallNW",
+  "caption": "cap wall (NW)"
+ },
+ {
+  "id": 124,
+  "name": "TreeCapWallNE",
+  "caption": "cap wall (NE)"
+ },
+ {
+  "id": 125,
+  "name": "TreeCapWallSW",
+  "caption": "cap wall (SW)"
+ },
+ {
+  "id": 126,
+  "name": "TreeCapWallSE",
+  "caption": "cap wall (SE)"
+ },
+ {
+  "id": 127,
+  "name": "TreeCapFloor1",
+  "caption": "cap floor"
+ },
+ {
+  "id": 128,
+  "name": "TreeCapFloor2",
+  "caption": "cap floor"
+ },
+ {
+  "id": 129,
+  "name": "TreeCapFloor3",
+  "caption": "cap floor"
+ },
+ {
+  "id": 130,
+  "name": "TreeCapFloor4",
+  "caption": "cap floor"
+ },
+ {
+  "id": 131,
+  "name": "TreeDeadRootSloping",
+  "caption": "dead sloping roots"
+ },
+ {
+  "id": 132,
+  "name": "TreeDeadRoots",
+  "caption": "dead roots"
+ },
+ {
+  "id": 133,
+  "name": "TreeDeadTrunkPillar",
+  "caption": "dead trunk pillar"
+ },
+ {
+  "id": 134,
+  "name": "TreeDeadTrunkSloping",
+  "caption": "dead sloping trunk"
+ },
+ {
+  "id": 135,
+  "name": "TreeDeadTrunkThickN",
+  "caption": "dead trunk (N)"
+ },
+ {
+  "id": 136,
+  "name": "TreeDeadTrunkThickS",
+  "caption": "dead trunk (S)"
+ },
+ {
+  "id": 137,
+  "name": "TreeDeadTrunkThickE",
+  "caption": "dead trunk (E)"
+ },
+ {
+  "id": 138,
+  "name": "TreeDeadTrunkThickW",
+  "caption": "dead trunk (W)"
+ },
+ {
+  "id": 139,
+  "name": "TreeDeadTrunkThickNW",
+  "caption": "dead trunk (NW)"
+ },
+ {
+  "id": 140,
+  "name": "TreeDeadTrunkThickNE",
+  "caption": "dead trunk (NE)"
+ },
+ {
+  "id": 141,
+  "name": "TreeDeadTrunkThickSW",
+  "caption": "dead trunk (SW)"
+ },
+ {
+  "id": 142,
+  "name": "TreeDeadTrunkThickSE",
+  "caption": "dead trunk (SE)"
+ },
+ {
+  "id": 143,
+  "name": "TreeDeadTrunkBranchN",
+  "caption": "dead trunk branch (N)"
+ },
+ {
+  "id": 144,
+  "name": "TreeDeadTrunkBranchS",
+  "caption": "dead trunk branch (S)"
+ },
+ {
+  "id": 145,
+  "name": "TreeDeadTrunkBranchE",
+  "caption": "dead trunk branch (E)"
+ },
+ {
+  "id": 146,
+  "name": "TreeDeadTrunkBranchW",
+  "caption": "dead trunk branch (W)"
+ },
+ {
+  "id": 147,
+  "name": "TreeDeadBranchNS",
+  "caption": "dead branch (NS)"
+ },
+ {
+  "id": 148,
+  "name": "TreeDeadBranchEW",
+  "caption": "dead branch (EW)"
+ },
+ {
+  "id": 149,
+  "name": "TreeBranch",
+  "caption": "branches (NSEW)"
+ },
+ {
+  "id": 150,
+  "name": "TreeDeadBranch",
+  "caption": "dead branches (NSEW)"
+ },
+ {
+  "id": 151,
+  "name": "TreeDeadBranchNW",
+  "caption": "dead branch (NW)"
+ },
+ {
+  "id": 152,
+  "name": "TreeDeadBranchNE",
+  "caption": "dead branch (NE)"
+ },
+ {
+  "id": 153,
+  "name": "TreeDeadBranchSW",
+  "caption": "dead branch (SW)"
+ },
+ {
+  "id": 154,
+  "name": "TreeDeadBranchSE",
+  "caption": "dead branch (SE)"
+ },
+ {
+  "id": 155,
+  "name": "TreeDeadBranches",
+  "caption": "dead branches"
+ },
+ {
+  "id": 156,
+  "name": "TreeDeadTwigs",
+  "caption": "dead twigs"
+ },
+ {
+  "id": 157,
+  "name": "TreeDeadCapRamp",
+  "caption": "dead cap ramp"
+ },
+ {
+  "id": 158,
+  "name": "TreeDeadCapPillar",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 159,
+  "name": "TreeDeadCapWallN",
+  "caption": "dead cap wall (N)"
+ },
+ {
+  "id": 160,
+  "name": "TreeDeadCapWallS",
+  "caption": "dead cap wall (S)"
+ },
+ {
+  "id": 161,
+  "name": "TreeDeadCapWallE",
+  "caption": "dead cap wall (E)"
+ },
+ {
+  "id": 162,
+  "name": "TreeDeadCapWallW",
+  "caption": "dead cap wall (W)"
+ },
+ {
+  "id": 163,
+  "name": "TreeDeadCapWallNW",
+  "caption": "dead cap wall (NW)"
+ },
+ {
+  "id": 164,
+  "name": "TreeDeadCapWallNE",
+  "caption": "dead cap wall (NE)"
+ },
+ {
+  "id": 165,
+  "name": "TreeDeadCapWallSW",
+  "caption": "dead cap wall (SW)"
+ },
+ {
+  "id": 166,
+  "name": "TreeDeadCapWallSE",
+  "caption": "dead cap wall (SE)"
+ },
+ {
+  "id": 167,
+  "name": "TreeDeadCapFloor1",
+  "caption": "dead cap floor"
+ },
+ {
+  "id": 168,
+  "name": "TreeDeadCapFloor2",
+  "caption": "dead cap floor"
+ },
+ {
+  "id": 169,
+  "name": "TreeDeadCapFloor3",
+  "caption": "dead cap floor"
+ },
+ {
+  "id": 170,
+  "name": "TreeDeadCapFloor4",
+  "caption": "dead cap floor"
+ },
+ {
+  "id": 171,
+  "name": "TreeDeadCapWallNS",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 172,
+  "name": "StoneWallWorn1",
+  "caption": "worn 1 stone wall"
+ },
+ {
+  "id": 173,
+  "name": "StoneWallWorn2",
+  "caption": "worn 2 stone wall"
+ },
+ {
+  "id": 174,
+  "name": "StoneWallWorn3",
+  "caption": "worn 3 stone wall"
+ },
+ {
+  "id": 175,
+  "name": "TreeBranchNSE",
+  "caption": "branches (NSE)"
+ },
+ {
+  "id": 176,
+  "name": "TreeBranchNSW",
+  "caption": "branches (NSW)"
+ },
+ {
+  "id": 177,
+  "name": "TreeBranchNEW",
+  "caption": "branches (NEW)"
+ },
+ {
+  "id": 178,
+  "name": "TreeBranchSEW",
+  "caption": "branches (SEW)"
+ },
+ {
+  "id": 179,
+  "name": "TreeBranchNSEW",
+  "caption": "branches (NSEW)"
+ },
+ {
+  "id": 180,
+  "name": "TreeDeadBranchNSE",
+  "caption": "dead branches (NSW)"
+ },
+ {
+  "id": 181,
+  "name": "TreeDeadBranchNSW",
+  "caption": "dead branches (NEW)"
+ },
+ {
+  "id": 182,
+  "name": "TreeDeadBranchNEW",
+  "caption": "dead branches (NEW)"
+ },
+ {
+  "id": 183,
+  "name": "TreeDeadBranchSEW",
+  "caption": "dead branches (SEW)"
+ },
+ {
+  "id": 184,
+  "name": "TreeDeadBranchNSEW",
+  "caption": "dead branches (NSEW)"
+ },
+ {
+  "id": 185,
+  "name": "TreeTrunkNSE",
+  "caption": "trunk (NSE)"
+ },
+ {
+  "id": 186,
+  "name": "TreeTrunkNSW",
+  "caption": "trunk (NSW)"
+ },
+ {
+  "id": 187,
+  "name": "TreeTrunkNEW",
+  "caption": "trunk (NEW)"
+ },
+ {
+  "id": 188,
+  "name": "TreeTrunkSEW",
+  "caption": "trunk (SEW)"
+ },
+ {
+  "id": 189,
+  "name": "TreeTrunkNS",
+  "caption": "trunk (NS)"
+ },
+ {
+  "id": 190,
+  "name": "TreeTrunkEW",
+  "caption": "trunk (EW)"
+ },
+ {
+  "id": 191,
+  "name": "TreeTrunkNSEW",
+  "caption": "trunk (NSEW)"
+ },
+ {
+  "id": 192,
+  "name": "TreeTrunkInterior",
+  "caption": "trunk interior"
+ },
+ {
+  "id": 193,
+  "name": "TreeDeadTrunkNSE",
+  "caption": "dead trunk (NSE)"
+ },
+ {
+  "id": 194,
+  "name": "TreeDeadTrunkNSW",
+  "caption": "dead trunk (NSW)"
+ },
+ {
+  "id": 195,
+  "name": "TreeDeadTrunkNEW",
+  "caption": "dead trunk (NEW)"
+ },
+ {
+  "id": 196,
+  "name": "TreeDeadTrunkSEW",
+  "caption": "dead trunk (SEW)"
+ },
+ {
+  "id": 197,
+  "name": "TreeDeadTrunkNS",
+  "caption": "dead trunk (NS)"
+ },
+ {
+  "id": 198,
+  "name": "TreeDeadTrunkEW",
+  "caption": "dead trunk (EW)"
+ },
+ {
+  "id": 199,
+  "name": "TreeDeadTrunkNSEW",
+  "caption": "dead trunk (NSEW)"
+ },
+ {
+  "id": 200,
+  "name": "TreeDeadTrunkInterior",
+  "caption": "dead trunk interior"
+ },
+ {
+  "id": 201,
+  "name": "TreeTrunkNW",
+  "caption": "trunk (NW)"
+ },
+ {
+  "id": 202,
+  "name": "TreeTrunkNE",
+  "caption": "trunk (NE)"
+ },
+ {
+  "id": 203,
+  "name": "TreeTrunkSW",
+  "caption": "trunk (SW)"
+ },
+ {
+  "id": 204,
+  "name": "TreeTrunkSE",
+  "caption": "trunk (SE)"
+ },
+ {
+  "id": 205,
+  "name": "TreeDeadTrunkNW",
+  "caption": "dead trunk (NW)"
+ },
+ {
+  "id": 206,
+  "name": "TreeDeadTrunkNE",
+  "caption": "dead trunk (NE)"
+ },
+ {
+  "id": 207,
+  "name": "TreeDeadTrunkSW",
+  "caption": "dead trunk (SW)"
+ },
+ {
+  "id": 208,
+  "name": "TreeDeadTrunkSE",
+  "caption": "dead trunk (SE)"
+ },
+ {
+  "id": 209,
+  "name": "TreeTrunkN",
+  "caption": "trunk (NS)"
+ },
+ {
+  "id": 210,
+  "name": "TreeTrunkS",
+  "caption": "trunk (NS)"
+ },
+ {
+  "id": 211,
+  "name": "TreeTrunkW",
+  "caption": "trunk (EW)"
+ },
+ {
+  "id": 212,
+  "name": "TreeTrunkE",
+  "caption": "trunk (EW)"
+ },
+ {
+  "id": 213,
+  "name": "TreeDeadTrunkN",
+  "caption": "dead trunk (NS)"
+ },
+ {
+  "id": 214,
+  "name": "TreeDeadTrunkS",
+  "caption": "dead trunk (NS)"
+ },
+ {
+  "id": 215,
+  "name": "StoneWall",
+  "caption": "stone wall"
+ },
+ {
+  "id": 216,
+  "name": "TreeDeadTrunkW",
+  "caption": "dead trunk (EW)"
+ },
+ {
+  "id": 217,
+  "name": "TreeDeadTrunkE",
+  "caption": "dead trunk (EW)"
+ },
+ {
+  "id": 218,
+  "name": "TreeBranchS",
+  "caption": "branch (S)"
+ },
+ {
+  "id": 219,
+  "name": "TreeBranchN",
+  "caption": "branch (N)"
+ },
+ {
+  "id": 220,
+  "name": "TreeBranchW",
+  "caption": "branch (W)"
+ },
+ {
+  "id": 221,
+  "name": "TreeBranchE",
+  "caption": "branch (E)"
+ },
+ {
+  "id": 222,
+  "name": "TreeDeadBranchS",
+  "caption": "branch (S)"
+ },
+ {
+  "id": 223,
+  "name": "TreeDeadBranchN",
+  "caption": "branch (N)"
+ },
+ {
+  "id": 224,
+  "name": "TreeDeadBranchW",
+  "caption": "branch (W)"
+ },
+ {
+  "id": 225,
+  "name": "TreeDeadBranchE",
+  "caption": "branch (E)"
+ },
+ {
+  "id": 226,
+  "name": "TreeDeadCapPillarWE",
+  "caption": "dead cap pillar"
+ },
+ {
+  "id": 227,
+  "name": "Sapling",
+  "caption": "sapling"
+ },
+ {
+  "id": 228,
+  "name": "Unused888",
+  "caption": ""
+ },
+ {
+  "id": 229,
+  "name": "GrassDryRamp",
+  "caption": "dry grass ramp"
+ },
+ {
+  "id": 230,
+  "name": "GrassDeadRamp",
+  "caption": "dead grass ramp"
+ },
+ {
+  "id": 231,
+  "name": "GrassLightRamp",
+  "caption": "light grass ramp"
+ },
+ {
+  "id": 232,
+  "name": "GrassDarkRamp",
+  "caption": "dark grass ramp"
+ },
+ {
+  "id": 233,
+  "name": "StoneRamp",
+  "caption": "stone ramp"
+ },
+ {
+  "id": 234,
+  "name": "LavaRamp",
+  "caption": "obsidian ramp"
+ },
+ {
+  "id": 235,
+  "name": "FeatureRamp",
+  "caption": "featstone ramp"
+ },
+ {
+  "id": 236,
+  "name": "MineralRamp",
+  "caption": "vein ramp"
+ },
+ {
+  "id": 237,
+  "name": "SoilRamp",
+  "caption": "soil ramp"
+ },
+ {
+  "id": 238,
+  "name": "Ashes1",
+  "caption": "ashes"
+ },
+ {
+  "id": 239,
+  "name": "Ashes2",
+  "caption": "ashes"
+ },
+ {
+  "id": 240,
+  "name": "Ashes3",
+  "caption": "ashes"
+ },
+ {
+  "id": 241,
+  "name": "FrozenRamp",
+  "caption": "ice ramp"
+ },
+ {
+  "id": 242,
+  "name": "Unused8888",
+  "caption": ""
+ },
+ {
+  "id": 243,
+  "name": "Unused88888",
+  "caption": ""
+ },
+ {
+  "id": 244,
+  "name": "Unused888888",
+  "caption": ""
+ },
+ {
+  "id": 245,
+  "name": "Unused245",
+  "caption": ""
+ },
+ {
+  "id": 246,
+  "name": "Unused246",
+  "caption": ""
+ },
+ {
+  "id": 247,
+  "name": "Unused247",
+  "caption": ""
+ },
+ {
+  "id": 248,
+  "name": "Unused248",
+  "caption": ""
+ },
+ {
+  "id": 249,
+  "name": "Unused249",
+  "caption": ""
+ },
+ {
+  "id": 250,
+  "name": "Unused250",
+  "caption": ""
+ },
+ {
+  "id": 251,
+  "name": "Unused251",
+  "caption": ""
+ },
+ {
+  "id": 252,
+  "name": "Unused252",
+  "caption": ""
+ },
+ {
+  "id": 253,
+  "name": "Unused253",
+  "caption": ""
+ },
+ {
+  "id": 254,
+  "name": "FrozenFloor2",
+  "caption": "ice floor"
+ },
+ {
+  "id": 255,
+  "name": "FrozenFloor3",
+  "caption": "ice floor"
+ },
+ {
+  "id": 256,
+  "name": "FrozenFloor4",
+  "caption": "ice floor"
+ },
+ {
+  "id": 257,
+  "name": "FurrowedSoil",
+  "caption": "furrowed soil"
+ },
+ {
+  "id": 258,
+  "name": "FrozenFloor1",
+  "caption": "ice floor"
+ },
+ {
+  "id": 259,
+  "name": "SemiMoltenRock",
+  "caption": "semi-molten rock"
+ },
+ {
+  "id": 260,
+  "name": "MagmaFlow",
+  "caption": "magma flow"
+ },
+ {
+  "id": 261,
+  "name": "SoilWall",
+  "caption": "soil wall"
+ },
+ {
+  "id": 262,
+  "name": "GlowingBarrier",
+  "caption": "glowing barrier"
+ },
+ {
+  "id": 263,
+  "name": "GlowingFloor",
+  "caption": "glowing floor"
+ },
+ {
+  "id": 264,
+  "name": "Unused264",
+  "caption": ""
+ },
+ {
+  "id": 265,
+  "name": "LavaWallSmoothRD2",
+  "caption": "smooth obsidian wall RD2"
+ },
+ {
+  "id": 266,
+  "name": "LavaWallSmoothR2D",
+  "caption": "smooth obsidian wall R2D"
+ },
+ {
+  "id": 267,
+  "name": "LavaWallSmoothR2U",
+  "caption": "smooth obsidian wall R2U"
+ },
+ {
+  "id": 268,
+  "name": "LavaWallSmoothRU2",
+  "caption": "smooth obsidian wall RU2"
+ },
+ {
+  "id": 269,
+  "name": "LavaWallSmoothL2U",
+  "caption": "smooth obsidian wall L2U"
+ },
+ {
+  "id": 270,
+  "name": "LavaWallSmoothLU2",
+  "caption": "smooth obsidian wall LU2"
+ },
+ {
+  "id": 271,
+  "name": "LavaWallSmoothL2D",
+  "caption": "smooth obsidian wall L2D"
+ },
+ {
+  "id": 272,
+  "name": "LavaWallSmoothLD2",
+  "caption": "smooth obsidian wall LD2"
+ },
+ {
+  "id": 273,
+  "name": "LavaWallSmoothLRUD",
+  "caption": "smooth obsidian wall LRUD"
+ },
+ {
+  "id": 274,
+  "name": "LavaWallSmoothRUD",
+  "caption": "smooth obsidian wall RUD"
+ },
+ {
+  "id": 275,
+  "name": "LavaWallSmoothLRD",
+  "caption": "smooth obsidian wall LRD"
+ },
+ {
+  "id": 276,
+  "name": "LavaWallSmoothLRU",
+  "caption": "smooth obsidian wall LRU"
+ },
+ {
+  "id": 277,
+  "name": "LavaWallSmoothLUD",
+  "caption": "smooth obsidian wall LUD"
+ },
+ {
+  "id": 278,
+  "name": "LavaWallSmoothRD",
+  "caption": "smooth obsidian wall RD"
+ },
+ {
+  "id": 279,
+  "name": "LavaWallSmoothRU",
+  "caption": "smooth obsidian wall RU"
+ },
+ {
+  "id": 280,
+  "name": "LavaWallSmoothLU",
+  "caption": "smooth obsidian wall LU"
+ },
+ {
+  "id": 281,
+  "name": "LavaWallSmoothLD",
+  "caption": "smooth obsidian wall LD"
+ },
+ {
+  "id": 282,
+  "name": "LavaWallSmoothUD",
+  "caption": "smooth obsidian wall UD"
+ },
+ {
+  "id": 283,
+  "name": "LavaWallSmoothLR",
+  "caption": "smooth obsidian wall LR"
+ },
+ {
+  "id": 284,
+  "name": "FeatureWallSmoothRD2",
+  "caption": "smooth featstone wall RD2"
+ },
+ {
+  "id": 285,
+  "name": "FeatureWallSmoothR2D",
+  "caption": "smooth featstone wall R2D"
+ },
+ {
+  "id": 286,
+  "name": "FeatureWallSmoothR2U",
+  "caption": "smooth featstone wall R2U"
+ },
+ {
+  "id": 287,
+  "name": "FeatureWallSmoothRU2",
+  "caption": "smooth featstone wall RU2"
+ },
+ {
+  "id": 288,
+  "name": "FeatureWallSmoothL2U",
+  "caption": "smooth featstone wall L2U"
+ },
+ {
+  "id": 289,
+  "name": "FeatureWallSmoothLU2",
+  "caption": "smooth featstone wall LU2"
+ },
+ {
+  "id": 290,
+  "name": "FeatureWallSmoothL2D",
+  "caption": "smooth featstone wall L2D"
+ },
+ {
+  "id": 291,
+  "name": "FeatureWallSmoothLD2",
+  "caption": "smooth featstone wall LD2"
+ },
+ {
+  "id": 292,
+  "name": "FeatureWallSmoothLRUD",
+  "caption": "smooth featstone wall LRUD"
+ },
+ {
+  "id": 293,
+  "name": "FeatureWallSmoothRUD",
+  "caption": "smooth featstone wall RUD"
+ },
+ {
+  "id": 294,
+  "name": "FeatureWallSmoothLRD",
+  "caption": "smooth featstone wall LRD"
+ },
+ {
+  "id": 295,
+  "name": "FeatureWallSmoothLRU",
+  "caption": "smooth featstone wall LRU"
+ },
+ {
+  "id": 296,
+  "name": "FeatureWallSmoothLUD",
+  "caption": "smooth featstone wall LUD"
+ },
+ {
+  "id": 297,
+  "name": "FeatureWallSmoothRD",
+  "caption": "smooth featstone wall RD"
+ },
+ {
+  "id": 298,
+  "name": "FeatureWallSmoothRU",
+  "caption": "smooth featstone wall RU"
+ },
+ {
+  "id": 299,
+  "name": "FeatureWallSmoothLU",
+  "caption": "smooth featstone wall LU"
+ },
+ {
+  "id": 300,
+  "name": "FeatureWallSmoothLD",
+  "caption": "smooth featstone wall LD"
+ },
+ {
+  "id": 301,
+  "name": "FeatureWallSmoothUD",
+  "caption": "smooth featstone wall UD"
+ },
+ {
+  "id": 302,
+  "name": "FeatureWallSmoothLR",
+  "caption": "smooth featstone wall LR"
+ },
+ {
+  "id": 303,
+  "name": "StoneWallSmoothRD2",
+  "caption": "smooth stone wall RD2"
+ },
+ {
+  "id": 304,
+  "name": "StoneWallSmoothR2D",
+  "caption": "smooth stone wall R2D"
+ },
+ {
+  "id": 305,
+  "name": "StoneWallSmoothR2U",
+  "caption": "smooth stone wall R2U"
+ },
+ {
+  "id": 306,
+  "name": "StoneWallSmoothRU2",
+  "caption": "smooth stone wall RU2"
+ },
+ {
+  "id": 307,
+  "name": "StoneWallSmoothL2U",
+  "caption": "smooth stone wall L2U"
+ },
+ {
+  "id": 308,
+  "name": "StoneWallSmoothLU2",
+  "caption": "smooth stone wall LU2"
+ },
+ {
+  "id": 309,
+  "name": "StoneWallSmoothL2D",
+  "caption": "smooth stone wall L2D"
+ },
+ {
+  "id": 310,
+  "name": "StoneWallSmoothLD2",
+  "caption": "smooth stone wall LD2"
+ },
+ {
+  "id": 311,
+  "name": "StoneWallSmoothLRUD",
+  "caption": "smooth stone wall LRUD"
+ },
+ {
+  "id": 312,
+  "name": "StoneWallSmoothRUD",
+  "caption": "smooth stone wall RUD"
+ },
+ {
+  "id": 313,
+  "name": "StoneWallSmoothLRD",
+  "caption": "smooth stone wall LRD"
+ },
+ {
+  "id": 314,
+  "name": "StoneWallSmoothLRU",
+  "caption": "smooth stone wall LRU"
+ },
+ {
+  "id": 315,
+  "name": "StoneWallSmoothLUD",
+  "caption": "smooth stone wall LUD"
+ },
+ {
+  "id": 316,
+  "name": "StoneWallSmoothRD",
+  "caption": "smooth stone wall RD"
+ },
+ {
+  "id": 317,
+  "name": "StoneWallSmoothRU",
+  "caption": "smooth stone wall RU"
+ },
+ {
+  "id": 318,
+  "name": "StoneWallSmoothLU",
+  "caption": "smooth stone wall LU"
+ },
+ {
+  "id": 319,
+  "name": "StoneWallSmoothLD",
+  "caption": "smooth stone wall LD"
+ },
+ {
+  "id": 320,
+  "name": "StoneWallSmoothUD",
+  "caption": "smooth stone wall UD"
+ },
+ {
+  "id": 321,
+  "name": "StoneWallSmoothLR",
+  "caption": "smooth stone wall LR"
+ },
+ {
+  "id": 322,
+  "name": "LavaFortification",
+  "caption": "obsidian fortification"
+ },
+ {
+  "id": 323,
+  "name": "FeatureFortification",
+  "caption": "featstone fortification"
+ },
+ {
+  "id": 324,
+  "name": "LavaWallWorn1",
+  "caption": "worn 1 obsidian wall"
+ },
+ {
+  "id": 325,
+  "name": "LavaWallWorn2",
+  "caption": "worn 2 obsidian wall"
+ },
+ {
+  "id": 326,
+  "name": "LavaWallWorn3",
+  "caption": "worn 3 obsidian wall"
+ },
+ {
+  "id": 327,
+  "name": "LavaWall",
+  "caption": "obsidian wall"
+ },
+ {
+  "id": 328,
+  "name": "FeatureWallWorn1",
+  "caption": "worn 1 featstone wall"
+ },
+ {
+  "id": 329,
+  "name": "FeatureWallWorn2",
+  "caption": "worn 2 featstone wall"
+ },
+ {
+  "id": 330,
+  "name": "FeatureWallWorn3",
+  "caption": "worn 3 featstone wall"
+ },
+ {
+  "id": 331,
+  "name": "FeatureWall",
+  "caption": "featstone wall"
+ },
+ {
+  "id": 332,
+  "name": "StoneFloor1",
+  "caption": "stone floor"
+ },
+ {
+  "id": 333,
+  "name": "StoneFloor2",
+  "caption": "stone floor"
+ },
+ {
+  "id": 334,
+  "name": "StoneFloor3",
+  "caption": "stone floor"
+ },
+ {
+  "id": 335,
+  "name": "StoneFloor4",
+  "caption": "stone floor"
+ },
+ {
+  "id": 336,
+  "name": "LavaFloor1",
+  "caption": "obsidian floor"
+ },
+ {
+  "id": 337,
+  "name": "LavaFloor2",
+  "caption": "obsidian floor"
+ },
+ {
+  "id": 338,
+  "name": "LavaFloor3",
+  "caption": "obsidian floor"
+ },
+ {
+  "id": 339,
+  "name": "LavaFloor4",
+  "caption": "obsidian floor"
+ },
+ {
+  "id": 340,
+  "name": "FeatureFloor1",
+  "caption": "featstone floor"
+ },
+ {
+  "id": 341,
+  "name": "FeatureFloor2",
+  "caption": "featstone floor"
+ },
+ {
+  "id": 342,
+  "name": "FeatureFloor3",
+  "caption": "featstone floor"
+ },
+ {
+  "id": 343,
+  "name": "FeatureFloor4",
+  "caption": "featstone floor"
+ },
+ {
+  "id": 344,
+  "name": "GrassDarkFloor1",
+  "caption": "dark grass"
+ },
+ {
+  "id": 345,
+  "name": "GrassDarkFloor2",
+  "caption": "dark grass"
+ },
+ {
+  "id": 346,
+  "name": "GrassDarkFloor3",
+  "caption": "dark grass"
+ },
+ {
+  "id": 347,
+  "name": "GrassDarkFloor4",
+  "caption": "dark grass"
+ },
+ {
+  "id": 348,
+  "name": "SoilFloor1",
+  "caption": "soil floor"
+ },
+ {
+  "id": 349,
+  "name": "SoilFloor2",
+  "caption": "soil floor"
+ },
+ {
+  "id": 350,
+  "name": "SoilFloor3",
+  "caption": "soil floor"
+ },
+ {
+  "id": 351,
+  "name": "SoilFloor4",
+  "caption": "soil floor"
+ },
+ {
+  "id": 352,
+  "name": "SoilWetFloor1",
+  "caption": "wet soil floor"
+ },
+ {
+  "id": 353,
+  "name": "SoilWetFloor2",
+  "caption": "wet soil floor"
+ },
+ {
+  "id": 354,
+  "name": "SoilWetFloor3",
+  "caption": "wet soil floor"
+ },
+ {
+  "id": 355,
+  "name": "SoilWetFloor4",
+  "caption": "wet soil floor"
+ },
+ {
+  "id": 356,
+  "name": "FrozenFortification",
+  "caption": "ice fortification"
+ },
+ {
+  "id": 357,
+  "name": "FrozenWallWorn1",
+  "caption": "worn 1 ice wall"
+ },
+ {
+  "id": 358,
+  "name": "FrozenWallWorn2",
+  "caption": "worn 2 ice wall"
+ },
+ {
+  "id": 359,
+  "name": "FrozenWallWorn3",
+  "caption": "worn 3 ice wall"
+ },
+ {
+  "id": 360,
+  "name": "FrozenWall",
+  "caption": "ice wall"
+ },
+ {
+  "id": 361,
+  "name": "RiverN",
+  "caption": "river N"
+ },
+ {
+  "id": 362,
+  "name": "RiverS",
+  "caption": "river S"
+ },
+ {
+  "id": 363,
+  "name": "RiverE",
+  "caption": "river E"
+ },
+ {
+  "id": 364,
+  "name": "RiverW",
+  "caption": "river W"
+ },
+ {
+  "id": 365,
+  "name": "RiverNW",
+  "caption": "river NW"
+ },
+ {
+  "id": 366,
+  "name": "RiverNE",
+  "caption": "river NE"
+ },
+ {
+  "id": 367,
+  "name": "RiverSW",
+  "caption": "river SW"
+ },
+ {
+  "id": 368,
+  "name": "RiverSE",
+  "caption": "river SE"
+ },
+ {
+  "id": 369,
+  "name": "BrookN",
+  "caption": "brook bed N"
+ },
+ {
+  "id": 370,
+  "name": "BrookS",
+  "caption": "brook bed S"
+ },
+ {
+  "id": 371,
+  "name": "BrookE",
+  "caption": "brook bed E"
+ },
+ {
+  "id": 372,
+  "name": "BrookW",
+  "caption": "brook bed W"
+ },
+ {
+  "id": 373,
+  "name": "BrookNW",
+  "caption": "brook bed NW"
+ },
+ {
+  "id": 374,
+  "name": "BrookNE",
+  "caption": "brook bed NE"
+ },
+ {
+  "id": 375,
+  "name": "BrookSW",
+  "caption": "brook bed SW"
+ },
+ {
+  "id": 376,
+  "name": "BrookSE",
+  "caption": "brook bed SE"
+ },
+ {
+  "id": 377,
+  "name": "BrookTop1",
+  "caption": "brook top"
+ },
+ {
+  "id": 378,
+  "name": "BrookTop2",
+  "caption": "brook top"
+ },
+ {
+  "id": 379,
+  "name": "BrookTop3",
+  "caption": "brook top"
+ },
+ {
+  "id": 380,
+  "name": "BrookTop4",
+  "caption": "brook top"
+ },
+ {
+  "id": 381,
+  "name": "Unused381",
+  "caption": ""
+ },
+ {
+  "id": 382,
+  "name": "Unused382",
+  "caption": ""
+ },
+ {
+  "id": 383,
+  "name": "GrassDryFloor1",
+  "caption": "dry grass"
+ },
+ {
+  "id": 384,
+  "name": "GrassDryFloor2",
+  "caption": "dry grass"
+ },
+ {
+  "id": 385,
+  "name": "GrassDryFloor3",
+  "caption": "dry grass"
+ },
+ {
+  "id": 386,
+  "name": "GrassDryFloor4",
+  "caption": "dry grass"
+ },
+ {
+  "id": 387,
+  "name": "Unused387",
+  "caption": ""
+ },
+ {
+  "id": 388,
+  "name": "SaplingDead",
+  "caption": "dead sapling"
+ },
+ {
+  "id": 389,
+  "name": "ShrubDead",
+  "caption": "dead shrub"
+ },
+ {
+  "id": 390,
+  "name": "GrassDeadFloor1",
+  "caption": "dead grass"
+ },
+ {
+  "id": 391,
+  "name": "GrassDeadFloor2",
+  "caption": "dead grass"
+ },
+ {
+  "id": 392,
+  "name": "GrassDeadFloor3",
+  "caption": "dead grass"
+ },
+ {
+  "id": 393,
+  "name": "GrassDeadFloor4",
+  "caption": "dead grass"
+ },
+ {
+  "id": 394,
+  "name": "GrassLightFloor1",
+  "caption": "light grass"
+ },
+ {
+  "id": 395,
+  "name": "GrassLightFloor2",
+  "caption": "light grass"
+ },
+ {
+  "id": 396,
+  "name": "GrassLightFloor3",
+  "caption": "light grass"
+ },
+ {
+  "id": 397,
+  "name": "GrassLightFloor4",
+  "caption": "light grass"
+ },
+ {
+  "id": 398,
+  "name": "StoneBoulder",
+  "caption": "boulder"
+ },
+ {
+  "id": 399,
+  "name": "LavaBoulder",
+  "caption": "obsidian boulder"
+ },
+ {
+  "id": 400,
+  "name": "FeatureBoulder",
+  "caption": "featstone boulder"
+ },
+ {
+  "id": 401,
+  "name": "StonePebbles1",
+  "caption": "stone pebbles"
+ },
+ {
+  "id": 402,
+  "name": "StonePebbles2",
+  "caption": "stone pebbles"
+ },
+ {
+  "id": 403,
+  "name": "StonePebbles3",
+  "caption": "stone pebbles"
+ },
+ {
+  "id": 404,
+  "name": "StonePebbles4",
+  "caption": "stone pebbles"
+ },
+ {
+  "id": 405,
+  "name": "LavaPebbles1",
+  "caption": "obsidian pebbles"
+ },
+ {
+  "id": 406,
+  "name": "LavaPebbles2",
+  "caption": "obsidian pebbles"
+ },
+ {
+  "id": 407,
+  "name": "LavaPebbles3",
+  "caption": "obsidian pebbles"
+ },
+ {
+  "id": 408,
+  "name": "LavaPebbles4",
+  "caption": "obsidian pebbles"
+ },
+ {
+  "id": 409,
+  "name": "FeaturePebbles1",
+  "caption": "featstone pebbles"
+ },
+ {
+  "id": 410,
+  "name": "FeaturePebbles2",
+  "caption": "featstone pebbles"
+ },
+ {
+  "id": 411,
+  "name": "FeaturePebbles3",
+  "caption": "featstone pebbles"
+ },
+ {
+  "id": 412,
+  "name": "FeaturePebbles4",
+  "caption": "featstone pebbles"
+ },
+ {
+  "id": 413,
+  "name": "MineralWallSmoothRD2",
+  "caption": "smooth vein wall RD2"
+ },
+ {
+  "id": 414,
+  "name": "MineralWallSmoothR2D",
+  "caption": "smooth vein wall R2D"
+ },
+ {
+  "id": 415,
+  "name": "MineralWallSmoothR2U",
+  "caption": "smooth vein wall R2U"
+ },
+ {
+  "id": 416,
+  "name": "MineralWallSmoothRU2",
+  "caption": "smooth vein wall RU2"
+ },
+ {
+  "id": 417,
+  "name": "MineralWallSmoothL2U",
+  "caption": "smooth vein wall L2U"
+ },
+ {
+  "id": 418,
+  "name": "MineralWallSmoothLU2",
+  "caption": "smooth vein wall LU2"
+ },
+ {
+  "id": 419,
+  "name": "MineralWallSmoothL2D",
+  "caption": "smooth vein wall L2D"
+ },
+ {
+  "id": 420,
+  "name": "MineralWallSmoothLD2",
+  "caption": "smooth vein wall LD2"
+ },
+ {
+  "id": 421,
+  "name": "MineralWallSmoothLRUD",
+  "caption": "smooth vein wall LRUD"
+ },
+ {
+  "id": 422,
+  "name": "MineralWallSmoothRUD",
+  "caption": "smooth vein wall RUD"
+ },
+ {
+  "id": 423,
+  "name": "MineralWallSmoothLRD",
+  "caption": "smooth vein wall LRD"
+ },
+ {
+  "id": 424,
+  "name": "MineralWallSmoothLRU",
+  "caption": "smooth vein wall LRU"
+ },
+ {
+  "id": 425,
+  "name": "MineralWallSmoothLUD",
+  "caption": "smooth vein wall LUD"
+ },
+ {
+  "id": 426,
+  "name": "MineralWallSmoothRD",
+  "caption": "smooth vein wall RD"
+ },
+ {
+  "id": 427,
+  "name": "MineralWallSmoothRU",
+  "caption": "smooth vein wall RU"
+ },
+ {
+  "id": 428,
+  "name": "MineralWallSmoothLU",
+  "caption": "smooth vein wall LU"
+ },
+ {
+  "id": 429,
+  "name": "MineralWallSmoothLD",
+  "caption": "smooth vein wall LD"
+ },
+ {
+  "id": 430,
+  "name": "MineralWallSmoothUD",
+  "caption": "smooth vein wall UD"
+ },
+ {
+  "id": 431,
+  "name": "MineralWallSmoothLR",
+  "caption": "smooth vein wall LR"
+ },
+ {
+  "id": 432,
+  "name": "MineralFortification",
+  "caption": "vein fortification"
+ },
+ {
+  "id": 433,
+  "name": "MineralWallWorn1",
+  "caption": "worn 1 vein wall"
+ },
+ {
+  "id": 434,
+  "name": "MineralWallWorn2",
+  "caption": "worn 2 vein wall"
+ },
+ {
+  "id": 435,
+  "name": "MineralWallWorn3",
+  "caption": "worn 3 vein wall"
+ },
+ {
+  "id": 436,
+  "name": "MineralWall",
+  "caption": "vein wall"
+ },
+ {
+  "id": 437,
+  "name": "MineralFloor1",
+  "caption": "vein floor"
+ },
+ {
+  "id": 438,
+  "name": "MineralFloor2",
+  "caption": "vein floor"
+ },
+ {
+  "id": 439,
+  "name": "MineralFloor3",
+  "caption": "vein floor"
+ },
+ {
+  "id": 440,
+  "name": "MineralFloor4",
+  "caption": "vein floor"
+ },
+ {
+  "id": 441,
+  "name": "MineralBoulder",
+  "caption": "vein boulder"
+ },
+ {
+  "id": 442,
+  "name": "MineralPebbles1",
+  "caption": "vein pebbles"
+ },
+ {
+  "id": 443,
+  "name": "MineralPebbles2",
+  "caption": "vein pebbles"
+ },
+ {
+  "id": 444,
+  "name": "MineralPebbles3",
+  "caption": "vein pebbles"
+ },
+ {
+  "id": 445,
+  "name": "MineralPebbles4",
+  "caption": "vein pebbles"
+ },
+ {
+  "id": 446,
+  "name": "FrozenWallSmoothRD2",
+  "caption": "smooth ice wall RD2"
+ },
+ {
+  "id": 447,
+  "name": "FrozenWallSmoothR2D",
+  "caption": "smooth ice wall R2D"
+ },
+ {
+  "id": 448,
+  "name": "FrozenWallSmoothR2U",
+  "caption": "smooth ice wall R2U"
+ },
+ {
+  "id": 449,
+  "name": "FrozenWallSmoothRU2",
+  "caption": "smooth ice wall RU2"
+ },
+ {
+  "id": 450,
+  "name": "FrozenWallSmoothL2U",
+  "caption": "smooth ice wall L2U"
+ },
+ {
+  "id": 451,
+  "name": "FrozenWallSmoothLU2",
+  "caption": "smooth ice wall LU2"
+ },
+ {
+  "id": 452,
+  "name": "FrozenWallSmoothL2D",
+  "caption": "smooth ice wall L2D"
+ },
+ {
+  "id": 453,
+  "name": "FrozenWallSmoothLD2",
+  "caption": "smooth ice wall LD2"
+ },
+ {
+  "id": 454,
+  "name": "FrozenWallSmoothLRUD",
+  "caption": "smooth ice wall LRUD"
+ },
+ {
+  "id": 455,
+  "name": "FrozenWallSmoothRUD",
+  "caption": "smooth ice wall RUD"
+ },
+ {
+  "id": 456,
+  "name": "FrozenWallSmoothLRD",
+  "caption": "smooth ice wall LRD"
+ },
+ {
+  "id": 457,
+  "name": "FrozenWallSmoothLRU",
+  "caption": "smooth ice wall LRU"
+ },
+ {
+  "id": 458,
+  "name": "FrozenWallSmoothLUD",
+  "caption": "smooth ice wall LUD"
+ },
+ {
+  "id": 459,
+  "name": "FrozenWallSmoothRD",
+  "caption": "smooth ice wall RD"
+ },
+ {
+  "id": 460,
+  "name": "FrozenWallSmoothRU",
+  "caption": "smooth ice wall RU"
+ },
+ {
+  "id": 461,
+  "name": "FrozenWallSmoothLU",
+  "caption": "smooth ice wall LU"
+ },
+ {
+  "id": 462,
+  "name": "FrozenWallSmoothLD",
+  "caption": "smooth ice wall LD"
+ },
+ {
+  "id": 463,
+  "name": "FrozenWallSmoothUD",
+  "caption": "smooth ice wall UD"
+ },
+ {
+  "id": 464,
+  "name": "FrozenWallSmoothLR",
+  "caption": "smooth ice wall LR"
+ },
+ {
+  "id": 465,
+  "name": "RiverRampN",
+  "caption": "river ramp N"
+ },
+ {
+  "id": 466,
+  "name": "RiverRampS",
+  "caption": "river ramp S"
+ },
+ {
+  "id": 467,
+  "name": "RiverRampE",
+  "caption": "river ramp E"
+ },
+ {
+  "id": 468,
+  "name": "RiverRampW",
+  "caption": "river ramp W"
+ },
+ {
+  "id": 469,
+  "name": "RiverRampNW",
+  "caption": "river ramp NW"
+ },
+ {
+  "id": 470,
+  "name": "RiverRampNE",
+  "caption": "river ramp NE"
+ },
+ {
+  "id": 471,
+  "name": "RiverRampSW",
+  "caption": "river ramp SW"
+ },
+ {
+  "id": 472,
+  "name": "RiverRampSE",
+  "caption": "river ramp SE"
+ },
+ {
+  "id": 473,
+  "name": "ShoddyConstructedFloor1",
+  "caption": "shoddy constructed floor"
+ },
+ {
+  "id": 474,
+  "name": "ShoddyConstructedFloor2",
+  "caption": "shoddy constructed floor"
+ },
+ {
+  "id": 475,
+  "name": "ShoddyConstructedFloor3",
+  "caption": "shoddy constructed floor"
+ },
+ {
+  "id": 476,
+  "name": "ShoddyConstructedFloor4",
+  "caption": "shoddy constructed floor"
+ },
+ {
+  "id": 477,
+  "name": "ShoddyConstructedStairUD",
+  "caption": "shoddy constructed stair up/down"
+ },
+ {
+  "id": 478,
+  "name": "ShoddyConstructedStairD",
+  "caption": "shoddy constructed stair down"
+ },
+ {
+  "id": 479,
+  "name": "ShoddyConstructedStairU",
+  "caption": "shoddy constructed stair up"
+ },
+ {
+  "id": 480,
+  "name": "Unused480",
+  "caption": ""
+ },
+ {
+  "id": 481,
+  "name": "Unused481",
+  "caption": ""
+ },
+ {
+  "id": 482,
+  "name": "Unused482",
+  "caption": ""
+ },
+ {
+  "id": 483,
+  "name": "Unused483",
+  "caption": ""
+ },
+ {
+  "id": 484,
+  "name": "Unused484",
+  "caption": ""
+ },
+ {
+  "id": 485,
+  "name": "Unused485",
+  "caption": ""
+ },
+ {
+  "id": 486,
+  "name": "Unused486",
+  "caption": ""
+ },
+ {
+  "id": 487,
+  "name": "Unused487",
+  "caption": ""
+ },
+ {
+  "id": 488,
+  "name": "Unused488",
+  "caption": ""
+ },
+ {
+  "id": 489,
+  "name": "ConstructedFloor",
+  "caption": "constructed floor"
+ },
+ {
+  "id": 490,
+  "name": "ConstructedFortification",
+  "caption": "constructed fortification"
+ },
+ {
+  "id": 491,
+  "name": "ConstructedPillar",
+  "caption": "constructed pillar"
+ },
+ {
+  "id": 492,
+  "name": "ConstructedWallRD2",
+  "caption": "constructed wall RD2"
+ },
+ {
+  "id": 493,
+  "name": "ConstructedWallR2D",
+  "caption": "constructed wall R2D"
+ },
+ {
+  "id": 494,
+  "name": "ConstructedWallR2U",
+  "caption": "constructed wall R2U"
+ },
+ {
+  "id": 495,
+  "name": "ConstructedWallRU2",
+  "caption": "constructed wall RU2"
+ },
+ {
+  "id": 496,
+  "name": "ConstructedWallL2U",
+  "caption": "constructed wall L2U"
+ },
+ {
+  "id": 497,
+  "name": "ConstructedWallLU2",
+  "caption": "constructed wall LU2"
+ },
+ {
+  "id": 498,
+  "name": "ConstructedWallL2D",
+  "caption": "constructed wall L2D"
+ },
+ {
+  "id": 499,
+  "name": "ConstructedWallLD2",
+  "caption": "constructed wall LD2"
+ },
+ {
+  "id": 500,
+  "name": "ConstructedWallLRUD",
+  "caption": "constructed wall LRUD"
+ },
+ {
+  "id": 501,
+  "name": "ConstructedWallRUD",
+  "caption": "constructed wall RUD"
+ },
+ {
+  "id": 502,
+  "name": "ConstructedWallLRD",
+  "caption": "constructed wall LRD"
+ },
+ {
+  "id": 503,
+  "name": "ConstructedWallLRU",
+  "caption": "constructed wall LRU"
+ },
+ {
+  "id": 504,
+  "name": "ConstructedWallLUD",
+  "caption": "constructed wall LUD"
+ },
+ {
+  "id": 505,
+  "name": "ConstructedWallRD",
+  "caption": "constructed wall RD"
+ },
+ {
+  "id": 506,
+  "name": "ConstructedWallRU",
+  "caption": "constructed wall RU"
+ },
+ {
+  "id": 507,
+  "name": "ConstructedWallLU",
+  "caption": "constructed wall LU"
+ },
+ {
+  "id": 508,
+  "name": "ConstructedWallLD",
+  "caption": "constructed wall LD"
+ },
+ {
+  "id": 509,
+  "name": "ConstructedWallUD",
+  "caption": "constructed wall UD"
+ },
+ {
+  "id": 510,
+  "name": "ConstructedWallLR",
+  "caption": "constructed wall LR"
+ },
+ {
+  "id": 511,
+  "name": "ConstructedStairUD",
+  "caption": "constructed stair up/down"
+ },
+ {
+  "id": 512,
+  "name": "ConstructedStairD",
+  "caption": "constructed stair down"
+ },
+ {
+  "id": 513,
+  "name": "ConstructedStairU",
+  "caption": "constructed stair up"
+ },
+ {
+  "id": 514,
+  "name": "ConstructedRamp",
+  "caption": "constructed ramp"
+ },
+ {
+  "id": 515,
+  "name": "StoneFloorTrackN",
+  "caption": "stone floor track N"
+ },
+ {
+  "id": 516,
+  "name": "StoneFloorTrackS",
+  "caption": "stone floor track S"
+ },
+ {
+  "id": 517,
+  "name": "StoneFloorTrackE",
+  "caption": "stone floor track E"
+ },
+ {
+  "id": 518,
+  "name": "StoneFloorTrackW",
+  "caption": "stone floor track W"
+ },
+ {
+  "id": 519,
+  "name": "StoneFloorTrackNS",
+  "caption": "stone floor track NS"
+ },
+ {
+  "id": 520,
+  "name": "StoneFloorTrackNE",
+  "caption": "stone floor track NE"
+ },
+ {
+  "id": 521,
+  "name": "StoneFloorTrackNW",
+  "caption": "stone floor track NW"
+ },
+ {
+  "id": 522,
+  "name": "StoneFloorTrackSE",
+  "caption": "stone floor track SE"
+ },
+ {
+  "id": 523,
+  "name": "StoneFloorTrackSW",
+  "caption": "stone floor track SW"
+ },
+ {
+  "id": 524,
+  "name": "StoneFloorTrackEW",
+  "caption": "stone floor track EW"
+ },
+ {
+  "id": 525,
+  "name": "StoneFloorTrackNSE",
+  "caption": "stone floor track NSE"
+ },
+ {
+  "id": 526,
+  "name": "StoneFloorTrackNSW",
+  "caption": "stone floor track NSW"
+ },
+ {
+  "id": 527,
+  "name": "StoneFloorTrackNEW",
+  "caption": "stone floor track NEW"
+ },
+ {
+  "id": 528,
+  "name": "StoneFloorTrackSEW",
+  "caption": "stone floor track SEW"
+ },
+ {
+  "id": 529,
+  "name": "StoneFloorTrackNSEW",
+  "caption": "stone floor track NSEW"
+ },
+ {
+  "id": 530,
+  "name": "LavaFloorTrackN",
+  "caption": "obsidian floor track N"
+ },
+ {
+  "id": 531,
+  "name": "LavaFloorTrackS",
+  "caption": "obsidian floor track S"
+ },
+ {
+  "id": 532,
+  "name": "LavaFloorTrackE",
+  "caption": "obsidian floor track E"
+ },
+ {
+  "id": 533,
+  "name": "LavaFloorTrackW",
+  "caption": "obsidian floor track W"
+ },
+ {
+  "id": 534,
+  "name": "LavaFloorTrackNS",
+  "caption": "obsidian floor track NS"
+ },
+ {
+  "id": 535,
+  "name": "LavaFloorTrackNE",
+  "caption": "obsidian floor track NE"
+ },
+ {
+  "id": 536,
+  "name": "LavaFloorTrackNW",
+  "caption": "obsidian floor track NW"
+ },
+ {
+  "id": 537,
+  "name": "LavaFloorTrackSE",
+  "caption": "obsidian floor track SE"
+ },
+ {
+  "id": 538,
+  "name": "LavaFloorTrackSW",
+  "caption": "obsidian floor track SW"
+ },
+ {
+  "id": 539,
+  "name": "LavaFloorTrackEW",
+  "caption": "obsidian floor track EW"
+ },
+ {
+  "id": 540,
+  "name": "LavaFloorTrackNSE",
+  "caption": "obsidian floor track NSE"
+ },
+ {
+  "id": 541,
+  "name": "LavaFloorTrackNSW",
+  "caption": "obsidian floor track NSW"
+ },
+ {
+  "id": 542,
+  "name": "LavaFloorTrackNEW",
+  "caption": "obsidian floor track NEW"
+ },
+ {
+  "id": 543,
+  "name": "LavaFloorTrackSEW",
+  "caption": "obsidian floor track SEW"
+ },
+ {
+  "id": 544,
+  "name": "LavaFloorTrackNSEW",
+  "caption": "obsidian floor track NSEW"
+ },
+ {
+  "id": 545,
+  "name": "FeatureFloorTrackN",
+  "caption": "featstone floor track N"
+ },
+ {
+  "id": 546,
+  "name": "FeatureFloorTrackS",
+  "caption": "featstone floor track S"
+ },
+ {
+  "id": 547,
+  "name": "FeatureFloorTrackE",
+  "caption": "featstone floor track E"
+ },
+ {
+  "id": 548,
+  "name": "FeatureFloorTrackW",
+  "caption": "featstone floor track W"
+ },
+ {
+  "id": 549,
+  "name": "FeatureFloorTrackNS",
+  "caption": "featstone floor track NS"
+ },
+ {
+  "id": 550,
+  "name": "FeatureFloorTrackNE",
+  "caption": "featstone floor track NE"
+ },
+ {
+  "id": 551,
+  "name": "FeatureFloorTrackNW",
+  "caption": "featstone floor track NW"
+ },
+ {
+  "id": 552,
+  "name": "FeatureFloorTrackSE",
+  "caption": "featstone floor track SE"
+ },
+ {
+  "id": 553,
+  "name": "FeatureFloorTrackSW",
+  "caption": "featstone floor track SW"
+ },
+ {
+  "id": 554,
+  "name": "FeatureFloorTrackEW",
+  "caption": "featstone floor track EW"
+ },
+ {
+  "id": 555,
+  "name": "FeatureFloorTrackNSE",
+  "caption": "featstone floor track NSE"
+ },
+ {
+  "id": 556,
+  "name": "FeatureFloorTrackNSW",
+  "caption": "featstone floor track NSW"
+ },
+ {
+  "id": 557,
+  "name": "FeatureFloorTrackNEW",
+  "caption": "featstone floor track NEW"
+ },
+ {
+  "id": 558,
+  "name": "FeatureFloorTrackSEW",
+  "caption": "featstone floor track SEW"
+ },
+ {
+  "id": 559,
+  "name": "FeatureFloorTrackNSEW",
+  "caption": "featstone floor track NSEW"
+ },
+ {
+  "id": 560,
+  "name": "MineralFloorTrackN",
+  "caption": "vein floor track N"
+ },
+ {
+  "id": 561,
+  "name": "MineralFloorTrackS",
+  "caption": "vein floor track S"
+ },
+ {
+  "id": 562,
+  "name": "MineralFloorTrackE",
+  "caption": "vein floor track E"
+ },
+ {
+  "id": 563,
+  "name": "MineralFloorTrackW",
+  "caption": "vein floor track W"
+ },
+ {
+  "id": 564,
+  "name": "MineralFloorTrackNS",
+  "caption": "vein floor track NS"
+ },
+ {
+  "id": 565,
+  "name": "MineralFloorTrackNE",
+  "caption": "vein floor track NE"
+ },
+ {
+  "id": 566,
+  "name": "MineralFloorTrackNW",
+  "caption": "vein floor track NW"
+ },
+ {
+  "id": 567,
+  "name": "MineralFloorTrackSE",
+  "caption": "vein floor track SE"
+ },
+ {
+  "id": 568,
+  "name": "MineralFloorTrackSW",
+  "caption": "vein floor track SW"
+ },
+ {
+  "id": 569,
+  "name": "MineralFloorTrackEW",
+  "caption": "vein floor track EW"
+ },
+ {
+  "id": 570,
+  "name": "MineralFloorTrackNSE",
+  "caption": "vein floor track NSE"
+ },
+ {
+  "id": 571,
+  "name": "MineralFloorTrackNSW",
+  "caption": "vein floor track NSW"
+ },
+ {
+  "id": 572,
+  "name": "MineralFloorTrackNEW",
+  "caption": "vein floor track NEW"
+ },
+ {
+  "id": 573,
+  "name": "MineralFloorTrackSEW",
+  "caption": "vein floor track SEW"
+ },
+ {
+  "id": 574,
+  "name": "MineralFloorTrackNSEW",
+  "caption": "vein floor track NSEW"
+ },
+ {
+  "id": 575,
+  "name": "FrozenFloorTrackN",
+  "caption": "ice floor track N"
+ },
+ {
+  "id": 576,
+  "name": "FrozenFloorTrackS",
+  "caption": "ice floor track S"
+ },
+ {
+  "id": 577,
+  "name": "FrozenFloorTrackE",
+  "caption": "ice floor track E"
+ },
+ {
+  "id": 578,
+  "name": "FrozenFloorTrackW",
+  "caption": "ice floor track W"
+ },
+ {
+  "id": 579,
+  "name": "FrozenFloorTrackNS",
+  "caption": "ice floor track NS"
+ },
+ {
+  "id": 580,
+  "name": "FrozenFloorTrackNE",
+  "caption": "ice floor track NE"
+ },
+ {
+  "id": 581,
+  "name": "FrozenFloorTrackNW",
+  "caption": "ice floor track NW"
+ },
+ {
+  "id": 582,
+  "name": "FrozenFloorTrackSE",
+  "caption": "ice floor track SE"
+ },
+ {
+  "id": 583,
+  "name": "FrozenFloorTrackSW",
+  "caption": "ice floor track SW"
+ },
+ {
+  "id": 584,
+  "name": "FrozenFloorTrackEW",
+  "caption": "ice floor track EW"
+ },
+ {
+  "id": 585,
+  "name": "FrozenFloorTrackNSE",
+  "caption": "ice floor track NSE"
+ },
+ {
+  "id": 586,
+  "name": "FrozenFloorTrackNSW",
+  "caption": "ice floor track NSW"
+ },
+ {
+  "id": 587,
+  "name": "FrozenFloorTrackNEW",
+  "caption": "ice floor track NEW"
+ },
+ {
+  "id": 588,
+  "name": "FrozenFloorTrackSEW",
+  "caption": "ice floor track SEW"
+ },
+ {
+  "id": 589,
+  "name": "FrozenFloorTrackNSEW",
+  "caption": "ice floor track NSEW"
+ },
+ {
+  "id": 590,
+  "name": "ConstructedFloorTrackN",
+  "caption": "constructed floor track N"
+ },
+ {
+  "id": 591,
+  "name": "ConstructedFloorTrackS",
+  "caption": "constructed floor track S"
+ },
+ {
+  "id": 592,
+  "name": "ConstructedFloorTrackE",
+  "caption": "constructed floor track E"
+ },
+ {
+  "id": 593,
+  "name": "ConstructedFloorTrackW",
+  "caption": "constructed floor track W"
+ },
+ {
+  "id": 594,
+  "name": "ConstructedFloorTrackNS",
+  "caption": "constructed floor track NS"
+ },
+ {
+  "id": 595,
+  "name": "ConstructedFloorTrackNE",
+  "caption": "constructed floor track NE"
+ },
+ {
+  "id": 596,
+  "name": "ConstructedFloorTrackNW",
+  "caption": "constructed floor track NW"
+ },
+ {
+  "id": 597,
+  "name": "ConstructedFloorTrackSE",
+  "caption": "constructed floor track SE"
+ },
+ {
+  "id": 598,
+  "name": "ConstructedFloorTrackSW",
+  "caption": "constructed floor track SW"
+ },
+ {
+  "id": 599,
+  "name": "ConstructedFloorTrackEW",
+  "caption": "constructed floor track EW"
+ },
+ {
+  "id": 600,
+  "name": "ConstructedFloorTrackNSE",
+  "caption": "constructed floor track NSE"
+ },
+ {
+  "id": 601,
+  "name": "ConstructedFloorTrackNSW",
+  "caption": "constructed floor track NSW"
+ },
+ {
+  "id": 602,
+  "name": "ConstructedFloorTrackNEW",
+  "caption": "constructed floor track NEW"
+ },
+ {
+  "id": 603,
+  "name": "ConstructedFloorTrackSEW",
+  "caption": "constructed floor track SEW"
+ },
+ {
+  "id": 604,
+  "name": "ConstructedFloorTrackNSEW",
+  "caption": "constructed floor track NSEW"
+ },
+ {
+  "id": 605,
+  "name": "StoneRampTrackN",
+  "caption": "stone ramp track N"
+ },
+ {
+  "id": 606,
+  "name": "StoneRampTrackS",
+  "caption": "stone ramp track S"
+ },
+ {
+  "id": 607,
+  "name": "StoneRampTrackE",
+  "caption": "stone ramp track E"
+ },
+ {
+  "id": 608,
+  "name": "StoneRampTrackW",
+  "caption": "stone ramp track W"
+ },
+ {
+  "id": 609,
+  "name": "StoneRampTrackNS",
+  "caption": "stone ramp track NS"
+ },
+ {
+  "id": 610,
+  "name": "StoneRampTrackNE",
+  "caption": "stone ramp track NE"
+ },
+ {
+  "id": 611,
+  "name": "StoneRampTrackNW",
+  "caption": "stone ramp track NW"
+ },
+ {
+  "id": 612,
+  "name": "StoneRampTrackSE",
+  "caption": "stone ramp track SE"
+ },
+ {
+  "id": 613,
+  "name": "StoneRampTrackSW",
+  "caption": "stone ramp track SW"
+ },
+ {
+  "id": 614,
+  "name": "StoneRampTrackEW",
+  "caption": "stone ramp track EW"
+ },
+ {
+  "id": 615,
+  "name": "StoneRampTrackNSE",
+  "caption": "stone ramp track NSE"
+ },
+ {
+  "id": 616,
+  "name": "StoneRampTrackNSW",
+  "caption": "stone ramp track NSW"
+ },
+ {
+  "id": 617,
+  "name": "StoneRampTrackNEW",
+  "caption": "stone ramp track NEW"
+ },
+ {
+  "id": 618,
+  "name": "StoneRampTrackSEW",
+  "caption": "stone ramp track SEW"
+ },
+ {
+  "id": 619,
+  "name": "StoneRampTrackNSEW",
+  "caption": "stone ramp track NSEW"
+ },
+ {
+  "id": 620,
+  "name": "LavaRampTrackN",
+  "caption": "obsidian ramp track N"
+ },
+ {
+  "id": 621,
+  "name": "LavaRampTrackS",
+  "caption": "obsidian ramp track S"
+ },
+ {
+  "id": 622,
+  "name": "LavaRampTrackE",
+  "caption": "obsidian ramp track E"
+ },
+ {
+  "id": 623,
+  "name": "LavaRampTrackW",
+  "caption": "obsidian ramp track W"
+ },
+ {
+  "id": 624,
+  "name": "LavaRampTrackNS",
+  "caption": "obsidian ramp track NS"
+ },
+ {
+  "id": 625,
+  "name": "LavaRampTrackNE",
+  "caption": "obsidian ramp track NE"
+ },
+ {
+  "id": 626,
+  "name": "LavaRampTrackNW",
+  "caption": "obsidian ramp track NW"
+ },
+ {
+  "id": 627,
+  "name": "LavaRampTrackSE",
+  "caption": "obsidian ramp track SE"
+ },
+ {
+  "id": 628,
+  "name": "LavaRampTrackSW",
+  "caption": "obsidian ramp track SW"
+ },
+ {
+  "id": 629,
+  "name": "LavaRampTrackEW",
+  "caption": "obsidian ramp track EW"
+ },
+ {
+  "id": 630,
+  "name": "LavaRampTrackNSE",
+  "caption": "obsidian ramp track NSE"
+ },
+ {
+  "id": 631,
+  "name": "LavaRampTrackNSW",
+  "caption": "obsidian ramp track NSW"
+ },
+ {
+  "id": 632,
+  "name": "LavaRampTrackNEW",
+  "caption": "obsidian ramp track NEW"
+ },
+ {
+  "id": 633,
+  "name": "LavaRampTrackSEW",
+  "caption": "obsidian ramp track SEW"
+ },
+ {
+  "id": 634,
+  "name": "LavaRampTrackNSEW",
+  "caption": "obsidian ramp track NSEW"
+ },
+ {
+  "id": 635,
+  "name": "FeatureRampTrackN",
+  "caption": "featstone ramp track N"
+ },
+ {
+  "id": 636,
+  "name": "FeatureRampTrackS",
+  "caption": "featstone ramp track S"
+ },
+ {
+  "id": 637,
+  "name": "FeatureRampTrackE",
+  "caption": "featstone ramp track E"
+ },
+ {
+  "id": 638,
+  "name": "FeatureRampTrackW",
+  "caption": "featstone ramp track W"
+ },
+ {
+  "id": 639,
+  "name": "FeatureRampTrackNS",
+  "caption": "featstone ramp track NS"
+ },
+ {
+  "id": 640,
+  "name": "FeatureRampTrackNE",
+  "caption": "featstone ramp track NE"
+ },
+ {
+  "id": 641,
+  "name": "FeatureRampTrackNW",
+  "caption": "featstone ramp track NW"
+ },
+ {
+  "id": 642,
+  "name": "FeatureRampTrackSE",
+  "caption": "featstone ramp track SE"
+ },
+ {
+  "id": 643,
+  "name": "FeatureRampTrackSW",
+  "caption": "featstone ramp track SW"
+ },
+ {
+  "id": 644,
+  "name": "FeatureRampTrackEW",
+  "caption": "featstone ramp track EW"
+ },
+ {
+  "id": 645,
+  "name": "FeatureRampTrackNSE",
+  "caption": "featstone ramp track NSE"
+ },
+ {
+  "id": 646,
+  "name": "FeatureRampTrackNSW",
+  "caption": "featstone ramp track NSW"
+ },
+ {
+  "id": 647,
+  "name": "FeatureRampTrackNEW",
+  "caption": "featstone ramp track NEW"
+ },
+ {
+  "id": 648,
+  "name": "FeatureRampTrackSEW",
+  "caption": "featstone ramp track SEW"
+ },
+ {
+  "id": 649,
+  "name": "FeatureRampTrackNSEW",
+  "caption": "featstone ramp track NSEW"
+ },
+ {
+  "id": 650,
+  "name": "MineralRampTrackN",
+  "caption": "vein ramp track N"
+ },
+ {
+  "id": 651,
+  "name": "MineralRampTrackS",
+  "caption": "vein ramp track S"
+ },
+ {
+  "id": 652,
+  "name": "MineralRampTrackE",
+  "caption": "vein ramp track E"
+ },
+ {
+  "id": 653,
+  "name": "MineralRampTrackW",
+  "caption": "vein ramp track W"
+ },
+ {
+  "id": 654,
+  "name": "MineralRampTrackNS",
+  "caption": "vein ramp track NS"
+ },
+ {
+  "id": 655,
+  "name": "MineralRampTrackNE",
+  "caption": "vein ramp track NE"
+ },
+ {
+  "id": 656,
+  "name": "MineralRampTrackNW",
+  "caption": "vein ramp track NW"
+ },
+ {
+  "id": 657,
+  "name": "MineralRampTrackSE",
+  "caption": "vein ramp track SE"
+ },
+ {
+  "id": 658,
+  "name": "MineralRampTrackSW",
+  "caption": "vein ramp track SW"
+ },
+ {
+  "id": 659,
+  "name": "MineralRampTrackEW",
+  "caption": "vein ramp track EW"
+ },
+ {
+  "id": 660,
+  "name": "MineralRampTrackNSE",
+  "caption": "vein ramp track NSE"
+ },
+ {
+  "id": 661,
+  "name": "MineralRampTrackNSW",
+  "caption": "vein ramp track NSW"
+ },
+ {
+  "id": 662,
+  "name": "MineralRampTrackNEW",
+  "caption": "vein ramp track NEW"
+ },
+ {
+  "id": 663,
+  "name": "MineralRampTrackSEW",
+  "caption": "vein ramp track SEW"
+ },
+ {
+  "id": 664,
+  "name": "MineralRampTrackNSEW",
+  "caption": "vein ramp track NSEW"
+ },
+ {
+  "id": 665,
+  "name": "FrozenRampTrackN",
+  "caption": "ice ramp track N"
+ },
+ {
+  "id": 666,
+  "name": "FrozenRampTrackS",
+  "caption": "ice ramp track S"
+ },
+ {
+  "id": 667,
+  "name": "FrozenRampTrackE",
+  "caption": "ice ramp track E"
+ },
+ {
+  "id": 668,
+  "name": "FrozenRampTrackW",
+  "caption": "ice ramp track W"
+ },
+ {
+  "id": 669,
+  "name": "FrozenRampTrackNS",
+  "caption": "ice ramp track NS"
+ },
+ {
+  "id": 670,
+  "name": "FrozenRampTrackNE",
+  "caption": "ice ramp track NE"
+ },
+ {
+  "id": 671,
+  "name": "FrozenRampTrackNW",
+  "caption": "ice ramp track NW"
+ },
+ {
+  "id": 672,
+  "name": "FrozenRampTrackSE",
+  "caption": "ice ramp track SE"
+ },
+ {
+  "id": 673,
+  "name": "FrozenRampTrackSW",
+  "caption": "ice ramp track SW"
+ },
+ {
+  "id": 674,
+  "name": "FrozenRampTrackEW",
+  "caption": "ice ramp track EW"
+ },
+ {
+  "id": 675,
+  "name": "FrozenRampTrackNSE",
+  "caption": "ice ramp track NSE"
+ },
+ {
+  "id": 676,
+  "name": "FrozenRampTrackNSW",
+  "caption": "ice ramp track NSW"
+ },
+ {
+  "id": 677,
+  "name": "FrozenRampTrackNEW",
+  "caption": "ice ramp track NEW"
+ },
+ {
+  "id": 678,
+  "name": "FrozenRampTrackSEW",
+  "caption": "ice ramp track SEW"
+ },
+ {
+  "id": 679,
+  "name": "FrozenRampTrackNSEW",
+  "caption": "ice ramp track NSEW"
+ },
+ {
+  "id": 680,
+  "name": "ConstructedRampTrackN",
+  "caption": "constructed ramp track N"
+ },
+ {
+  "id": 681,
+  "name": "ConstructedRampTrackS",
+  "caption": "constructed ramp track S"
+ },
+ {
+  "id": 682,
+  "name": "ConstructedRampTrackE",
+  "caption": "constructed ramp track E"
+ },
+ {
+  "id": 683,
+  "name": "ConstructedRampTrackW",
+  "caption": "constructed ramp track W"
+ },
+ {
+  "id": 684,
+  "name": "ConstructedRampTrackNS",
+  "caption": "constructed ramp track NS"
+ },
+ {
+  "id": 685,
+  "name": "ConstructedRampTrackNE",
+  "caption": "constructed ramp track NE"
+ },
+ {
+  "id": 686,
+  "name": "ConstructedRampTrackNW",
+  "caption": "constructed ramp track NW"
+ },
+ {
+  "id": 687,
+  "name": "ConstructedRampTrackSE",
+  "caption": "constructed ramp track SE"
+ },
+ {
+  "id": 688,
+  "name": "ConstructedRampTrackSW",
+  "caption": "constructed ramp track SW"
+ },
+ {
+  "id": 689,
+  "name": "ConstructedRampTrackEW",
+  "caption": "constructed ramp track EW"
+ },
+ {
+  "id": 690,
+  "name": "ConstructedRampTrackNSE",
+  "caption": "constructed ramp track NSE"
+ },
+ {
+  "id": 691,
+  "name": "ConstructedRampTrackNSW",
+  "caption": "constructed ramp track NSW"
+ },
+ {
+  "id": 692,
+  "name": "ConstructedRampTrackNEW",
+  "caption": "constructed ramp track NEW"
+ },
+ {
+  "id": 693,
+  "name": "ConstructedRampTrackSEW",
+  "caption": "constructed ramp track SEW"
+ },
+ {
+  "id": 694,
+  "name": "ConstructedRampTrackNSEW",
+  "caption": "constructed ramp track NSEW"
+ },
+ {
+  "id": 695,
+  "name": "Unused695",
+  "caption": ""
+ },
+ {
+  "id": 696,
+  "name": "Unused696",
+  "caption": ""
+ }
+]

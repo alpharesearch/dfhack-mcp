@@ -62,27 +62,109 @@ Known DFHack RPC quirks (learned the hard way, encoded into the tools below):
   after `reveal`, in-game reports, or by watching dwarves take mining jobs.
 * CoreProtocol RunCommand returns EmptyMessage - command console output arrives as
   streamed RPC_REPLY_TEXT frames (printed to this server's log, not in the tool result).
-* CoreProtocol RunLua takes module+function, NOT a code string. The DFHack `lua`
-  command also cannot eval code. No arbitrary Lua eval over RPC.
+* CoreProtocol RunLua takes module+function, NOT a code string - but the DFHack **`lua`
+  command DOES evaluate code over RunCommand**. Verified on 53.17-r1: `lua print(1+1)`
+  returns the text "2". That reopens what this file called unreachable:
+  `reqscript("quickfort").apply_blueprint` (rectangle designation AND building placement
+  at an explicit pos), `dfhack.zone`, `dfhack.stockpile`, `df.global.world.jobs.list`
+  (the job queue), `devel/query` (evaluate an expression against live internals).
+  Nothing in the proto list is required when `lua` is reachable.
+* Why that stayed invisible: RunCommand answers EmptyMessage and the transport *printed*
+  RPC_REPLY_TEXT frames into the server log. With dfhack_remote.drain_replies() the text
+  is returned to the caller - the `lua` door becomes visible in the tool output.
 * CoreTextNotification carries `fragments` (CoreTextFragment.text), not `.text`.
+* GetBlockList z BOUNDS ARE HALF-OPEN: it answers [min_z, max_z), so an inclusive
+  request silently LOSES ITS TOP z-LEVEL, and a span-1 request (min_z == max_z)
+  answers ZERO blocks. Verified live: 165-165 -> 0; 164-165 -> only z=164;
+  163-165 -> z=163,164. worldmodel.window_request() adds the +1 and keeps span >= 2.
+* The +1 overshoot spills into the next 12-z cache chunk: filter cached blocks to the
+  chunk's nominal z range, or a boundary level is counted TWICE (measured live: 288
+  blocks for one level of a 12x12 map, i.e. a doubled census).
+* RemoteFortressReader rejects big replies: ~68 MB logs "reply too large" and ~850 MB
+  answers CR_LINK_FAILURE, which KILLS the TCP socket - so every fetch failure must
+  drop and rebind the connection, then retry a smaller window (worldmodel._fetch).
+  Reading all 191 z-levels costs ~120 MB: that is opt-in, never a default.
+* Unit SPECIES is not in RemoteFortressReader: UnitDefinition.race is a MatPair
+  material reference (a dwarf reports (572,1)), not a species. Decode species from the
+  BasicApi ListUnits race INDEX against GetCreatureRaws index -> name. GetCreatureRaws
+  answers 18.8 MB and is rejected, so fetch it in 150-raw chunks
+  (GetPartialCreatureRaws) and keep only the names.
+* GetBuildingDefList is full of placeholder defs named 'NONE' whose
+  (building_type, subtype, custom) keys COLLIDE with real buildings (verified: 'Furnace'
+  shares keys with a 'NONE' row). Keep real names only and resolve instances with a
+  fallback chain: exact key -> (bt,subtype) -> bt.
+* Item materials: generated-creature materials (REMAINS, CORPSEPIECE) are absent from
+  GetMaterialList (mat_type 434 has no entry). Label them in words, never as ints.
+* Labors ARE readable: ListUnitsIn(mask=BasicUnitInfoMask(labors=True)) fills
+  BasicUnitInfo.labors (labor ids; name them via ListEnums.unit_labor). This is how
+  "do I have 2 miners?" becomes detectable instead of guessable.
+* GetViewInfo cursor is a SENTINEL (-30000) when the keyboard cursor is off - bound
+  check it before using it as a location.
+* QUICKFORT BUILD MODE (verified building a trade depot, 53.17-r1):
+  - The modeline sets the mode: '#name' is a DIG blueprint, so build keys answer
+    'invalid key sequence'. apply_blueprint takes mode:"dig"|"build" and writes the
+    matching modeline.
+  - Build keys come from hack/docs/docs/guides/quickfort-user-guide.txt; the trade
+    depot key is 'D' and its footprint is 5x5 (one cell covers 25 tiles, so a second
+    apply on the same site reports 'Unsuitable tiles for building: 25' - the first
+    blueprint is occupying it).
+  - Cells routinely contain quotes/commas, so the CSV must be csv.writer-quoted
+    ("D{name=""x""}"), exactly like the shipped dreamfort.csv. A raw "," join corrupts
+    cells.
+  - 'mat="Boulder"' is NOT a build-cell property: 'unhandled property: "mat"="Boulder"'.
+  - THE MATERIAL DIAGNOSTIC: 'quickfort orders <file> --dry-run' prints what quickfort
+    would MANUFACTURE for the build ('Would order blocks: 1'), NOT a hard game
+    requirement. It misled me here: the trade depot was built from loose boulders with
+    no blocks at all. Read it as "quickfort's plan", never as "the game's rule".
+  - CURSOR ANCHOR (verified): a multi-tile building anchors its footprint CENTRED on the
+    cursor, so the top-LEFT lands at (cursor_x-2, cursor_y-2) for a 5x5, and on this map
+    a '#build' apply passed -c 108,9,165 produced a building at x106,y7 ELEV 39 (z167):
+    z lands +2 from what is sent. To target elevation E, send z = E + 128 - 2.
+  - Queued blueprints DO get built by dwarves given game time (unpause). 'build-now'
+    only finishes buildings already under construction.
+  - quickfort 'run' DESIGNATES a building; it is then a job that needs a builder dwarf
+    and materials. 'build-now' completes only buildings already UNDER CONSTRUCTION
+    (verified: it reported 'Completed 9 construction jobs' and left the depot alone).
+  - RemoteFortressReader does NOT report queued building blueprints: a designated-but-
+    unbuilt building is invisible to world_objects/world_map/fort_progress. A rung flips
+    to [x] only when the building exists.
+  - DFHack console output for an unknown command arrives as 'X is not a recognized
+    command.' plus a CR_NOT_IMPLEMENTED reply; run_command now returns that as data
+    instead of an HTTP 500 stack trace.
+  - Trade depot gameplay (wiki Quickstart): 'b-T', needs 3 logs/boulders, in a 5x5 room,
+    and needs a 3-WIDE path from the depot to the map edge - wagons cannot cross stairs
+    or traps. This fort's only surface link is a 1-wide down-stair shaft at x56,y114-118
+    (elev 39), verified from the glyph map, so a depot on elev 37 is wagon-inaccessible.
+* Fortress and adventure mode are DIFFERENT GAMES: gate every map projection on
+  GetWorldInfo mode (MODE_DWARF). Zones/stockpiles/pastures ARE buildings in DF, so the
+  building list covers them.
 * RemoteFortressReader.PassKeyboardEvent injects SDL1.2 key events (type 700/701,
   sym = ascii/SDL1 key code) - this can drive the real game UI, e.g. toggle the
   keyboard cursor (`toggle-kbd-cursor`), move it with arrows, and press `d` to
   designate like a player. Verify cursor position via get_view_info.
 """
 
+import asyncio
+import shutil
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi_mcp import FastApiMCP
 from dfhack_client_python.dfhack_remote import (connect, close, ensure_connection, drop_connection,
-                                                connection_state, DFHackTransportError)
+                                                connection_state, DFHackError, DFHackTransportError,
+                                                drain_replies)
+import json
 from dfhack_client_python.dfhack import (GetVersion, GetDFVersion, GetUnitList, GetWorldInfo,
 GetViewInfo, ListUnits, RunCommand, GetMapInfo, GetBlockList, GetTiletypeList, GetReports,
-GetPauseState, SetPauseState, SendDigCommand, PassKeyboardEvent, CopyScreen)
+GetPauseState, SetPauseState, SendDigCommand, PassKeyboardEvent, CopyScreen, SetUnitLabors,
+GetBuildingDefList, ResetMapHashes)
+from dfhack_client_python.py_export.Basic_pb2 import UnitLaborState
+from dfhack_client_python.py_export.BasicApi_pb2 import SetUnitLaborsIn
 from dfhack_client_python.py_export.BasicApi_pb2 import ListUnitsIn, GetWorldInfoOut
 from dfhack_client_python.py_export.CoreProtocol_pb2 import CoreRunCommandRequest
 from dfhack_client_python.py_export.RemoteFortressReader_pb2 import (BlockRequest, DigCommand,
 Coord, SingleBool, KeyboardEvent)
+import worldmodel as WM
+import luaops as LO
 
 # SDL1.2 key codes (DF runs on SDL1): KeyboardEvent mirrors SDL_Event.key
 # (type, which, state, scancode, sym, mod, unicode). scancode is unused by SDL1.
@@ -102,6 +184,11 @@ DIG_DESIGNATIONS = {v.name: v.number for v in
     DigCommand.DESCRIPTOR.fields_by_name['designation'].enum_type.values}
 
 GAME_Z_OFFSET = 128  # game elevation = rpc_z - GAME_Z_OFFSET (this save)
+
+# The preprocessing layer (see worldmodel.py). One instance per process: it owns the
+# decode tables (tiletype/item/material/building/profession names), the z-chunk block
+# cache, and the previous-snapshot used for delta reporting.
+world = WM.WorldModel()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -283,8 +370,27 @@ async def run_command(request: Request):
     body = await request.json()
     command = body["command"]
     arguments = body.get("arguments", [])
-    await RunCommand(input = CoreRunCommandRequest(command = command, arguments = arguments))
-    return {"command": command, "arguments": list(arguments), "success": True}
+    # DFHack answers CR_NOT_IMPLEMENTED for an unknown command and CR_LINK_FAILURE for a
+    # dead socket; both arrived as unhandled exceptions (HTTP 500 + a stack trace in the
+    # log). Report them as data so the caller can read the failure and move on.
+    drain_replies()                                   # drop anything from an earlier call
+    try:
+        await RunCommand(input = CoreRunCommandRequest(command = command, arguments = arguments))
+    except DFHackError as e:
+        out = drain_replies()
+        return {"command": command, "arguments": list(arguments), "success": False,
+                "error": str(e),
+                "output": "\n".join(out),
+                "hint": "console text (including the reason for a failure) is returned in "
+                        "'output' - see 'help <command>' for usage"}
+    except DFHackTransportError as e:
+        return {"command": command, "arguments": list(arguments), "success": False,
+                "error": f"transport: {e}", "hint": "the game died mid-command; the next "
+                                                     "call reconnects by itself"}
+    return {"command": command, "arguments": list(arguments), "success": True,
+            "output": "\n".join(drain_replies()),
+            "note": "RunCommand's reply body is EmptyMessage; DFHack's console text is "
+                    "captured from RPC_REPLY_TEXT frames into 'output'"}
 
 @app.get("/get-reports", operation_id="get_reports")
 async def get_reports():
@@ -348,24 +454,79 @@ async def pass_keyboard_event(request: Request):
     return {"key": key, "sym": sym, "sent": repeat, "success": True}
 
 import os
-BLUEPRINT_DIR = os.getenv("DFHACK_BLUEPRINT_DIR", "")
+# Blueprint authoring happens INSIDE the repo (git-controlled, workspace permissions);
+# the game directory is a copy target, because quickfort only reads from
+# <gamedir>/dfhack-config/blueprints. So the server needs no host write access at all -
+# only `scripts/deploy.sh` touches the game tree, and that is an explicit step.
+REPO_BLUEPRINT_DIR = os.getenv("DFHACK_BLUEPRINT_REPO_DIR",
+                               os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            "deployables", "blueprints"))
+DEPLOY_BLUEPRINT_DIR = os.getenv("DFHACK_BLUEPRINT_DIR", "")   # <gamedir>/dfhack-config/blueprints
 
 @app.post("/apply-blueprint", operation_id="apply_blueprint")
 async def apply_blueprint(request: Request):
-    """Write a quickfort dig blueprint and apply it (the reliable bulk-designation path). grid: list of rows, each a list of single dig keys (d=default, c=channel, i=up-down stairs, x=up, u=down...); cursor: [x,y,z] where the TOP-LEFT cell should land - this tool pre-compensates the known +3 y offset. Set DFHACK_BLUEPRINT_DIR to the game's dfhack-config/blueprints path to enable. Returns quickfort stats; verify with get_block_list then run dig-now on the landed box."""
+    """Write a quickfort blueprint INTO THE REPO (deployables/blueprints, git-controlled) and apply it: the reliable bulk path for BOTH digging and building. mode: "dig" (default) writes a #dig modeline; "build" writes #build - build keys are only valid there (D=trade depot, b=stairs, h=hatch, d=door, f=forge, w=well...). quickfort modelines set the mode, so a build key in a dig blueprint answers "invalid key sequence". grid: list of rows, each a list of single dig keys (d=default, c=channel, i=up-down stairs, x=up, u=down...); cursor: [x,y,z] where the TOP-LEFT cell should land - this tool pre-compensates the known +3 y offset. Set DFHACK_BLUEPRINT_DIR to the game's dfhack-config/blueprints path to enable. Returns quickfort stats; verify with get_block_list then run dig-now on the landed box."""
     body = await request.json()
-    if not BLUEPRINT_DIR:
-        return {"error": "DFHACK_BLUEPRINT_DIR not configured; set it to <gamedir>/dfhack-config/blueprints"}
+    os.makedirs(REPO_BLUEPRINT_DIR, exist_ok=True)
+    deploy_ok = True
     name = str(body["name"]).replace(" ", "_")
     grid = body["grid"]
     cur = body["cursor"]
-    rows = ["#name " + name] + [",".join(str(c) for c in r) for r in grid]
-    path = os.path.join(BLUEPRINT_DIR, name + ".csv")
+    # The modeline sets the blueprint MODE. "#name" is a DIG blueprint, so build keys
+    # (D=trade depot, b=stairs, ...) come back as "invalid key sequence". mode must be
+    # explicit: "dig" (default) or "build". Verified live against quickfort 53.17-r1.
+    if not grid or not any(len(r) for r in grid):
+        return {"error": "grid is empty; it must be a list of rows of cells"}
+    mode = str(body.get("mode", "dig")).lower().strip()
+    if mode not in ("dig", "build"):
+        return {"error": f"mode must be 'dig' or 'build', got '{mode}'"}
+    import csv, io
+    # Cells routinely contain quotes and commas (quickfort options: D{name="x" mat="y"}),
+    # so they MUST be CSV-quoted - a raw "," join corrupts them (verified: quickfort
+    # reads a corrupted cell as an invalid key sequence).
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow([f"#{mode} {name}"])
+    for r in grid:
+        w.writerow([str(c) for c in r])
+    path = os.path.join(REPO_BLUEPRINT_DIR, name + ".csv")
     with open(path, "w") as f:
-        f.write("\n".join(rows) + "\n")
-    out = await RunCommand(input = CoreRunCommandRequest(command = "quickfort",
-        arguments = ["run", name + ".csv", "-c", f"{int(cur[0])},{int(cur[1])-3},{int(cur[2])}"]))
-    return {"blueprint": path, "target_top_left": cur, "success": True}
+        f.write(buf.getvalue())
+    # Ship it: quickfort resolves the filename against the game's blueprints dir, so the
+    # file must be copied there before the run. Copy failure is reported, not thrown.
+    shipped = None
+    if DEPLOY_BLUEPRINT_DIR:
+        shipped = os.path.join(DEPLOY_BLUEPRINT_DIR, name + ".csv")
+        try:
+            os.makedirs(DEPLOY_BLUEPRINT_DIR, exist_ok=True)
+            shutil.copy2(path, shipped)
+        except OSError as e:
+            deploy_ok = False
+            return {"success": False, "blueprint": path,
+                    "error": f"blueprint written in the repo but not deployed: {e}",
+                    "hint": "run ./scripts/deploy.sh deploy (needs write access to the game dir), "
+                            "or set DFHACK_BLUEPRINT_DIR to a writable path"}
+    if not DEPLOY_BLUEPRINT_DIR:
+        return {"success": False, "blueprint": path,
+                "error": "no deploy target configured",
+                "hint": "set DFHACK_BLUEPRINT_DIR=<gamedir>/dfhack-config/blueprints; "
+                        "the file is already saved in the repo and deployable via ./scripts/deploy.sh"}
+    drain_replies()
+    try:
+        await RunCommand(input = CoreRunCommandRequest(command = "quickfort",
+            arguments = ["run", name + ".csv", "-c", f"{int(cur[0])},{int(cur[1])-3},{int(cur[2])}"]))
+    except (DFHackError, DFHackTransportError) as e:
+        # The blueprint IS written and deployed; only the apply failed. Say so with both
+        # paths, otherwise a caller cannot tell authoring from deployment.
+        return {"success": False, "blueprint": path, "deployed_to": shipped, "mode": mode,
+                "target_top_left": cur, "error": str(e),
+                "output": "\n".join(drain_replies()),
+                "hint": "the file is in the repo and deployed; the quickfort run is what failed"}
+    return {"blueprint": path, "deployed_to": shipped, "mode": mode,
+            "target_top_left": cur, "success": True,
+            "output": "\n".join(drain_replies()),
+            "note": "quickfort reports 'Buildings designated: N', 'Tiles designated for "
+                    "digging: N', and 'Invalid key sequences: N' here"}
 
 @app.get("/get-pause-state", operation_id="get_pause_state")
 async def get_pause_state():
@@ -396,21 +557,23 @@ async def send_dig_command(request: Request):
 
 @app.post("/get-block-list", operation_id="get_block_list")
 async def get_block_list(request: Request):
-    """Read map blocks (explored tiles only) in a z window. Full map x/y is always used (windowed x/y requests return nothing - plugin bug); z windows <= 12 levels (larger overflows the RPC reply limit). Returns per-z tiletype census, dig designations found, and a compact per-block tile grid using tiletype NAMES. Parameters: min_z[int], max_z[int], census_top[int] (optional, default 8)"""
+    """RAW tile arrays - the expensive escape hatch: ONE elevation is ~147,000 tokens, so prefer look / world_objects / world_map / world_minimap. Read map blocks (explored tiles only) in a z window. Full map x/y is always used (windowed x/y requests return nothing - plugin bug); z windows <= 12 levels (larger overflows the RPC reply limit and kills the socket). Parameters: min_z[int], max_z[int], census_top[int] (optional, default 8)"""
     body = await request.json()
     min_z = int(body["min_z"]); max_z = int(body["max_z"])
     census_top = int(body.get("census_top", 8))
     tiles_x, tiles_y, z_count = await _map_extent()
     min_z = max(0, min(min_z, z_count - 1)); max_z = max(0, min(max_z, z_count - 1))
     if max_z < min_z: min_z, max_z = max_z, min_z
-    if max_z - min_z > 11: max_z = min_z + 11   # reply size guard
+    if max_z - min_z > 11: max_z = min_z + 11   # reply size guard (850 MB overflow kills the socket)
     tt = await GetTiletypeList()
     names = {i: t.name for i, t in enumerate(tt.tiletype_list)}
-    bl = await GetBlockList(input = BlockRequest(min_x = 0, max_x = tiles_x - 1,
-        min_y = 0, max_y = tiles_y - 1, min_z = min_z, max_z = max_z, force_reload = True))
+    # GetBlockList treats max_z as EXCLUSIVE and a span-1 request returns ZERO blocks.
+    # Verified live: 165-165 -> 0; 164-165 -> only z=164; 163-165 -> z=163,164.
+    # worldmodel.blocks() applies the +1 fix and caches full-x/y 12-z chunks.
+    bl = await world.cache.blocks(min_z, max_z, await world._gen())
     from collections import Counter
     census = {}; designations = []; blocks_out = []
-    for b in bl.map_blocks:
+    for b in bl:
         census.setdefault(b.map_z, Counter()).update(names.get(t, f"id{t}") for t in b.tiles)
         des = list(b.tile_dig_designation)
         # verified mapping (matches in-game designations, e.g. the x50,y120-126 stairwell)
@@ -422,19 +585,326 @@ async def get_block_list(request: Request):
             "hidden": list(b.hidden),
             "buildingCount": len(b.buildings), "itemCount": len(b.items)
         })
+    est = sum(len(str(x)) for x in blocks_out) // 4
     return {
         "requestedZ": [min_z, max_z],
         "gameElevations": [min_z - GAME_Z_OFFSET, max_z - GAME_Z_OFFSET],
-        "blockCount": len(bl.map_blocks),
+        "blockCount": len(bl),
         "censusPerZ": {z: c.most_common(census_top) for z, c in sorted(census.items())},
         "digDesignations": designations[:200],
+        "estTokens": est,
+        "warning": f"blocks[] carries raw tile names: ~{est:,} tokens in this reply. "
+                   f"Prefer world_raw (writes to a file) or world_objects (same planning content, ~1k tokens).",
         "blocks": blocks_out
     }
+
+# ---------------------------------------------------------------------------
+# PREPROCESSED WORLD VIEWS (worldmodel.py). Start here; zoom only as needed.
+#
+# Measured on a 192x192x191 save with 22,127 discovered blocks:
+#   get_block_list (raw names), ONE z-level : ~588 KB  ~147,000 tokens
+#   the whole map, all z                    : ~120 MB  ~30,000,000 tokens
+#   look / world_objects, whole fort band   : ~2-4 KB      ~500-1,000 tokens
+#   world_minimap, ALL z at once            : ~37 KB       ~9,000 tokens
+# Every tool here returns compact plain text under a token budget and says so when
+# it truncates. Coordinates in and out are GAME ELEVATIONS (rpc_z - 128).
+# ---------------------------------------------------------------------------
+
+@app.get("/look", operation_id="look")
+async def look(e0: int = Query(-999, description="start game elevation; omit for auto fort band"),
+               e1: int = Query(-999, description="end game elevation; omit for auto fort band"),
+               with_legend: bool = Query(False, description="include the map glyph legend"),
+               max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS, description="token budget, cap 30000")):
+    """START HERE. The whole-fort briefing in one call: date, pause state, population rolled up by profession/species/soldiers/wounded/hostile, latest reports, a per-elevation strip (walls/floors/open/water/magma/digs/buildings/items), what CHANGED since your last look, pending dig clusters as rectangles, building and item rollups, and named walkable regions. Auto-targets the elevation band where units and dig activity actually are. ~500-1,000 tokens. Then zoom with world_zone/world_map/world_objects."""
+    e0 = None if e0 == -999 else e0
+    e1 = None if e1 == -999 else e1
+    return await world.look(max_tokens=max_tokens, with_legend=with_legend, e0=e0, e1=e1)
+
+@app.get("/world-zone", operation_id="world_zone")
+async def world_zone(e0: int = Query(..., description="start game elevation"),
+                     e1: int = Query(..., description="end game elevation (max 12 levels apart)"),
+                     max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS)):
+    """One compact line per elevation: block count, wall/floor/open/tree/water/magma tile counts, pending dig count, building count, item count, region count. ~60 tokens per elevation. Use to pick where to look closer."""
+    return await world.zone(e0, e1, max_tokens=max_tokens)
+
+@app.get("/world-map", operation_id="world_map")
+async def world_map(e: int = Query(..., description="game elevation"),
+                    x0: int = Query(...), x1: int = Query(...),
+                    y0: int = Query(...), y1: int = Query(...),
+                    rle: bool = Query(True, description="run-length encode flat rows"),
+                    with_legend: bool = Query(False, description="include the glyph legend"),
+                    max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS)):
+    """A single elevation as a 1-char-per-tile glyph grid for an explicit x/y window, with walkable-region letters annotated alongside. Keep windows ~40x40 (~400 tokens). Tiletype names are NEVER sent; read the legend once. Water/magma/hidden override the base glyph."""
+    return await world.view(e, x0, x1, y0, y1, max_tokens=max_tokens, rle=rle,
+                            with_legend=with_legend)
+
+@app.get("/world-objects", operation_id="world_objects")
+async def world_objects(e0: int = Query(..., description="start game elevation"),
+                        e1: int = Query(..., description="end game elevation"),
+                        max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS)):
+    """Everything actionable and nothing else: dig designations clustered into rectangles with kinds, buildings with names and footprints, item wealth rolled up by type/material, and named walkable regions. This is the planning view - the whole active fort band fits in ~1,000 tokens."""
+    return await world.objects(e0, e1, max_tokens=max_tokens)
+
+@app.get("/fort-progress", operation_id="fort_progress")
+async def fort_progress(e0: int = Query(-999, description="start game elevation; omit for auto fort band"),
+                        e1: int = Query(-999, description="end game elevation; omit for auto fort band"),
+                        max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS)):
+    """THE PLAY THE GAME TOOL. The Quickstart milestone ladder evaluated against your live fort: pause/labors, entry tunnel, stairwell, stockpile, meeting area, refuse pile, farm plot, wood, still, pasture, workshops, furniture, wheelbarrows, barrels, garbage dump, trade depot, bedrooms, dining, offices, smelter+forge, military - each marked [x]/[ ] with its evidence. Then NEXT gives the first unsatisfied rung with its exact key sequence (m/u/t/p/z/b-o-f-...), why it matters, a concrete coordinate box inside a real walkable region, and water/magma alerts. Play the ladder in order; that is how this game is learned."""
+    e0 = None if e0 == -999 else e0
+    e1 = None if e1 == -999 else e1
+    return await world.progress(e0, e1, max_tokens=max_tokens)
+
+@app.get("/world-minimap", operation_id="world_minimap")
+async def world_minimap(all_levels: bool = Query(False, description="every z-level (heavy: ~120 MB of RPC replies)"),
+                        span: int = Query(48, description="z-levels to render around the fort band"),
+                        max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS)):
+    """The map as one char per 16x16 block: # solid, ' ' open, ~ water, ! magma, B building, x dig, . floor. Default = 48 levels around the fort. all_levels=true walks every z - that is ~120 MB of RPC replies and the plugin kills the socket at ~850 MB, so it is opt-in and failures are reported per window."""
+    return await world.minimap(max_tokens=max_tokens, all_levels=all_levels, span=span)
+
+@app.get("/world-delta", operation_id="world_delta")
+async def world_delta(e0: int = Query(-999, description="start game elevation; omit for auto fort band"),
+                      e1: int = Query(-999, description="end game elevation; omit for auto fort band"),
+                      max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS)):
+    """Only what changed since the last world read: new/cleared designations, buildings added/removed, item count changes, water/magma changes. Call this between turns instead of re-reading the world - near-zero cost per turn over a long game."""
+    e0 = None if e0 == -999 else e0
+    e1 = None if e1 == -999 else e1
+    return await world.delta(e0, e1, max_tokens=max_tokens)
+
+@app.get("/tile-legend", operation_id="tile_legend")
+async def tile_legend():
+    """The stable map glyph alphabet (697 tiletypes -> 29 glyphs) with walk/solid semantics. Read it ONCE per session; it never changes."""
+    return {"legend": WM.legend(), "glyphCount": len({WM.classify_tile(n).glyph
+                                                     for n in world.dec.tile.values()} or set())}
+
+@app.post("/world-raw", operation_id="world_raw")
+async def world_raw(request: Request):
+    """Dump RAW map blocks to a FILE instead of into the conversation - use this when you truly need tile-level detail, then grep the file with your file tools. Parameters: e0[int], e1[int], path[str] (optional). Returns the path and shape stats, never the tiles."""
+    import json, os, time
+    body = await request.json()
+    e0 = int(body["e0"]); e1 = int(body["e1"])
+    out = body.get("path") or os.path.join("dumps", f"blocks-{int(time.time())}.json")
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    blocks = await world.cache.blocks(e0 + GAME_Z_OFFSET, e1 + GAME_Z_OFFSET, await world._gen())
+    names = world.dec.tile
+    payload = [{"x": b.map_x, "y": b.map_y, "z": b.map_z, "elev": b.map_z - GAME_Z_OFFSET,
+                "tiles": [names.get(t, f"id{t}") for t in b.tiles],
+                "water": list(b.water), "magma": list(b.magma), "hidden": list(b.hidden),
+                "designation": list(b.tile_dig_designation),
+                "buildings": len(b.buildings), "items": len(b.items)} for b in blocks]
+    with open(out, "w") as f:
+        json.dump(payload, f)
+    return {"path": out, "blocks": len(payload), "elevations": [e0, e1],
+            "fileBytes": os.path.getsize(out),
+            "note": "raw tile arrays are ~147,000 tokens per elevation: read this file with grep, do not paste it here"}
+
+
+# ---------------------------------------------------------------------------
+# PLAYER ACTIONS - the things a player does with a menu, drivable over RPC.
+#
+# Measured on this build (53.17-r1) with injected SDL1 events:
+#   * menu hotkeys WORK  (b, c, T, escape, y, z open menus; the UI reacts)
+#   * the keyboard cursor can be toggled (`toggle-kbd-cursor`) and GetViewInfo then
+#     reports a real position, BUT **no arrow/numpad/keypad event variant moves it**
+#     (tested sym 273/274/275/276 and 258/262/271, which=0/1, mod shift). So menu
+#     *dragging* - designating a rectangle, aiming a building - is NOT drivable.
+#   * `zone` is a plugin with no CLI commands; `stockpile` is not installed; so the
+#     z-menu and p-menu are UI-only in this build.
+# What IS drivable is listed here: labors (the y menu), manager workorders (j-m-q),
+# dig designations (m menu semantics), instant dig/build, and quickfort blueprints.
+# ---------------------------------------------------------------------------
+
+@app.post("/game-lua", operation_id="game_lua")
+async def game_lua(request: Request):
+    """Run a Lua EXPRESSION against the live game through DFHack's `lua` command and get its printed output back. This is the door the proto list does not cover: read anything (world.jobs.list, buildings, units, path info) and call DFHack's own APIs - reqscript("quickfort").apply_blueprint{mode="build", data="D(1x1)", pos={x=...,y=...,z=...}} places buildings, dfhack.zone / dfhack.stockpile reach zones and stockpiles. CAUTION: this writes live game state; prefer read-only prints, test on a throwaway save, and keep a save before mutating. Parameters: expression[str] (a Lua chunk; use print() to return data)"""
+    body = await request.json()
+    expr = str(body["expression"])
+    drain_replies()
+    try:
+        await RunCommand(input = CoreRunCommandRequest(command = "lua", arguments = [expr]))
+    except (DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e), "output": "\n".join(drain_replies())}
+    await asyncio.sleep(0.6)                      # let the text frames arrive
+    out = drain_replies()
+    return {"success": True, "output": "\n".join(out).strip(),
+            "chars": len("\n".join(out)), "note": "print() is the return channel"}
+
+# ---------------------------------------------------------------------------
+# TYPED PLAYER OPERATIONS (luaops.py). These call DFHack's Lua API *internally*.
+#
+# Raw Lua is deliberately NOT exposed as an MCP tool: a local model that writes one
+# bad field to `df.global.world` corrupts the save, and it cannot enumerate the API.
+# So each operation here takes typed parameters, composes a fixed Lua template,
+# parses one printed status line, and verifies the result in the same channel.
+#
+# Why verification is done in Lua and not via the map read: measured on the live
+# save, a depot created with dfhack.buildings.constructBuilding + completeBuild is
+# present in game state (findAtTile returns it) while GetBlockList reports ZERO
+# buildings on that level - and ResetMapHashes + force_reload do not change that.
+# RemoteFortressReader is not a trustworthy verifier for fresh writes.
+# ---------------------------------------------------------------------------
+
+@app.post("/place-building", operation_id="place_building")
+async def place_building(request: Request):
+    """CREATE A BUILDING at an exact tile - no menu, no mouse, no dwarf. building: friendly name (Stockpile, Zone, Trade Depot, Bed, Table, Chair, Door, Chest, Well, Farm Plot, Still, Mechanic, Carpenter, Stoneworker, Jeweler, Smelter, Forge, Kitchen, Butcher, Weapon Rack, Axle, Gear Assembly, Water Wheel, Lever, Trap, Cage, Trackstop...); x/y int, elev GAME ELEVATION; w/h optional (a Trade Depot is 5x5, a workshop 3x3); complete:true (default) finishes it via completeBuild; abstract:true for material-free buildings (auto for Stockpile/Zone - the game REQUIRES one of items/filters/abstract); items:[itemId,...] for furniture and doors. Returns the game type + building id verified by findAtTile, and the game's own rejection text (e.g. 'one of items, filters or abstract is required') when it refuses. Check a site with tile_at first: placing into water fails."""
+    body = await request.json()
+    dec = await world._dec(await world._gen())
+    try:
+        res = await LO.place_building(dec, body["building"], int(body["x"]), int(body["y"]),
+                                      int(body["elev"]), w=body.get("w"), h=body.get("h"),
+                                      complete=bool(body.get("complete", True)),
+                                      abstract=body.get("abstract"),
+                                      items=body.get("items"))
+    except LO.LuaOpError as e:
+        return {"success": False, "error": str(e)}
+    world.cache.reset()
+    world.forget_band()
+    return {"success": True, **res}
+
+@app.post("/remove-building", operation_id="remove_building")
+async def remove_building(request: Request):
+    """Deconstruct the building at a tile (x, y, elev). Verifies through dfhack.buildings."""
+    body = await request.json()
+    try:
+        res = await LO.remove_building(int(body["x"]), int(body["y"]), int(body["elev"]))
+    except LO.LuaOpError as e:
+        return {"success": False, "error": str(e)}
+    world.cache.reset()
+    return {"success": True, **res}
+
+@app.get("/tile-at", operation_id="tile_at")
+async def tile_at(x: int = Query(...), y: int = Query(...),
+                  elev: int = Query(..., description="game elevation")):
+    """Everything that matters about ONE tile, read from the block cache: tiletype + decoded name + glyph class, water/magma, hidden, dig designation, construction material, items on it, and any building whose footprint covers it. Use it to validate a placement site before spending a build call (water and walls reject buildings)."""
+    res = await world.tile_at(x, y, elev)
+    # RFR is not a reliable source for freshly created buildings (measured), so the
+    # authoritative check for "is a building here" is the game's own findAtTile.
+    try:
+        res["at_tile"] = await LO.building_at(x, y, elev)
+    except LO.LuaOpError as e:
+        res["at_tile"] = {"error": str(e)}
+    return res
+
+@app.get("/building-at", operation_id="building_at")
+async def building_at(x: int = Query(...), y: int = Query(...),
+                      elev: int = Query(..., description="game elevation")):
+    """What building (if any) is on one tile, read straight from game state via findAtTile - use this to confirm a placement, not the map tools."""
+    try:
+        return await LO.building_at(x, y, elev)
+    except LO.LuaOpError as e:
+        return {"error": str(e)}
+
+@app.get("/walkable-between", operation_id="walkable_between")
+async def walkable_between(x0: int = Query(...), y0: int = Query(...), e0: int = Query(...),
+                           x1: int = Query(...), y1: int = Query(...), e1: int = Query(...)):
+    """ASK THE GAME if a creature can walk between two tiles (dfhack.maps.canWalkBetween). This is the wagon-path / accessibility question the map views cannot answer - e.g. can a caravan reach a trade depot, is a job unreachable, is a room cut off."""
+    try:
+        return await LO.walkable_between(x0, y0, e0, x1, y1, e1)
+    except LO.LuaOpError as e:
+        return {"error": str(e)}
+
+@app.get("/job-queue", operation_id="job_queue")
+async def job_queue(limit: int = Query(40)):
+    """The jobs queue - RemoteFortressReader exposes NONE of it. Returns total job count and job descriptions with the acting unit. This is how you find out why nothing is happening."""
+    try:
+        return await LO.list_jobs(limit=limit)
+    except LO.LuaOpError as e:
+        return {"error": str(e)}
+
+@app.get("/unit-counts", operation_id="unit_counts")
+async def unit_counts():
+    """Live unit census from game state: dwarves, citizens, hostile, pets (dead excluded). Cheaper and more accurate than reading the unit list."""
+    try:
+        return await LO.unit_counts()
+    except LO.LuaOpError as e:
+        return {"error": str(e)}
+
+@app.get("/labor-list", operation_id="labor_list")
+async def labor_list():
+    """Every labor name you can pass to set_unit_labors (the DFHack unit_labor enum, decoded from the game). Use these exact strings - MINING, MASON, CARPENTER, PLANT, IRRIGATE, FARMER, CRAFTSMAN, TRANSPORT, ..."""
+    dec = await world._dec(await world._gen())
+    labors = dec.flags.get("unit_labor", {})
+    return {"count": len(labors), "labors": sorted(labors.values())}
+
+@app.post("/set-unit-labors", operation_id="set_unit_labors")
+async def set_unit_labors(request: Request):
+    """THE LABOR MENU (`y`), driven. changes: [{unit_id, labor, value}] where labor is a name from labor_list (MINE, MASON, ...) or a labor id, value true/false. This is how the fort gets miners: SetUnitLabors is RPC, so no cursor is involved. Verify with world_objects/look: the `miners` count in the ladder header is read from the same labors."""
+    body = await request.json()
+    dec = await world._dec(await world._gen())
+    by_name = {v: k for k, v in dec.flags.get("unit_labor", {}).items()}
+    changes, bad = [], []
+    for ch in body["changes"]:
+        lab = ch["labor"]
+        lid = int(lab) if isinstance(lab, int) or (isinstance(lab, str) and lab.isdigit()) \
+             else by_name.get(str(lab).upper())
+        if lid is None:
+            bad.append(lab)
+            continue
+        changes.append(UnitLaborState(unit_id=int(ch["unit_id"]), labor=lid,
+                                      value=bool(ch["value"])))
+    if not changes:
+        return {"error": "no valid labors", "unknown": bad,
+                "hint": "see labor_list for the exact names"}
+    try:
+        await SetUnitLabors(input=SetUnitLaborsIn(change=changes))
+    except (DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e), "applied": 0,
+                "hint": "labor ids come from labor_list; unit ids from get_unit_list"}
+    world._state.pop("units_gen", None)          # labors changed: drop the cached rollup
+    return {"applied": len(changes), "unknown": bad, "success": True}
+
+@app.post("/work-order", operation_id="work_order")
+async def work_order(request: Request):
+    """THE MANAGER'S WORK-ORDER SCREEN (`j-m-q`), driven. Body: {"job":"MakeBarrel","amount":5} (translated to the JSON form this build requires) or raw {"json":"{\"job\":\"MilkCreature\"}"}. Jobs are df.job_type names (MakeCharcoal, MakeTable, MakeChair, MakeBarrel, MakeRockBag, SmeltOre, FurnaceSmelt, CraftBoneCarving, ...). Use this to keep blocks/barrels/beds in production - the usual reason a planned building never gets built. Verify with the server log: it prints "Queuing <job> xN"."""
+    body = await request.json()
+    # Verified live: this build's workorder.lua parses its FIRST argument as JSON, so the
+    # documented `workorder <jobtype> <amount>` positional form fails with
+    # "can't parse JSON at byte 1 of: CollectRock 10". Build the JSON form ourselves.
+    if "json" in body:
+        spec = body["json"] if isinstance(body["json"], str) else json.dumps(body["json"])
+    else:
+        if "job" not in body:
+            return {"error": "give job (a df.job_type name) or json"}
+        spec_obj = {"job": str(body["job"])}
+        if "amount" in body:
+            spec_obj["amount_total"] = int(body["amount"])
+        for k in ("material", "item_type", "quantity"):
+            if k in body:
+                spec_obj[k] = body[k]
+        spec = json.dumps(spec_obj)
+    args = [spec]
+    try:
+        await RunCommand(input=CoreRunCommandRequest(command="workorder", arguments=args))
+    except DFHackError as e:
+        return {"success": False, "error": str(e),
+                "hint": "job name must be a df.job_type; 'workorder -l <filter>' lists types (its output streams to the server log)"}
+    return {"success": True, "args": args,
+            "note": "order enqueued; workorder's console reply streams to this server's log"}
+
+@app.get("/world-cache-reset", operation_id="world_cache_reset")
+async def world_cache_reset():
+    """Drop the world-model caches (block cache, decode tables, fort band, delta snapshot). Call after a big in-game change such as `reveal`, a save reload, or a fort redesign."""
+    world.cache.reset()
+    world.forget_band()
+    world._state.clear()
+    world._prev.clear()
+    # DFHack caches map data server-side; ask it to drop its hashes too, or the next
+    # read can be served from stale block data after a big in-game change.
+    try:
+        await ResetMapHashes()
+        reset = "cache + DFHack map hashes"
+    except Exception as e:
+        reset = f"cache only (ResetMapHashes failed: {e})"
+    return {"reset": True, "scope": reset}
+
 
 mcp = FastApiMCP(
     app,
     name="Dwarf Fortress MCP Server",
-    description="A MCP server that uses the dfhack_client_python package to connect to a locally running Dwarf Fortress game through DFHack's RPC connection."
+    description="A MCP server that uses the dfhack_client_python package to connect to a locally running Dwarf Fortress game through DFHack's RPC connection.",
+    # game_lua stays an HTTP debug endpoint only. Raw Lua in the tool list invites a
+    # local model to write arbitrary game state; the typed operations in luaops.py are
+    # the supported way in.
+    exclude_operations=["game_lua"]
 )
 # Streamable HTTP (POST/GET /mcp) - the transport dsh-mcp-client speaks.
 # mcp.mount() is deprecated and mounts the legacy SSE pair (GET /mcp + POST /mcp/messages/).

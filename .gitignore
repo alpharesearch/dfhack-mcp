@@ -205,3 +205,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# start.sh runtime files
+dfhack-mcp.log
+.dfhack-mcp.pid
+tests/mock_*.log
+
+# raw dumps written by world_raw (files, not context)
+dumps/
+test-8005.log

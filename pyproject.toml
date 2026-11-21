@@ -8,8 +8,12 @@ dependencies = [
     "dfhack-client-python",
     "fastapi>=0.115.14",
     "fastapi-mcp>=0.3.4",
+    # fastapi-mcp 0.4.0 calls Server(name, description); mcp 2.x changed that signature
+    "mcp<2",
     "uvicorn>=0.35.0",
 ]
 
 [tool.uv.sources]
-dfhack-client-python = { path = "../dfhack-client-python" }
+# editable: the transport is patched in place (auto-reconnect), so the venv links the
+# source tree instead of snapshotting a copy at install time.
+dfhack-client-python = { path = "../dfhack-client-python", editable = true }

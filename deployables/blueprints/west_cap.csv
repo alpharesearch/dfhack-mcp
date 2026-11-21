@@ -1,0 +1,6 @@
+#name west_cap_test
+#description 3x3 default dig capping the west tunnel end
+#start 1,114,166
+d,d,d
+d,d,d
+d,d,d
