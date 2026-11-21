@@ -152,6 +152,31 @@ case "${1:-check}" in
   update)  update ;;
   status)  status ;;
   verify)  verify ;;
+  channel)
+    # Channel diagnosis (measured failure mode): the plugin's own poll path is
+    # plain HTTP GET /observe; the MCP tools go through POST /mcp, which 404s
+    # after the DFHack server restarts until the client's MCP session rebinds.
+    base="${DFHACK_MCP_URL:-http://127.0.0.1:8000}"
+    poll=$(curl -sG --max-time 10 -o /dev/null -w '%{http_code}' "$base/observe-stats" || echo 000)
+    obs=$(curl -sG --max-time 15 -o /dev/null -w '%{http_code}' "$base/observe" --data-urlencode 'q={"elev0":22,"elev1":45}' || echo 000)
+    mcp=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X POST "$base/mcp" -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"ping"}' || echo 000)
+    echo "poll GET /observe-stats : $poll"
+    echo "read GET /observe       : $obs   (the plugin's channel)"
+    echo "mcp  POST /mcp          : $mcp   (the mcp__dfhack__ tools' channel)"
+    # 404 = the measured dead-session binding; 406/400 = endpoint alive but our bare
+    # ping lacks the session headers (normal for a raw curl); 000 = nothing there.
+    if [ "$poll" = 200 ] && [ "$obs" = 200 ] && [ "$mcp" = 404 ]; then
+      echo "DIAGNOSIS: the plugin is reading the game fine, but MCP tool calls are bound to a"
+      echo "           dead session (measured: -32600 Session not found after a server restart)."
+      echo "           Fix by rebinding the MCP connection (restart/reconnect the dfhack MCP client/proxy);"
+      echo "           the observer needs no restart - its df_* tools answer from the live model."
+    elif [ "$poll" = 200 ] && [ "$mcp" = 406 -o "$mcp" = 400 -o "$mcp" = 200 ] ; then
+      echo "channel: healthy (poll 200, MCP endpoint answering; the client binds its session)"
+    elif [ "$poll" = 200 ]; then
+      echo "channel: poll healthy; MCP endpoint status $mcp - not a dead session, watch for -32600 in tool calls"
+    else
+      echo "channel: the DFHack MCP server is not answering - start it (deploy.sh server) and re-run."
+    fi ;;
   server)  server ;;
-  *) echo "usage: $0 [check|install|update|status|verify|server]"; exit 1 ;;
+  *) echo "usage: $0 [check|install|update|status|verify|server|channel]"; exit 1 ;;
 esac

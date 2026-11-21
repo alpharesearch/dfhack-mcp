@@ -80,3 +80,23 @@ every session when `agents: []`), paste the §1 instruction line, then fill the 
 evidence table. The plugin must be seen doing: tools present in the first header,
 `ledger restored`/seeded to-dos in `df_status scope=summary`, first briefing
 within ~20 s, `dig_complete` wake with quoted evidence when the first box drains.
+
+## 6. The fresh-agent pass, run by a read-only probe (measured)
+
+Items §2 (a)-(e) were run by a fresh child agent (`play-probe`) with a strict
+read-only rule. It reported:
+
+- ladder NEXT quoted verbatim, box table, alerts with evidence, ledger specs -
+  all readable from the observer;
+- `survey({elev:25,x0:43,y0:121,x1:44,y1:122})` -> 4/4 FLSTONE,
+  `safe_to_designate: true`, matching the observer's `to_dig 4, dug 0, pending 0`;
+- it overruled an alert's advice using the observer's own shaft data (elev25 is
+  inside the aquifer) and ordered `NO_DIG elev22-24` first.
+
+Channel caveat (measured, PLAN §25): in that child agent every MCP-routed call
+returned `-32600 Session not found` after the DFHack server restart. `deploy.sh
+channel` now diagnoses exactly this: `poll GET /observe-stats` + `read GET
+/observe` (the plugin's path) versus `mcp POST /mcp` (the tool path) - 404 =
+dead session binding, 406/400 = endpoint alive. The observer's own `df_*` tools
+answer from the live model, so a session can always read the fort; reconnect the
+MCP client for the `mcp__dfhack__*` tools.
