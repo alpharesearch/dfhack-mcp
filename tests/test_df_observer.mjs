@@ -685,7 +685,8 @@ test('/df-panel: the panel gets its full data through the session-command path',
   assert.match(index, /panelPayload\(typeof sessionId === 'string' \? sessionId : undefined\)/, 'it serves panelPayload for the calling session')
   assert.match(client, /execute\(sessionId, '\/df-panel', \[\]\)/, 'the page pulls it like it pulls /df-ack')
   assert.match(client, /const snap = extra \? \{ \.\.\.folded, \.\.\.extra \} : folded/, 'the pull merges over the folded wire')
-  assert.match(client, /setInterval\(pull, 10000\)/, 'and refreshes on a timer')
+  assert.match(client, /setInterval\(pull, 30000\)/, 'and refreshes at 30s (each poll appends a command row - measured)')
+  assert.match(client, /String\(raw\)\.indexOf\('\{'\)/, 'the JSON is extracted from whatever result shape arrives')
   return '/df-panel command + page pull wired'
 })
 

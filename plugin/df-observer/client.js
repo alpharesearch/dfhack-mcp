@@ -167,15 +167,24 @@ window.__ModuleLoader__.load({
           const pull = async () => {
             try {
               const r = await ctx.remote.commands.execute(sessionId, '/df-panel', [])
-              const txt = r?.result?.text ?? r?.text ?? ''
-              const j = JSON.parse(txt)
+              // The command result shape is not guaranteed to be {result:{text}}:
+              // measured, the row carries the payload text directly. Take the JSON
+              // object out of whatever string arrives.
+              const raw = r?.result?.text ?? (typeof r?.result === 'string' ? r.result : null)
+                ?? r?.text ?? (typeof r === 'string' ? r : '')
+              const start = String(raw).indexOf('{')
+              const end = String(raw).lastIndexOf('}')
+              if (start < 0 || end <= start) return
+              const j = JSON.parse(String(raw).slice(start, end + 1))
               if (!stop && j && j.tick != null) setExtra(j)
             } catch {
               // the folded wire keeps the panel alive - no alert, no crash
             }
           }
           pull()
-          const timer = setInterval(pull, 10000)
+          // every poll appends a session-command row to the transcript (measured), so
+// the page pays 30s between pulls, not 10s.
+          const timer = setInterval(pull, 30000)
           return () => { stop = true; clearInterval(timer) }
         }, [sessionId])
         const snap = extra ? { ...folded, ...extra } : folded

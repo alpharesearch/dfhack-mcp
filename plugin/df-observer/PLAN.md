@@ -858,3 +858,29 @@ with `paused · gen 1 · tick 3 · poll 60s · pause off`, TO-DOS (11 open, 19 d
 ALERTS with coordinates `A27 crew [y -> Craftsdwarf (Still); …]`, `A26 damp_hot
 [x43-44 y121-122 elev22-24]` and Ack buttons - no literal `undefined` (0.1.64),
 sections render as their data arrives.
+
+## 29. Why the panel pulls `/df-panel` (and what it costs) - 0.1.69/0.1.70
+
+Measured on the live fort (30-row ledger, 21 rungs, 7 boxes, 107 designated tiles):
+
+```
+cap 700  -> wire level 8 = 338 tokens; adding compact boxes/piles/rungs/notes
+            costs ~400 more -> the ledger-first contract wins, the panel gets none
+cap 300  -> the unconditional fill busted the budget (348 > 300) -> fill is now
+            tried per level and DROPPED when it does not fit (0.1.67)
+```
+
+So the panel's full data comes from the **session-command path** the Ack already
+proved reachable: `/df-panel` serves `panelPayload()` (ladder, boxes, piles,
+shafts, ledger, alerts, notes, designation scan), and the right-Sidebar page pulls
+it on mount.
+
+**Cost, measured in the transcript:** each command execution appends a session row
+showing its JSON. That is real noise in the conversation, so the page polls at
+**30 s**, not 10 s, and only while the tab is mounted. The folded briefing wire
+remains the fallback: if the pull fails, the panel still renders facts, ledger and
+alerts, silently.
+
+Parse hardening (measured): the command result is not guaranteed to be
+`{result:{text}}` - the payload text can arrive directly - so the client extracts
+the JSON object from whatever string it gets (`indexOf('{') .. lastIndexOf('}')`).
