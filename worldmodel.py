@@ -1269,10 +1269,15 @@ class WorldModel:
             d = (top - e) if top is not None else None
             aq_above = [a for a in rec["aquifer"] if a >= e]
             wat_above = [a for a in rec["water"] if a >= e]
+            wet = (f" - and DAMP: aquifer{aq_above[:3]} water{sorted(wat_above)[:3]} in this "
+                   "column at/above" if (aq_above or wat_above) else "")
             if g in self.AIR:
                 verdict = "not diggable (open air)"
             elif g == "?":
-                verdict = "fog: unexplored - designation here is rejected, probe the neighbour"
+                # Fog and damp are not mutually exclusive: an unexplored tile in an aquifer
+                # column is the worst kind of surprise, so say both.
+                verdict = ("fog: unexplored - designation here is rejected, probe the "
+                           "neighbour" + wet)
             elif aq_above or wat_above:
                 verdict = ("avoid: DAMP - aquifer/water in this column at/above "
                            f"(aquifer{aq_above[:3]} water{sorted(wat_above)[:3]}); digging "
