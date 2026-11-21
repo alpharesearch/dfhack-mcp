@@ -300,3 +300,37 @@ Boundaries stay plugin-enforced: `wake[].kind` outside `Config.alert_wakes` is
 demoted to briefing text; the filter has no game tools; verdict older than
 `filter_timeout_ms` -> the rule-gate briefing resumes (recorded in notes).
 Measured: rule briefing ~600-950 tokens/step; filtered target ~150-260.
+
+
+## 12. Client data path (measured 2026-11-21 - forced change to §5's panel wiring)
+
+The plan drew the panel as "slots + the package's own Remote". Measured against
+the installed web profile, that path does not exist for third-party bundles:
+
+- `ctx.remote` on the web client is a **compiled aggregate**
+  (`dsh-api-remotes/src/index.ts` imports each shipped service's generated
+  `/remote` face). A bundle cannot add its namespace: `ctx.remote.dfObserver`
+  stays undefined, and a `dsh.client.inject` declaring the deep path
+  `remote.dfObserver` aborts the whole client module row (the panel vanished).
+- `dsh.client` accepts only `platform/inject/external/immediately` - no
+  `remotes` field exists in this install.
+- The static Client factory has **no `styles` builtin** (`styles.insert` threw,
+  killing `apply` before the panel registered). Styling ships as React inline
+  styles over `--dsw-alias-*` tokens - the pattern dsh-dox uses.
+- No decorator syntax in the runtime (Node 24.14): `@Remote` markers must be
+  applied to the prototype at module load, and the gateway reads them at
+  construction; markers applied in `[Service.init]` are invisible.
+
+**Adopted path (the one the docs sanction, practices.md + user-actions.md):**
+
+- Panel data = the session projection's `wire.view`: the Host folds the log and
+  publishes the value; the Client renders it with the dock's
+  `useProjection('dfObserver')` prop. No polling, no Remote.
+- Panel action (Ack) = a session command `/df-ack <id>` executed through the
+  shipped `remote.commands` namespace (`ctx.remote.commands.execute(sessionId,
+  line, [])`); the same words work in the composer, and the projection folds
+  `command/run` so the ack is log-truth. The agent path (`df_alerts ack`)
+  calls the same `model.ackAlert`.
+- Consequence: the panel shows the session's folded view, which updates at
+  briefing cadence (`inject_max_spacing_ms`), not per poll - by design, since
+  the log is the truth the panel may show.

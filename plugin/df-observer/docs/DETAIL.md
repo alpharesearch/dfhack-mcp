@@ -101,3 +101,18 @@ config object, so copy the keys you change.
 - Panel/chat rows need the Web client; with the page open the panel appears
   above the composer. The panel shows the plugin's live state plus
   log-folded ledger entries for the current session.
+
+
+## Verified platform facts (measured, this install)
+
+- A third-party bundle CANNOT add its own `ctx.remote` namespace on the web
+  client (the face is compiled from fixed imports). Panel data comes from the
+  projection's `wire.view` via `useProjection`; UI actions run session commands
+  through `remote.commands`.
+- The static Client half has no stylesheet-insert builtin; styling is inline
+  React styles over `--dsw-alias-*` tokens.
+- `@Remote` markers (when a bundle does expose Remote endpoints) must be on the
+  prototype before the service is constructed - the runtime has no decorator
+  syntax, so they are applied at module load.
+- Picks are `ITEM_WEAPON_PICK` **weapon** items (the TOOL group holds
+  wheelbarrows/scrolls); the picks probe reads that.
