@@ -243,14 +243,16 @@ const SHRINK_LEVELS = [
     facts: compactFacts(p.facts), reports: (p.reports ?? []).slice(-2),
     designations: compactDesignations(p.designations),
     todos: (p.todos ?? []).slice(0, 24).map((t) => ({ id: t.id, state: t.state, evidence: String(t.evidence ?? '').slice(0, 60) })),
-    alerts: (p.alerts ?? []).slice(0, 8).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked })),
+    alerts: (p.alerts ?? []).slice(0, 8).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked, coord: a.coord })),
     digEvents: (p.digEvents ?? []).slice(0, 6) }),
   (p) => ({ tick: p.tick, online: p.online, paused: p.paused, poll: p.poll,
     generation: p.generation ?? null, pauseSource: p.pauseSource ?? null,
     pauseAuthority: p.pauseAuthority, facts: compactFacts(p.facts), reports: (p.reports ?? []).slice(-1),
     designations: compactDesignations(p.designations),
     todos: (p.todos ?? []).slice(0, 30).map((t) => ({ id: t.id, state: t.state })),
-    alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked })) }),
+    // coord stays: it is the shortest part of an alert that still tells a reader
+    // WHERE, and the panel renders a row from it when evidence is trimmed away.
+    alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked, coord: a.coord })) }),
 ]
 
 export const SHRINK_MAX = SHRINK_LEVELS.length - 1

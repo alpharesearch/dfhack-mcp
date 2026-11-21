@@ -677,6 +677,19 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
   return 'designation summary survives every lean level, under 260 chars'
 })
 
+test('panel rows: a trimmed alert renders no literal "undefined"', () => {
+  const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
+  assert.match(client, /a\.evidence \? String\(a\.evidence\)/, 'evidence is guarded before stringifying')
+  // the leanest alert shape carries coord, so a row without evidence still says where
+  for (const level of [6, 7]) {
+    const d = shrinkPayloadLevel({ tick: 1, online: true, paused: false, generation: 1, poll: 8000, facts: null, reports: [], todos: [], alerts: [{ id: 'A1', kind: 'crew', coord: 'pile 20', evidence: 'x'.repeat(400), acked: false }] }, level)
+    const a = d.alerts[0]
+    assert.equal(a.coord, 'pile 20', `level ${level} keeps the coordinate`)
+    assert.ok(a.evidence === undefined || String(a.evidence).length <= 200, `level ${level} evidence is short`)
+  }
+  return 'no literal undefined in alert rows; the leanest level still says where'
+})
+
 test('ledger + box storage keys are path-safe', () => {
   const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
   // The todo key: String(id) - numeric, safe.

@@ -214,7 +214,9 @@ window.__ModuleLoader__.load({
                         ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-state-warn-primary)',
                       textDecoration: a.acked ? 'line-through' : 'none' },
                   }, `${a.kind}${a.coord ? ` [${a.coord}]` : ''}`),
-                  h('span', { style: S.ev }, String(a.evidence).slice(0, 110)),
+                  // Measured live: the lean wire levels ship {id,kind,acked} only, so
+                  // String(a.evidence) printed the literal word "undefined".
+                  h('span', { style: S.ev }, a.evidence ? String(a.evidence).slice(0, 110) : (a.coord ? `[${a.coord}]` : '')),
                   h('button', {
                     style: S.ack, type: 'button', disabled: !!a.acked,
                     onClick: () => { void ctx.remote.commands.execute(sessionId, `/df-ack ${a.id}`, []).then(() => { }) },
