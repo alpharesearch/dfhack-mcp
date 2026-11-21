@@ -801,3 +801,29 @@ scratch server (:8006) before touching the live one: memo key missing `z` (same
 cluster on every elevation), block coordinates multiplied by 16 (`map_x` is
 already a tile origin), and an inverted adjacency test that split a 4-tile face
 into four 1-tile clusters.
+
+## 27. unwatched_designations, verified both ways (0.1.60)
+
+Fired live the moment it was installed:
+
+```
+A1 unwatched_designations [x38-48 y113-122 elev41] x12: 83 designated tiles at
+x38-48 y113-122 elev41 are outside every monitored box - nothing measures this work
+-> watch it so progress is proven: df_todo({action:"add", box:[38,113,48,122,41],
+   accept:{kind:"tiles_progress", elev:41, ..., min_dug:83}})
+```
+
+and **cleared** when the watch was registered (#203). The semantics it encodes:
+
+- a cluster is *watched* when a monitored box on the **same elevation** overlaps its
+  rectangle; clusters smaller than `unwatched_min_tiles` (20) stay quiet;
+- clearing tracks the live keys per cycle - the first cut cleared only inside the
+  scan loop, so an empty scan left the alert standing (test covers it);
+- this alert is *not* on the wake whitelist by default: it is bookkeeping advice for
+  the play agent, not an emergency (ask the player before adding it).
+
+Later in the same session the player ordered a designation wave (warnings
+`designated 12 -> 97`); the alert stayed quiet because the big cluster is now
+covered and the remaining clusters (the 4-tile shaft levels at elev22-24) are
+below the threshold. That is the intended behaviour: it names *unmeasured* work,
+not work in progress.
