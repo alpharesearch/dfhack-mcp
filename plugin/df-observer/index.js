@@ -530,8 +530,13 @@ export default class DFObserver extends TypertRemoteService {
   }
 
   injectMessage(agent, { text }, form) {
+    const wake = form === 'alert'
     try {
-      agent.inject(createUserMessage({
+      // Alerts must WAKE the agent: agent.inject() parks a message in the inbox
+      // until other input arrives (practices.md), which is right for briefings
+      // (state, not a request) and wrong for the wake conditions the plan pays
+      // for - water, a drained face, a crash, the game going offline.
+      ;(wake ? agent.followup : agent.inject).call(agent, createUserMessage({
         source: { kind: 'df-observer', form, summary: form === 'alert' ? 'DF observer alert' : 'DF observer briefing' },
         content: [{ type: 'text', text }],
       }))
