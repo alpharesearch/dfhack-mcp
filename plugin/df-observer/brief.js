@@ -41,7 +41,7 @@ function factsLine(payload) {
     : (f.date ? `Y${f.date.year} month ? d${f.date.day}` : null)
   const seedsText = f.seeds == null ? null : `seeds ${num(f.seeds)}`
   const parts = [dateText, popText, `miners ${num(f.miners)} of ${picksText(f)} picks`,
-    `food ${num(f.food)}`, `drink ${num(f.drink)}`, seedsText, `wood ${num(f.wood)}`, `stone ${num(f.stone)}`,
+    `food-on-piles ${num(f.food)}`, `drink-on-piles ${num(f.drink)}`, seedsText, `wood ${num(f.wood)}`, `stone ${num(f.stone)}`,
     `metal ${num(f.metal)}`, `pending dig ${num(f.pending_dig)}`].filter(Boolean)
   const state = payload.online === false ? 'GAME OFFLINE' : (payload.paused ? 'PAUSED' : 'running')
   const who = payload.pauseSource ? ` (last pause: ${payload.pauseSource}${payload.pauseAtTick != null ? ` @tick ${payload.pauseAtTick}` : ''})` : ''

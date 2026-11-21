@@ -382,6 +382,8 @@ Measured what this build can actually give (Lua probes, 53.17-r1):
 | site id | `dfhack.world.getCurrentSite().id` (677) | in facts; **name is NOT renderable** - `dfhack.language` is nil in this Lua env |
 | mood | `u.mood` is -1 for every unit here; no `dfhack.units` mood helper exists | **not probeable in this build** - labelled, never guessed |
 
+| food / drink | pile probe: item counts **on the watched piles** by category | relabelled `food-on-piles` / `drink-on-piles`: the game's status bar shows the fort-wide **meal/drink supply**, and "Food None" there is *not* contradicted by `food-on-piles 3` (measured: the piles drained 5 -> 3 as dwarves ate, while the game's bar said None) |
+
 Mechanics: one combined Lua probe (`OBSERVE_PICKS_LUA` -> `OBS2 PICKS .. SITE ..
 DATE .. SEEDS ..`) on **deep ticks only** - a Lua round-trip costs ~0.6 s and
 must not be paid every 8 s. The probed fields live in `model.statusFacts` and
