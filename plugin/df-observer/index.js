@@ -273,8 +273,12 @@ export default class DFObserver extends TypertRemoteService {
 
     // ---- durable ledger: the to-do list survives plugin reloads ----
     // (measured gap: a reinstall wiped a user-added to-do; plugin memory is a
-    // derived cache, so anything the user registered must be stored.)
-    ctx.effect(() => this.openLedger(), 'df-observer: ledger storage')
+    // derived cache, so anything the user registered must be stored.
+    // Measured the hard way: `ctx.effect(() => this.openLedger())` never opens
+    // the domain - an async body is not a disposer, and the promise is dropped.
+    // Await the open HERE, in activation, then register the returned close.)
+    const ledgerDispose = await this.openLedger()
+    if (ledgerDispose) ctx.effect(ledgerDispose, 'df-observer: ledger storage')
 
     // ---- the panel's Ack, and the human's words, as a session command ----
     // (practices.md/user-actions.md: one Host operation, called by the UI through
@@ -451,15 +455,26 @@ export default class DFObserver extends TypertRemoteService {
   // ---------------------------------------------------------------------
 
   async openLedger() {
-    const domain = await this.ctx.storageDomain.open({
+    const storage = this.ctx.get('storageDomain')
+    if (storage === undefined) {
+      this.note('no storageDomain in this composition: the ledger lives only in memory this run (labelled)')
+      return null
+    }
+    let domain
+    try {
+      domain = await storage.open({
       name: 'dfObserver',
       version: 1,
       layout: 'per-record',
-      tables: {
-        todos: { valueSchema: z.json() },
-        boxes: { valueSchema: z.json() },
-      },
-    })
+        tables: {
+          todos: { valueSchema: z.json() },
+          boxes: { valueSchema: z.json() },
+        },
+      })
+    } catch (error) {
+      this.note(`ledger open failed (in-memory this run, labelled): ${error?.message ?? error}`)
+      return null
+    }
     this.ledger = domain
     // Load what was stored, then let the model's seeds fill the gaps.
     try {
