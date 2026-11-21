@@ -169,11 +169,24 @@ matters:
   tiles cleared, 1,020 grid tiles returned to wall) - a designation you mean to abandon is a
   job you are making dwarves do.
 
-## 18. Wagon paths are ramped, not staired
-A caravan will not use stairs. To connect a depot to the surface: **3-wide everywhere**, flat
-sections as `DEFAULT_DIG`, every level change as **`RAMP_DIG`**, ordered middle-first per row
-band. On this fort: depot (building id 5) sits at elev 39 = in-game 38, x45-49; its frontage
-x50-55 is already floor (a path can start on existing flat ground - check before digging),
-then ramps at elev 38 (x56-58) and 37 (x59-61), then a 3-wide corridor onto the plain at 37
-(x62-71). The gate list is the same one as anywhere else: damp, depth, and never designate
-over stuff (43 tiles refused because the floor was already there).
+## 18. A wagon road follows the surface - the hill *is* the road
+Wagons refuse stairs, so a depot needs a 3-wide ramped route to the map edge. My first plan
+tunnelled a corridor down through elev 38/37 - the player's verdict: *not how DF works; a few
+ramps outside and the hill connects to the plain that connects to the map edge.* The measured
+surface profile east of the depot (elev 39 = in-game 38, y=120) says why:
+
+```
+x53-60 surface 41 | x61-67 surface 39 | x68-72 surface 38 | x73-191 surface 37 (plain -> edge)
+```
+
+Method, in order:
+1. **Read the surface along the intended line** (`surface_map` per row) - elevations, per column.
+2. **The route runs at the surface elevation.** Flat runs at the same elevation need digging
+   **only where the tile is rock at that elevation** - here x50-67 at elev 39 needed **0 tiles**.
+3. **Every 1-level step in the profile is one 3-wide ramp cut** at the lower elevation: x68
+   (39->38) and x73 (38->37) = `RAMP_DIG` 3 tiles each, 6 tiles total for the whole road.
+4. A 2-level cliff (x61: 41->39) is not on the route - ignore it; the route travels *at* 39.
+5. The natural plain at 37 already reaches the map edge: no designations past x73.
+So: order the **ramps**, not a tunnel; check for already-open ground first, and never
+designate over stuff.
+
