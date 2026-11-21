@@ -257,11 +257,19 @@ function statusBody(state, scope, config) {
     return { rungs: state.rungs, next: state.next, digest }
   }
   if (scope === 'health') {
+    const lines = [
+      `tick ${state.tick} | ${state.online === false ? 'GAME OFFLINE' : state.paused ? 'PAUSED' : 'running'}`
+      + ` | gen ${state.generation ?? '?'}${state.pauseSource ? ` | last pause: ${state.pauseSource}${state.pauseAtTick != null ? ` @tick ${state.pauseAtTick}` : ''}` : ''}`,
+      ...(state.pauseEvents ?? []).slice(0, 8).map((e) => `  pause event @tick ${e.tick}: ${e.paused ? 'paused' : 'resumed'} (${e.source ?? 'unknown'})`),
+      ...((state.notes ?? []).slice(0, 8).map((n) => `NOTE: ${short(String(n), 160)}`)),
+      ...(state.crashlog?.dir ? (state.crashlog.files ?? []).slice(0, 5).map((f) => `crashlog ${String(f.name)} ${f.bytes}B`) : ['crash log dir: not configured (Config.game_dir)']),
+    ]
     return {
       paused: state.paused, pauseSource: state.pauseSource, pauseAtTick: state.pauseAtTick,
       pauseEvents: (state.pauseEvents ?? []).slice(0, 10),
       generation: state.generation, online: state.online,
       crashlog: state.crashlog, notes: state.notes, digest,
+      text: lines.join('\n'),
     }
   }
   const brief = buildBriefing(state, { maxTokens: config.briefing_max_tokens })
