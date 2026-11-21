@@ -591,3 +591,25 @@ Boundary rules (Agent runtime docs, measured):
 So: **alerts steer** (`deliveryOf('alert', agent)` -> steer, followup only as a
 fallback), **briefings inject** (state, not a request - the plan's rule). A wake
 now lands mid-task, which is what a water/crew/tile-loss alert is for.
+
+## 19. Per-request cost of the plugin, measured (0.1.38)
+
+The plugin's standing cost in a target agent's request header (estimator:
+bytes/4, the same one the briefings use):
+
+| piece | tokens |
+|---|---|
+| tool schemas (3 tools), long how-to text | **962** |
+| tool schemas with `tool_docs: compact` (default) | **737** (df_status 123+79, df_todo 104+~200, df_alerts 50+124) |
+| `STANDING_RULES_COMPACT` (system prompt section) | 148 |
+| `STANDING_RULES` full | 387 |
+| first briefing (measured live at embark, rule mode) | 600-650 (cap 700) |
+| filtered briefing (filter live) | 315 (cap 340) |
+
+So the floor a session pays for the plugin is **~885 tokens** in compact
+defaults (737 + 148), plus one briefing. `tool_docs: full` is the teaching
+variant (+219 tokens per request); `rules_mode: full` adds 239.
+
+Knobs, all Config: `tool_docs` (compact|full), `rules_mode` (compact|full|off),
+`briefing_max_tokens` (700), `filter_briefing_max_tokens` (340),
+`briefing_mode` (on|off), `wake_enabled`.
