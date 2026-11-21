@@ -139,3 +139,20 @@ General rule for the model: every "is it done?" question is answered by a **posi
 state** (floors/stairs present), never by the absence of the pre-dig state. The same trap
 caught me twice (designation count → 0; wall count → 0), and both times the fog was the
 thing that made absence look like success.
+
+### Fog designation is the intended workflow (proven end to end)
+Player: **"yes, you need to designate your plan in the fog."** Proven on the live map:
+1. Shaft `x50-51,y123` sunk elev 39 → 35 by the reveal loop (tile-verified `StoneStairUD`).
+2. `x43-49, y122-124, elev 36` designated **into fog** (accepted on hidden tiles), then
+   read back as **21 floors/stairs, 0 walls, 0 fog** - the dwarves dug it and the map
+   revealed itself.
+3. Ground check before extending (now cheap, and the only legitimate gate): hazards
+   `x27-49 y119-126 elev36` -> damp 0, magma 0, clean 184; depth-profile -> **deep(>=2)=184,
+   shallow 0, unexplored 0**.
+4. Plan designated in fog: tunnel extension `x33-42,y122-124` (30/30) making a
+   **17-column, 3-wide tunnel** from the shaft, plus a **6x6 room** `x27-32,y121-126`
+   (36/36) -> `dig 66 tiles x27-42 y121-126`, watched by `dig_run.py`.
+
+So the gates are: **hazard and depth** (damp/magma/roof-void - the things that flood or
+collapse the fort), NOT visibility, NOT reachability. Visibility is what the dwarves give
+you; reachability is what the game answers with time.
