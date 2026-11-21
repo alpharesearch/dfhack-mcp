@@ -699,6 +699,39 @@ test('every wire level carries to-do titles (ids alone read as placeholders)', (
   return 'open rows titled, ledger intact, cost capped'
 })
 
+test('fresh-embark simulation: a virgin fort gets honest labels, not invented facts', () => {
+  // The virtual counterpart of PLAYTEST §5: no watched boxes, auto band, nothing
+  // dug. The live embark run is `deploy.sh embark`; this pins the expectations.
+  const cfg = Config.parse({ monitored_boxes: [], pile_ids: [], shafts: [], elev0: 0, elev1: 0 })
+  // A virgin fort means NOTHING ingested yet: build the model directly, not via
+  // freshModel (that helper seeds a full fort and its labels would be real data).
+  const m = new FortModel(cfg)
+  const virgin = { paused: false, generation: 1,
+    facts: { pop: 84, dwarves: 7, miners: 1, picks: 3, food: 12, drink: 5, alcohol: 5, meals: 0, raw_food: 12, seeds: 0, wood: 3, stone: 0, metal: 0, barrels: 0, pending_dig: 0, water_tiles: 0, magma_tiles: 0, date: { year: 1, month: 0, day: 1 } },
+    buildings: [], boxes: [], shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [] }
+  m.ingestFast(virgin)
+  const alerts = m.evaluate(cfg)
+  const b = buildBriefing(m.payload(), { maxTokens: 700 })
+  // 1. NO DATA is labelled, not hidden
+  assert.match(b.text, /LADDER: NO DATA this tick \(deep read pending\)/, 'the ladder announces the missing deep read')
+  assert.match(b.text, /DIG: no monitored boxes answered this tick \(no data, not a fact\)/, 'the dig line says so')
+  assert.match(b.text, /TODOS: ledger empty \(the plugin seeds it from the first ladder read\)/, 'the ledger gap is explained')
+  // 2. no tile-rule alerts without tiles
+  assert.ok(!alerts.some((a) => a.kind === 'dig_complete' || a.kind === 'dig_stalled' || a.kind === 'tile_state_lost'),
+    'no dig alerts on a fort with no watched tiles: ' + alerts.map((a) => a.kind).join(','))
+  // 3. supply ranking speaks, and its advice follows the gap that fired
+  const crew = alerts.find((a) => a.kind === 'crew')
+  assert.ok(crew, 'the supply gap raises the crew alert')
+  assert.match(crew.evidence, /meals 0, raw 12, 7 dwarves/, 'the gap is the meals one (drink 5 exists)')
+  assert.match(crew.suggested, /kitchen \+ butcher/, 'the advice names the fix for THAT gap, not the generic labour line')
+  // 4. the ledger seeds from the first LADDER read (deep tick)
+  m.ingestDeep({ rungs: [{ id: 1, title: 'Pause / labour check', done: true }, { id: 2, title: 'Entry tunnel / stairwell', done: false }, { id: 15, title: 'Food: farm plot + fishing + butcher', done: false }], notes: [], piles: [] })
+  m.evaluate(cfg)
+  assert.ok(m.todos.length > 0, 'the first ladder read seeds the ledger')
+  assert.ok(m.todos.every((t) => t.accept && t.accept.kind), 'every seeded to-do carries an acceptance test')
+  return `virgin fort: ${alerts.map((a) => a.kind).join(',')} + labelled gaps, ${m.todos.length} seeded to-dos`
+})
+
 test('config declares each key exactly once (duplicate zod keys are a silent last-wins)', () => {
   const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
   const keys = [...index.matchAll(/^  ([a-z_]+): z\./gm)].map((m) => m[1])

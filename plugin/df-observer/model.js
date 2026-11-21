@@ -695,18 +695,23 @@ export class FortModel {
     // from the status probe - not the pile counts, which ride in the pile lines.
     const dwarvesN = facts.dwarves == null ? null : num(facts.dwarves)
     if (dwarvesN > 0) {
+      // The advice follows the gap that fired (measured on a simulated embark: the
+      // evidence named meals while the advice recited the generic pick/labour line).
       if (facts.alcohol != null && num(facts.alcohol) === 0) {
         raise('crew', 'crew-no-drink',
           `alcohol 0 with ${dwarvesN} dwarves: drink outranks meals and raw food - build the still (barrels to store it)`,
-          'y -> Craftsdwarf (Still); b -> craftsdwarf workshop')
+          'y -> Craftsdwarf (Still); b -> craftsdwarf workshop',
+          'brew before you dig deep: still (y -> Craftsdwarf) needs a barrel + plump helmets; farm first, then brew (df-dig §16, quickstart farm rung)')
       } else if (facts.meals != null && num(facts.meals) === 0) {
         raise('crew', 'crew-no-meals',
           `no prepared meals (meals 0, raw ${num(facts.raw_food)}, ${dwarvesN} dwarves): meals outrank raw food - cook it`,
-          'b -> Craftsdwarf / Kitchen -> butcher + kitchen near the farm')
+          'b -> Craftsdwarf / Kitchen -> butcher + kitchen near the farm',
+          `cook the raw supply: kitchen + butcher (b -> Craftsdwarf / Kitchen) near the farm; dwarves cancel Eat when there is nothing prepared, and raw food spoils (raw ${num(facts.raw_food)})`)
       } else if (facts.raw_food != null && num(facts.raw_food) === 0 && num(facts.seeds) === 0) {
         raise('crew', 'crew-no-raw',
           `no raw food and no seeds (${dwarvesN} dwarves): the farm plot is the supply base`,
-          'dig a 5x5 soil room, 3x3 farm plot, irrigate')
+          'dig a 5x5 soil room, 3x3 farm plot, irrigate',
+          'farm plot before more digging: 5x5 soil room (tree-free), 3x3 plot, irrigate, plant - seeds 0 means nothing can be planted (quickstart farm rung)')
       }
     }
     // ---- dwarf deaths: `pop` counts pets/livestock too, so the alert reads the
