@@ -214,3 +214,10 @@ tests/mock_*.log
 # raw dumps written by world_raw (files, not context)
 dumps/
 test-8005.log
+
+# vendored client: generated build outputs are not part of the source
+vendor/**/build/
+vendor/**/dist/
+vendor/**/CMakeCache.txt
+vendor/**/CMakeFiles/
+vendor/**/*.egg-info/

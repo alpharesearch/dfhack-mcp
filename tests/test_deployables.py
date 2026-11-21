@@ -28,7 +28,13 @@ def test_deployables_tree_exists_and_is_not_ignored():
     root = pathlib.Path(__file__).resolve().parents[1]
     bp = root / "deployables" / "blueprints"
     sc = root / "deployables" / "scripts"
-    assert bp.is_dir() and sc.is_dir()
+    # Every deployable dir must ship a tracked file, because git does not track empty
+    # directories: an empty deployables/scripts vanished from a fresh clone (found by
+    # cloning the repo), so a clone could not deploy scripts at all.
+    assert bp.is_dir(), f"missing {bp} (clone-unsafe?)"
+    assert sc.is_dir(), f"missing {sc} - an empty dir is NOT cloned; keep a README in it"
+    assert list(bp.glob("*.csv")), "no blueprints in deployables/blueprints"
+    assert (sc / "README.md").is_file(), "deployables/scripts must ship a README (keeps the dir in git)"
     assert (root / "deployables" / "README.md").is_file()
     assert (root / "scripts" / "deploy.sh").is_file()
     assert os.access(root / "scripts" / "deploy.sh", os.X_OK)
