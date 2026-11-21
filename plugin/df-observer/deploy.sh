@@ -141,12 +141,74 @@ update() {
   install
 }
 
+# Fresh-embark play test (PLAYTEST.md): swap the live profile row to a
+# no-assumptions config (auto band, nothing watched), print what the plugin is
+# EXPECTED to do on a virgin fort, and keep a backup so `embark-restore` puts the
+# measured fort's config back. It never touches the game.
+embark() {
+  say "switching the profile row to fresh-embark config (backup: $DIR/.embark-backup.txt)"
+  PROFILE_FILE="$HOME/.dsh/profiles/web/cordis.patch.yml" BACKUP="$DIR/.embark-backup.txt" python3 - <<'PY'
+import os, re
+path = os.environ["PROFILE_FILE"]; backup = os.environ["BACKUP"]
+lines = open(path).read().split("\n")
+start = next((i for i, l in enumerate(lines) if l.strip() == "- id: df-observer"), None)
+if start is None:
+    raise SystemExit("df-observer row not found in the profile")
+end = start + 1
+while end < len(lines) and not lines[end].startswith("- "):
+    end += 1
+row = "\n".join(lines[start:end])
+open(backup, "w").write(row)
+new_row = row
+for key, val in (("elev0", "0"), ("elev1", "0")):
+    new_row = re.sub(rf"^(\s*{key}: )\d+$", rf"\g<1>{val}", new_row, flags=re.M)
+for key in ("monitored_boxes", "pile_ids", "shafts"):
+    new_row = re.sub(rf"^(\s*{key}: ).*$", rf"\g<1>[]", new_row, flags=re.M)
+open(path, "w").write(src.replace(row, new_row, 1))
+print("row switched; backup written")
+print("watched lists cleared, band set to auto (elev0/elev1 = 0)")
+PY
+  say "expected first-briefing shape on a virgin fort (PLAYTEST §5)"
+  cat <<'TXT'
+  - FORT BRIEFING header: date, pause state, pop by profession, NO DATA labelled
+  - the Quickstart ladder seeded as to-dos, each with its acceptance test
+  - NO watched boxes (Config empty) => "pending dig N (watched boxes 0 ...)" is HONEST,
+    and the designation scan names where the queued work physically is
+  - dig_complete / dig_stalled / tile_state_lost stay quiet until real tiles move
+  - water wakes fire only when the band's water tiles grow >= water_growth_min
+  - the panel: chips live, sections fill as the wire affords them
+  Read it with:  curl -sG "http://127.0.0.1:8000/observe" --data-urlencode 'q={"facts":true,"warnings":true,"survey":true,"designations":12,"rungs":true}'
+TXT
+}
+
+embark_restore() {
+  PROFILE_FILE="$HOME/.dsh/profiles/web/cordis.patch.yml" BACKUP="$DIR/.embark-backup.txt" python3 - <<'PY'
+import os
+path = os.environ["PROFILE_FILE"]; backup = os.environ["BACKUP"]
+if not os.path.exists(backup):
+    raise SystemExit("no backup at " + backup + " - nothing to restore")
+row = open(backup).read()
+lines = open(path).read().split("\n")
+start = next((i for i, l in enumerate(lines) if l.strip() == "- id: df-observer"), None)
+if start is None:
+    raise SystemExit("df-observer row not found in the profile")
+end = start + 1
+while end < len(lines) and not lines[end].startswith("- "):
+    end += 1
+lines[start:end] = row.split("\n")
+open(path, "w").write("\n".join(lines))
+print("restored the measured fort config from the backup")
+PY
+}
+
 server() {
   say "restarting the DF MCP server so /observe matches main.py"
   "$REPO/start.sh" restart
 }
 
 case "${1:-check}" in
+  embark)          embark ;;
+  embark-restore) embark_restore ;;
   check)   check ;;
   install) install ;;
   update)  update ;;

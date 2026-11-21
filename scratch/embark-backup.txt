@@ -1,0 +1,41 @@
+- id: df-observer
+  target: '@local/df-observer'
+  config:
+    server_url: 'http://127.0.0.1:8000/observe'
+    elev0: 22
+    elev1: 45
+    monitored_boxes: [[27, 121, 42, 126, 36], [43, 122, 49, 124, 36], [45, 121, 66, 122, 35], [43, 121, 44, 122, 25], [43, 121, 44, 122, 29]]
+    pile_ids: [18, 19, 20, 24]
+    shafts: [[50, 123], [43, 121], [44, 121], [43, 122], [44, 122], [46, 121], [50, 121], [54, 122], [58, 121], [62, 122], [66, 121]]
+    reports: 3
+    crashlog_files: 3
+    game_dir: ''
+    poll_running_ms: 8000
+    poll_paused_ms: 60000
+    deep_every: 4
+    offline_grace_ms: 3600000
+    pop_drop_min: 5
+    rules_mode: compact
+    tool_docs: compact
+    panel_full_briefing: true
+    briefing_max_tokens: 700
+    briefing_mode: on
+    inject_min_spacing_ms: 30000
+    inject_max_spacing_ms: 600000
+    min_to_dig_delta: 3
+    alert_wakes: [water, dig_complete, dig_stalled, tile_state_lost, game_says, game_crashed, game_offline]
+    wake_min_spacing_ms: 60000
+    pause_authority: off
+    pause_on: [water, overload]
+    auto_resume: false
+    overload_alerts: 6
+    overload_todos: 20
+    stall_ticks: 4
+    pile_full_items: 150
+    agents: []
+    brief_subagents: false
+    filter_enabled: true
+    filter_agent_preset: ''
+    filter_briefing_max_tokens: 360
+    filter_timeout_ms: 120000
+    wake_enabled: true

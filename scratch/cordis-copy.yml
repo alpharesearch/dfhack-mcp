@@ -1,0 +1,394 @@
+# Your patch layer for this dsh profile, applied after every bundle layer:
+# a top-level YAML array of loader patch entries (id-targeted config
+# overrides, disables, and insert lists; `!!js` expressions allowed).
+
+# ── MCP servers ─────────────────────────────────────────────────────────────
+# Host plane by choice, so every session sees these tools regardless of preset.
+# One row per server: `dsh-mcp-client` connects one instance to one server and
+# registers its tools as `mcp__<serverName>__<tool>`. It injects only `tools`
+# and provides no service, so no isolate realm is involved.
+#
+# The transport is the proxy that swap/start.sh launches
+# (`uvx mcp-proxy --named-server-config config_mcp.json --port 8001 --stateless`),
+# which serves each named server at /servers/<name>/mcp over Streamable HTTP —
+# the transport this plugin speaks. Verified live: `initialize` and `tools/list`
+# answer on every row (time, fetch, ddg-search, freecad, browser-mcp, blender), and
+# `--stateless` means no session id to carry. Reusing it
+# avoids a second copy of each Python server per harness process.
+#
+# `failOnStartupError` stays false (the default) on purpose: the proxy is a
+# separate manual process, so a boot without it must still start the harness.
+# The server's tools then simply do not appear, and `reconnect` (also default)
+# retries the link. Set it true on a row to make a missing proxy a startup error.
+#
+# Overlaps worth knowing: `mcp__fetch__fetch` duplicates the built-in
+# `web_fetch`, which needs no credential either. `mcp__ddg-search__search`
+# duplicates `web_search` — which currently CANNOT work, since the `web` row's
+# `searchProvider: deepseek-official` needs a DEEPSEEK_API_KEY that is neither in
+# the credential store nor the environment. Until that key exists, ddg-search is
+# the only working search here.
+
+- insert:
+    - id: mcp-time
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: time
+        transport: streamable-http
+        url: http://127.0.0.1:8001/servers/time/mcp
+
+    - id: mcp-fetch
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: fetch
+        transport: streamable-http
+        url: http://127.0.0.1:8001/servers/fetch/mcp
+
+    - id: mcp-ddg-search
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: ddg-search
+        transport: streamable-http
+        url: http://127.0.0.1:8001/servers/ddg-search/mcp
+        # DuckDuckGo is reached through the public endpoint and can answer slowly
+        # under load; the 60s default is kept explicit so it reads as a decision.
+        toolCallTimeoutMs: 60000
+
+    - id: mcp-freecad
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: freecad
+        transport: streamable-http
+        url: http://127.0.0.1:8001/servers/freecad/mcp
+        # FreeCAD's own execute_code budget is 90s (extendable to 1800s) and FEM
+        # runs go longer, so the 60s client default would time out while the
+        # addon is still working. Two minutes stays above the addon's default.
+        toolCallTimeoutMs: 120000
+        # mcp-proxy reads config_mcp.json only at startup, so this link can fail
+        # until swap/start.sh is restarted; keep retrying well past a manual
+        # restart instead of giving up at the 10-attempt default.
+        reconnect:
+          maxAttempts: 60
+
+    - id: mcp-blender
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: blender
+        transport: streamable-http
+        url: http://127.0.0.1:8001/servers/blender/mcp
+        # The server's own budget to the Blender add-on is 300 s (blmcp's socket
+        # timeout) and its headless `blender --background` fallback is 120 s, so a
+        # viewport render or an execute_blender_code pass on a heavy scene runs for
+        # minutes. The 60 s client default cuts the call off mid-render.
+        toolCallTimeoutMs: 300000
+        # Needs Blender running with the MCP add-on enabled (it listens on
+        # localhost:9876). Without Blender the server starts happily and every tool
+        # answers "Cannot connect to Blender", so the row is harmless when Blender is
+        # closed - and the retry window covers a proxy restart as on the rows above.
+        reconnect:
+          maxAttempts: 60
+
+    - id: mcp-browser
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: browser-mcp
+        transport: streamable-http
+        url: http://127.0.0.1:8001/servers/browser-mcp/mcp
+        # browser_ask_user waits 120s for a human to answer a 2FA/CAPTCHA prompt
+        # (and the server itself allows 125s), so the 60s client default would
+        # time out on precisely the tool whose job is handing control to a person.
+        toolCallTimeoutMs: 180000
+        # Same as freecad: the proxy reads config_mcp.json only at startup, so a
+        # manual restart of swap/start.sh must stay inside the retry window.
+        reconnect:
+          maxAttempts: 60
+
+    - id: mcp-dfhack
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: dfhack
+        transport: streamable-http
+        url: http://127.0.0.1:8000/mcp
+        # Not behind the 8001 proxy. dfhack-mcp is a FastAPI app that speaks
+        # Streamable HTTP on its own (mcp.mount_http() at /mcp), so this row talks
+        # to it directly, the way the WordPress row below does - no copy of the
+        # server per harness process, and nothing in swap/start.sh has to be
+        # restarted to add it.
+        # A loaded fortress with thousands of dwarves makes get_unit_list and
+        # get_material_list serialize large protobuf payloads over the DFHack RPC
+        # socket, so stay above the 60s default.
+        toolCallTimeoutMs: 120000
+        # Manual process, started after the game:
+        #   cd ~/github/dfhack-mcp && uv run python main.py   # 127.0.0.1:8000
+        # It needs Dwarf Fortress running with DFHack's remote-server plugin on
+        # 127.0.0.1:5000, and its lifespan connects once at startup - so start it
+        # after the game, not before. failOnStartupError stays false so a harness
+        # boot without the game still starts and the tools simply stay absent;
+        # the long retry window covers a manual restart of game and server. A patch
+        # edit re-creates the plugin instance, which is the way back from an exhausted
+        # reconnect loop (see the restart note in ~/github/dfhack-mcp/SETUP-LINUX.md).
+        reconnect:
+          maxAttempts: 60
+- id: ui-settings-general
+  name: "@deepseek-ai/dsh-client-ui-settings-general"
+  config:
+    welcomeNoticeVersion: 2026-09-28.1
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      unsloth:
+        displayName: unsloth
+        apiKeyEnv: UNSLOTH_API_KEY
+        api: openai-completions
+        baseURL: http://127.0.0.1:8888/v1
+        models:
+          - id: esatapedico/Qwen3.8-27B-NVFP4-GGUF
+            name: Qwen3.8-27B-NVFP4-GGUF
+          - id: esatapedico/Qwen3.8-27B-NVFP4-MTP-GGUF:Qwen3.8-27B-NVFP4-MTP-HIGHEST
+            name: highest
+            contextWindow: 256000
+            maxTokens: 32000
+          - id: esatapedico/Qwen3.8-27B-NVFP4-MTP-GGUF:Qwen3.8-27B-NVFP4-MTP-HIGH
+            name: high
+      llama-swap:
+        apiKeyEnv: LLAMA_SWAP_API_KEY
+        displayName: llama-swap
+        api: openai-completions
+        baseURL: http://127.0.0.1:8080/v1
+        defaultContextWindow: 262144
+        defaultMaxTokens: 32768
+        retryPolicy:
+          mode: normal
+          maxRetries: 24
+          backoff:
+            initialDelayMs: 3000
+            maxDelayMs: 20000
+        models:
+          - id: global-default
+            name: global-default
+            contextWindow: 524288
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+          - id: global-vision
+            name: global-vision
+            contextWindow: 524288
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+          - id: qwen3.8-fn-strata
+            name: qwen3.8-fn-strata
+            contextWindow: 262144
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+          - id: qwen3.8-fn-strata-524k
+            name: qwen3.8-fn-strata-524k
+            contextWindow: 524288
+            maxTokens: 65535
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+          - id: qwen3.8-fn-strata-nvfp4
+            name: qwen3.8-fn-strata-nvfp4
+            contextWindow: 524288
+            maxTokens: 65535
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+          - id: deepseek-v41-maya
+            name: deepseek-v41-maya
+            contextWindow: 262144
+            maxTokens: 65535
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+          - id: glm-5.3-flash-maya
+            name: glm-5.3-flash-maya
+            contextWindow: 262144
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+          - id: glm-5.3-flash-maya-s-v2
+            name: glm-5.3-flash-maya-s-v2
+            contextWindow: 131072
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+          - id: gemma4-26b-a4b-qat
+            name: gemma4-26b-a4b-qat
+            input:
+              - text
+              - image
+          - id: qwen3.8-27b-q4
+            name: qwen3.8-27b-q4
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+          - id: muse-glimmer-30b-q4
+            name: muse-glimmer-30b-q4
+            contextWindow: 131072
+            input:
+              - text
+              - image
+      openrouter:
+        apiKeyEnv: OPENROUTER_API_KEY
+        models:
+          - id: deepseek/deepseek-v4.1-flash
+            name: "DeepSeek: DeepSeek V4.1 Flash"
+            contextWindow: 1048576
+            maxTokens: 943718
+            input:
+              - text
+              - image
+          - id: deepseek/deepseek-v4.1-flash-1017
+            name: "DeepSeek: DeepSeek V4.1 Flash 1017"
+            contextWindow: 1048576
+            maxTokens: 393216
+            input:
+              - text
+              - image
+          - id: qwen/qwen3.8-flash
+            name: "Qwen: Qwen3.8 Flash"
+            contextWindow: 1000000
+            maxTokens: 131072
+            input:
+              - text
+              - image
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: llama-swap
+    model: global-default
+- id: ui-theme
+  name: "@deepseek-ai/dsh-client-ui-theme"
+  config:
+    preference: dark
+- id: agent-loop
+  name: "@deepseek-ai/dsh-agent-loop"
+  config:
+    agents: []
+    maxParallelToolCalls: 8
+- id: subagent
+  name: "@deepseek-ai/dsh-subagent"
+  config:
+    maxActiveSubagents: 4
+
+# ── WordPress MCP (remotedad.net) ───────────────────────────────────────────
+# Easy MCP AI v2.2.2 serves Streamable HTTP at the site's REST path — the
+# transport this plugin speaks. The plugin also offers OAuth 2.1, but
+# dsh-mcp-client builds StreamableHTTPClientTransport with static headers only
+# (`requestInit.headers`); it passes no authProvider, so OAuth discovery,
+# consent and refresh never happen and the connection would sit on a 401.
+# Bearer token is therefore the only path that handshakes. Verified live:
+# initialize answers easy-mcp-ai 2.2.2 and tools/list returns 131 tools.
+#
+# The token comes from the environment on purpose: this file is tracked by the
+# profile's git repo, so a literal `wpmcp_...` would be commit-able. Export
+# WP_MCP_TOKEN in the environment that launches `dsh web`.
+- insert:
+    - id: mcp-wordpress
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: wordpress
+        transport: streamable-http
+        url: https://remotedad.net/wp-json/easy-mcp-ai/v1/mcp
+        headers:
+          Authorization: !!js '`Bearer ${process.env.WP_MCP_TOKEN}`'
+        # wp_upload_media posts base64 bodies and the SEO/GSC tools call Google;
+        # both can outrun the 60s client default.
+        toolCallTimeoutMs: 120000
+- id: plugin-market
+  name: "@deepseek-ai/dsh-plugin-market"
+  config:
+    indexes: []
+
+# ── df-observer (added by the observer build session for the filter A/B) ────
+# Live fort ids; elevations are IN-GAME panel numbers. The plugin stays
+# read-only towards the game (pause_authority: off).
+- id: df-observer
+  target: '@local/df-observer'
+  config:
+    server_url: 'http://127.0.0.1:8000/observe'
+    elev0: 22
+    elev1: 45
+    monitored_boxes: [[27, 121, 42, 126, 36], [43, 122, 49, 124, 36], [45, 121, 66, 122, 35], [43, 121, 44, 122, 25], [43, 121, 44, 122, 29]]
+    pile_ids: [18, 19, 20, 24]
+    shafts: [[50, 123], [43, 121], [44, 121], [43, 122], [44, 122], [46, 121], [50, 121], [54, 122], [58, 121], [62, 122], [66, 121]]
+    reports: 3
+    crashlog_files: 3
+    game_dir: ''
+    poll_running_ms: 8000
+    poll_paused_ms: 60000
+    deep_every: 4
+    offline_grace_ms: 3600000
+    pop_drop_min: 5
+    rules_mode: compact
+    tool_docs: compact
+    panel_full_briefing: true
+    briefing_max_tokens: 700
+    briefing_mode: on
+    inject_min_spacing_ms: 30000
+    inject_max_spacing_ms: 600000
+    min_to_dig_delta: 3
+    alert_wakes: [water, dig_complete, dig_stalled, tile_state_lost, game_says, game_crashed, game_offline]
+    wake_min_spacing_ms: 60000
+    pause_authority: off
+    pause_on: [water, overload]
+    auto_resume: false
+    overload_alerts: 6
+    overload_todos: 20
+    stall_ticks: 4
+    pile_full_items: 150
+    agents: []
+    brief_subagents: false
+    filter_enabled: true
+    filter_agent_preset: ''
+    filter_briefing_max_tokens: 360
+    filter_timeout_ms: 120000
+    wake_enabled: true
