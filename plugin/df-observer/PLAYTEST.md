@@ -58,3 +58,25 @@ Then pause the game yourself (`Escape`/pause key) and watch the next briefing
 header: `PAUSED (last pause: game-auto-or-player @tick N)`. Resume and the
 header returns to `running`. The plugin never unpauses (auto_resume is false by
 default and its own pause is disabled).
+
+## 5. Expected values, measured in production (0.1.48)
+
+Measured from the durable session log (`request/header` events carry the whole
+header), in this profile with the plugin installed:
+
+| measurement | expected |
+|---|---|
+| header tool schemas, total (132-137 tools incl. MCP) | ~25,300-26,400 tokens |
+| plugin's 3 tools, long docs (`tool_docs: full`) | **987** (3.74%) |
+| plugin's 3 tools, compact docs (default) | **762** (2.91%) |
+| standing rules section (compact) | 148 |
+| one briefing injection (filtered / rule mode) | 250-290 / 456-538 |
+| poll cadence (observed in payloads) | 8,000 ms running → 60,000 ms paused |
+| first briefing after activation | within ~2 deep ticks (~16-20 s) |
+| ledger seeds on a fresh save | ladder rungs as to-dos, ids from 1, pile tasks deduped |
+
+Fresh-embark run: create the session (no scheduling needed - the plugin targets
+every session when `agents: []`), paste the §1 instruction line, then fill the §2
+evidence table. The plugin must be seen doing: tools present in the first header,
+`ledger restored`/seeded to-dos in `df_status scope=summary`, first briefing
+within ~20 s, `dig_complete` wake with quoted evidence when the first box drains.
