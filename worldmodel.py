@@ -2077,6 +2077,11 @@ class WorldModel:
 
     def forget_band(self):
         self._band = None
+        # The stack memo is keyed by (e0, e1, gen) and **the generation does not change on a
+        # save reload** - measured: after reloading a save, /survey kept answering with the
+        # pre-reload world (dug floors reported as fog). Reloading a save MUST invalidate
+        # every derived view, so clear the memo here, not just the fort band.
+        self._stack_cache = {}
 
 
 # ---------------------------------------------------------------------------

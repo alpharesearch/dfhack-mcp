@@ -139,7 +139,7 @@ async def place_building(dec, name: str, x: int, y: int, elev: int,
     extra = ""
     if material:
         kind = str(material).lower().strip()
-        extra = f'items=resolve_material("{kind}", {int(count)}), '
+        extra = f'items=resolve_material("{kind}", {int(count)}, {int(x)}, {int(y)}, {int(elev)}), '
     elif abstract:
         extra = "abstract=true, "
     elif items:
@@ -157,21 +157,29 @@ local function resolve_items(ids)
   end
   return out
 end
-local function resolve_material(kind, want)
+local function resolve_material(kind, want, nearx, neary, nearz)
   -- Measured: RFR Item.id does NOT resolve via dfhack.items.findItem, and DF53 map-block
   -- items enumerate as numbers. So material items are found by scanning the in-play item
   -- list for item OBJECTS whose description matches, which is what constructWithItems
   -- needs (an empty list is exactly what its argument check rejects).
-  local out = {{}}
+  --
+  -- Early-game rule from the player: SELECT THE CLOSEST MATERIAL. A builder walks to the
+  -- item, so distance is the real cost - candidates are collected first, then sorted by
+  -- squared 3D distance to the build site, and the nearest `want` are taken.
+  local cand = {{}}
   local all = df.global.world.items.other.IN_PLAY
   for _, it in ipairs(all) do
-    if #out >= want then break end
     local okd, d = pcall(function() return dfhack.items.getDescription(it, 0) end)
     if okd and d and tostring(d):lower():find(kind, 1, true) then
-      local okr, free = pcall(function() return it.general_refs == nil or true end)
-      out[#out + 1] = it
+      local okp, pos = pcall(function() return it.pos end)
+      local dx, dy, dz = 9999, 9999, 9999
+      if okp and pos then dx, dy, dz = pos.x - nearx, pos.y - neary, (pos.z - 129) - nearz end
+      cand[#cand + 1] = {{it = it, d2 = dx*dx + dy*dy + dz*dz}}
     end
   end
+  table.sort(cand, function(a, b) return a.d2 < b.d2 end)
+  local out = {{}}
+  for i = 1, math.min(want, #cand) do out[#out + 1] = cand[i].it end
   return out
 end
 local b = nil
