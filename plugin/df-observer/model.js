@@ -355,6 +355,7 @@ export class FortModel {
     this.dugBaseline = new Map()
     /** Boxes the user registered via to-dos; they join every survey request. */
     this.extraBoxes = []
+    this.designations = null
     /** Plugin-side diagnostics (transport, ledger, filter) merged into payloads. */
     this.notesSource = null
     this.pluginNotes = () => (this.notesSource ? this.notesSource() : [])
@@ -435,6 +436,9 @@ export class FortModel {
     }
     if (Array.isArray(data.rungs)) { this.rungs = data.rungs }
     if (data.next !== undefined) this.next = data.next
+    // Designation clusters from the server (deep ticks). Undefined when the
+    // server predates the feature - then the field is labelled NO DATA, never guessed.
+    if (data.designations !== undefined) this.designations = data.designations
     // The server keys pile rows by id ({"18": {...}}); accept both shapes -
     // an Array.isArray() guard alone dropped every pile row (measured: the piles
     // scope read NO DATA while curl showed rows).
@@ -945,6 +949,7 @@ export class FortModel {
       } : null,
       rungs: this.rungs.map((r) => ({ id: r.id, title: r.title, done: !!r.done, keys: r.keys, why: r.why })),
       next: this.next,
+      designations: this.designations,
       alerts: compactAlerts,
       todos: this.todos.slice(0, 40).map((t) => ({
         id: t.id, title: t.title, origin: t.origin, state: t.state, accept: t.accept,
@@ -1074,6 +1079,7 @@ export const dfObserverProjection = (z) => ({
     warnings: z.any().default(null),
     rungs: z.array(z.any()).default([]),
     next: z.any().default(null),
+    designations: z.any().default(null),
     reports: z.array(z.any()).default([]),
     crashlog: z.any().default(null),
     notes: z.array(z.any()).default([]),
@@ -1089,7 +1095,7 @@ export const dfObserverProjection = (z) => ({
     tick: 0, online: null, observedAt: null, paused: null, pauseSource: null, pauseAtTick: null,
     generation: null, poll: null, pauseAuthority: null, filter: null,
     facts: null, buildings: [], boxes: [], shafts: [], piles: [], warnings: null,
-    rungs: [], next: null, reports: [], crashlog: null, notes: [], alerts: [], alertHistory: [],
+    rungs: [], next: null, designations: null, reports: [], crashlog: null, notes: [], alerts: [], alertHistory: [],
     todos: [], digEvents: [], pauseEvents: [], overload: null, briefings: 0,
   }),
   apply: (state, event) => {

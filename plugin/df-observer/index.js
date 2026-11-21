@@ -437,6 +437,10 @@ export default class DFObserver extends TypertRemoteService {
       request.elev1 = cfg.elev1
     }
     if (isDeep) {
+      // Where the game's designations physically are (deep ticks only - the scan
+      // is block-granularity server-side). Absent on a server without it: the
+      // plugin labels the gap instead of guessing.
+      request.designations = 12
       request.rungs = true
       // The status probe (picks/site/date/seeds) costs a Lua round-trip: deep ticks only.
       request.status_probe = true

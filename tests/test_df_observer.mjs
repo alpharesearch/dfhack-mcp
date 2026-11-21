@@ -632,6 +632,23 @@ test('tool answers stamp the age of the newest game read', async () => {
   return 'read age stamped in the header line'
 })
 
+test('designations: carried when the server sends them, labelled when it does not', async () => {
+  const model = freshModel()
+  const defsOf = () => toolDefinitions({ model, projection: null, config: model.cfg, sessionFilter: () => true })
+  model.ingestDeep({ rungs: [], notes: [], piles: [], designations: { band: [22, 45], designated_total: 103,
+    by_elev: [{ elev: 36, designated_tiles: 103, clusters: [{ x0: 64, x1: 79, y0: 112, y1: 127, tiles: 103, blocks: 4 }] }] } })
+  const res = await defsOf().find((d) => d.name === 'df_status').execute({ scope: 'boxes' }, { agent: { id: 'play-1' } })
+  assert.match(res.text, /designations \(server scan\):/, res.text.split('\n').slice(-6).join('\n'))
+  assert.match(res.text, /elev36: x64-79 y112-127 103t\/4blk = 103 tiles/, res.text)
+  assert.match(res.text, /total designated: 103/, res.text)
+  assert.equal(res.designations.designated_total, 103, 'the structured field is present too')
+  // a server without the scan: labelled, not guessed
+  model.designations = null
+  const res2 = await defsOf().find((d) => d.name === 'df_status').execute({ scope: 'boxes' }, { agent: { id: 'play-1' } })
+  assert.match(res2.text, /designations: NO DATA/, res2.text)
+  return 'designation clusters surface in df_status boxes, with the honest NO DATA label'
+})
+
 test('the ladder NEXT box joins the survey list (suggestions get proven tiles)', () => {
   const model = freshModel()
   model.ingestDeep({ rungs: [], notes: [], piles: [], next: null })

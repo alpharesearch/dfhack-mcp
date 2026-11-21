@@ -1,0 +1,26 @@
+# Ready-to-apply route for GET /observe in main.py (NOT applied - editing main.py
+# reloads uvicorn, which drops the MCP session binding; apply it when a server
+# restart is acceptable, then restart and run `bash plugin/df-observer/deploy.sh channel`).
+#
+# Insert this block in the observe handler immediately AFTER the shafts block
+# (`out["shafts"] = []` / `notes.append("no shafts requested...")`), BEFORE the
+# `obs2 = {...}` status-probe section. `world`, `e0`, `e1`, `req`, `out`, `notes`
+# are already in scope there. `WorldModel.designation_clusters` exists (committed).
+#
+# Verified contract: request {"elev0":22,"elev1":45,"designations":12} answers
+#   "designations": {"band":[22,45],"by_elev":[{"elev":36,"clusters":[{"x0":..,
+#   "x1":..,"y0":..,"y1":..,"tiles":N,"blocks":M}],"designated_tiles":N}],
+#   "designated_total":N}
+# The plugin (df-observer 0.1.57) asks for it on deep ticks and renders it in
+# `df_status({scope:"boxes"})`, labelled NO DATA when the route is missing.
+
+    # Designation clusters (deep ticks): where the game's dig designations physically
+    # are, as merged 16x16-block rectangles per in-game elevation. The plugin asks
+    # for `designations: N` and labels the field NO DATA when this route is absent.
+    if req.get("designations"):
+        try:
+            limit = max(1, min(int(req["designations"]), 40))
+            out["designations"] = await world.designation_clusters(int(e0), int(e1), limit=limit)
+        except Exception as e:
+            out["designations"] = None
+            notes.append(f"designation scan unavailable: {e}")

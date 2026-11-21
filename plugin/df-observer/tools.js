@@ -272,8 +272,16 @@ function statusBody(state, scope, config) {
   if (scope === 'boxes') {
     const lines = (state.boxes ?? []).map((b) => `elev${b.elev} x${b.box[0]}-${b.box[2]} y${b.box[1]}-${b.box[3]}: to_dig ${b.to_dig ?? 'NO DATA'} dug ${b.dug ?? 'NO DATA'} pending ${b.pending ?? 'NO DATA'}`)
     const ev = (state.digEvents ?? []).slice(-8).map((e) => `  @tick ${e.tick} ${e.kind}: ${short(e.title ?? e.text ?? '', 100)}`)
-    return { boxes: state.boxes, digEvents: (state.digEvents ?? []).slice(0, 20), digest,
-      text: [lines.length ? lines.join('\n') : 'no box survey data this tick (NO DATA, not a fact)', ...ev].join('\n') }
+    // Where the game's designations are, from the server's block scan - this is the
+    // answer to "pending dig N, watched boxes 0" (measured 103 queued, unplaced).
+    const des = state.designations
+    const desLines = des?.by_elev?.length
+      ? ['designations (server scan):',
+        ...des.by_elev.map((e) => `  elev${e.elev}: ${e.clusters.map((c) => `x${c.x0}-${c.x1} y${c.y0}-${c.y1} ${c.tiles}t/${c.blocks}blk`).join(' | ')} = ${e.designated_tiles} tiles`),
+        `  total designated: ${des.designated_total}`]
+      : ['designations: NO DATA (the server has no designation scan at this build - run deploy.sh server / add the route)']
+    return { boxes: state.boxes, designations: des ?? null, digEvents: (state.digEvents ?? []).slice(0, 20), digest,
+      text: [lines.length ? lines.join('\n') : 'no box survey data this tick (NO DATA, not a fact)', ...desLines, ...ev].join('\n') }
   }
   if (scope === 'piles') {
     const piles = state.piles ?? []
