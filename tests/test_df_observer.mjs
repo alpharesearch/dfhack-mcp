@@ -678,6 +678,23 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
   return 'designation summary survives every lean level, under 260 chars'
 })
 
+test('panel labels resolve from the dictionary (no raw key strings on screen)', () => {
+  const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
+  const en = client.slice(client.indexOf('const UI_EN = {'), client.indexOf('const UI_ZH = {'))
+  const zh = client.slice(client.indexOf('const UI_ZH = {'))
+  // Every key the panel renders with t(...) must exist in BOTH dictionaries: a
+  // missing key prints its own name (measured: '107 designatedTiles').
+  const used = [...client.matchAll(/t\('([a-zA-Z][\w.]*)'\)/g)].map((m) => m[1])
+  const defined = (block) => new Set([...block.matchAll(/'([\w.]+)':/g)].map((m) => m[1]))
+  const enKeys = defined(en), zhKeys = defined(zh)
+  // labels built with template keys (t(`health.pauseSource.${x}`)) are checked by prefix
+  const missing = [...new Set(used)].filter((k) => !enKeys.has(k) && !k.includes('${'))
+  assert.deepEqual(missing, [], `keys rendered without a dictionary entry: ${missing.join(', ')}`)
+  const zhMissing = [...new Set(used)].filter((k) => !zhKeys.has(k) && !k.includes('${'))
+  assert.deepEqual(zhMissing, [], `zh dictionary missing: ${zhMissing.join(', ')}`)
+  return `${new Set(used).size} label keys defined in en+zh`
+})
+
 test('every STATE_FIELDS key reaches the client-visible view (4-place sync)', () => {
   // The field set lives in FOUR places: stateSchema, init(), STATE_FIELDS, viewOf().
   // Three earlier bugs were exactly one of them missing a field (poll/pauseAuthority/
