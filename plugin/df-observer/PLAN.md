@@ -136,10 +136,11 @@ health line (offline/crash/reload). Registered through `ctx.slots.inject` +
 
 ## 5. Boundaries
 
-- **Read-only towards the game.** The plugin never designates, builds, sets labours,
-  unpauses, or touches files in the game dir. All in-game action stays agent-driven, so the
-  player's rules (no dig-now, no blueprints for play, designate-in-fog, stop-when-wet)
-  remain enforceable by the model's choices, not hidden plugin side effects.
+- **Read-only towards the game, with exactly one agreed write:** pausing (see §5a). The plugin
+  never designates, builds, sets labours, runs commands, sends keys, digs, blueprints, or writes
+  game-dir files. All in-game action stays agent-driven, so the player's rules (no dig-now, no
+  blueprints for play, designate-in-fog, stop-when-wet) stay enforceable by the model's choices
+  and the player's authority, not hidden plugin side effects.
 - **No new session event types**, no `appendPluginRecord`; everything the model sees must be
   reconstructable from committed session events.
 - **Config-driven, no hard-coded numbers**: poll interval, delta thresholds, alert whitelist,
@@ -174,10 +175,10 @@ installed package needs a restart; new bundles can activate via HMR.
 
 | Phase | Deliverable | Acceptance test |
 |---|---|---|
-| **P0** | poller + projection + `agent.inject()` briefing + `df_status` + `Config` | briefing appears in the next admitted step, bounded to `briefing_max_tokens`, numbers match a manual `/survey` read |
-| **P1** | to-do ledger with plugin-run acceptance tests + alerts + `agent.followup()` wakes | during a real dig, the agent is woken by `dig_complete` and by `water`, without calling any tool; status flips quote evidence |
-| **P2** | slot panel + chat alert rows + `df_alerts(ack)` | human sees ladder/todos/alerts live; ack silences repeats; theme/light-dark consistent |
-| **P3** | game-health watcher (offline, crash-log signature, save-reload diff) + hauling/pick monitoring + pile health | after a crash the briefing names the stack signature; after a reload it lists what survived and re-issues lost designations as to-dos |
+| **P0** | poller + projection + `agent.inject()` briefing + `df_status` + `Config`; **adaptive interval** (paused 60 s, running 5-15 s) | briefing appears in the next admitted step, bounded to `briefing_max_tokens`, numbers match a manual `/survey` read; poll rate visibly follows the pause state |
+| **P1** | to-do ledger (ladder seed + auto-created basics) with plugin-run acceptance tests, alerts + `agent.followup()` wakes, **pause authority** (§5a) + overload signalling | during a real dig the agent is woken by `dig_complete` and `water` without calling any tool; status flips quote evidence; a plugin pause names its cause and is never auto-resumed over a player pause |
+| **P2** | slot panel (ladder/todos/alerts/health) + chat alert rows + `df_alerts(ack)` - **shipped in the first install** | human sees ladder/todos/alerts live; ack silences repeats; theme/light-dark consistent |
+| **P3** | game-health watcher (offline, **crash-log name/size only**, save-reload diff) + hauling/pick monitoring + pile health | after a crash the briefing reports the new crash log and the offline span; after a reload it lists what survived and re-issues lost designations as to-dos. Stack forensics live in a separate plugin, later |
 | **P4** | tuning: delta gating measured, token cost per turn measured (first-turn prompt tokens before/after), Config examples | a 1-hour play session with briefing-only context stays inside the budget; tool calls drop |
 
 ## 8. Success criterion (the game test, not the plugin test)
@@ -189,12 +190,37 @@ progress, stall, water, completion, pile fills, crash/reload — and finishes th
 tile-proved evidence. Measured: tokens spent per hour of game time, tool calls avoided, and
 zero false "complete" claims (the projection can only say complete from positive tile state).
 
-## 9. Open questions for the player
+## 9. Decisions (player, 2026-11-21)
 
-1. **Wake policy** — which alerts may interrupt (default: water, dig-complete, crash)?
-2. **Interval** — poll every 30 s (game-time responsive) or 120 s (cheaper)?
-3. **To-do ownership** — plugin seeds the ladder only, or also auto-creates to-dos from
-   ladder gaps (e.g. "no stone pile → add to-do")?
-4. **UI panel now or later** — P2 in the first install, or headless P0-P1 first?
-5. **Crash-log reading** — allow reading `crashlog/` file contents (needs game-dir read
-   permission), or file-name/size signals only?
+1. **Wake policy:** start with `water`, `dig_complete`, `crash` (game offline/crash log). More
+   wakes will be added only with evidence from play. **New capability agreed:** for some events
+   the plugin may **pause the game** (see §5a) - pausing is the player's own tool, and it is the
+   right answer to "too much is happening, stop and think".
+2. **Interval: adaptive** - game **paused: 60 s**; game **running: 5-15 s** (Config range). If
+   the alert/to-do backlog grows past `overload_*` thresholds, the plugin (a) tells the model to
+   work the queue in order and (b) may pause the game so nothing changes underneath it while the
+   model catches up. Auto-resume only after the queue is drained, and only if the plugin - not
+   the player - did the pausing.
+3. **To-dos:** the plugin seeds the quickstart ladder **and** auto-creates to-dos from ladder
+   gaps, so the basics always exist as verifiable tasks (no stone pile, no meeting area, no
+   refuse pile outdoors, no wood stockpile near the entrance, no well/still, no doors on ordered
+   openings). Auto-created to-dos are labelled as such, carry their acceptance test, and are the
+   model's to-do list - it can reorder, merge, or close them with evidence.
+4. **UI panel from the first install** - P2 moves into the initial version (headless-only is not
+   the plan).
+5. **Crash-log contents are out of scope for this plugin.** The observer reports only "a new
+   crash log appeared" from file name/size signals; deep crash forensics (reading `crashlog/`
+   stacks, correlating with game state) belongs to a **separate plugin later**.
+
+### 5a. Pause authority (the one write, tightly scoped)
+
+- Allowed write: `POST /set-pause-state` only. **No** designations, buildings, labours,
+  `run-command`, `pass-keyboard-event`, `dig-now`, blueprints, game-dir writes.
+- Config-gated per event: `pause_on = ["water", "overload", "crash_risk", "cave_in_window"]`,
+  `pause_authority = off|events|manual_suggestion` (default `events`).
+- Every pause is announced in the briefing with the **evidence and coordinates** that caused it,
+  and the plugin tracks "I paused it" so it never auto-resumes a pause the player made.
+- Auto-resume rules: only after the to-do/alert queue is drained, only for plugin-made pauses,
+  and `Config.auto_resume = false` disables it entirely (player decides).
+- Hard guard: the plugin will not pause while `pending_designations == 0` and nothing is moving -
+  pausing an idle fort is the player's business, not the plugin's.
