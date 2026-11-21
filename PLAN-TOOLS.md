@@ -545,3 +545,21 @@ Rules this adds to `mirror_structure`:
    every elevation, so a "south of the wagon" plan must respect the columns it crosses.
 3. Report the chosen offset explicitly ("4 tiles south of your room at y117"), because
    players read space by adjacency, not by coordinate ranges.
+
+### Sinking a shaft is a reveal loop, not a designation batch (scripts/sink_shaft.py)
+Measured geometry south of the wagon at elev 39 (in-game 38): the wagon itself occupies
+**x45-49, y118-122**, and everything south of it at that level is **surface slope (depth 0)** -
+a tunnel with rock on top is not available there, and the elev-39 mountain corridor (x42-58,
+y118-122) is blocked by the wagon. `probe-plan` on x50-51,y123: elev 39 is solid wall at
+depth 4 and dry, and elev 38 and below are FOG - designations there would be silently
+rejected.
+
+So the player-shaped plan is: sink a shaft and let each dug level reveal the next.
+`scripts/sink_shaft.py` runs exactly that loop per level:
+1. designate UP_DOWN_STAIR_DIG at (x,y,elev) - report accepted count (0 = refused: fog/site);
+2. poll that level's designations to zero (tile proof available in watch_dig);
+3. `world-cache-reset` then `probe-plan` at (x,y,elev-1) and read the verdict of the newly
+   revealed tile; continue only if it is solid/dry, else stop and report why.
+The shaft head is designated live at **x50-51, y123, elev 39** (2 tiles, DAMP 0 HOT 0),
+and the plan's tunnel target once the shaft reaches a deep dry level is the ranked
+`tunnel-sites` line **elev 36 x48-63 y107-109 (depth >=5, dry)**.
