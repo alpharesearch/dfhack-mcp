@@ -975,7 +975,9 @@ async def depth_profile(elev: int = Query(..., description="the elevation you pl
     z0, z1 = await world.fort_band()
     surf = await world.surface_map(z0 - WM.GAME_Z_OFFSET, z1 - WM.GAME_Z_OFFSET)
     b = WM.Budget(max_tokens)
-    lines = [f"depth under surface at elev {elev}, x{x0}-{x1} y{y0}-{y1}"]
+    # Count FIRST, print the verdict FIRST. A 131x21 box at 400 tokens used to emit the
+    # per-tile samples, hit the cap, and the caller never saw the deep/shallow/unexplored
+    # summary - the verdict is the answer, the samples are evidence.
     shallow = 0; deep = 0; unknown = 0
     for y in range(y0, y1 + 1):
         for x in range(x0, x1 + 1):
@@ -987,9 +989,16 @@ async def depth_profile(elev: int = Query(..., description="the elevation you pl
                 shallow += 1
             else:
                 deep += 1
-            if (x - x0) % 4 == 0:
-                lines.append(f"  x{x},y{y}: surface={top} depth={d}")
-    lines.append(f"  tiles: deep(>=2)={deep} shallow(<2)={shallow} unexplored={unknown}")
+    lines = [f"depth under surface at elev {elev} (in-game Elevation {elev - 1}), "
+             f"x{x0}-{x1} y{y0}-{y1}",
+             f"  tiles: deep(>=2)={deep} shallow(<2)={shallow} unexplored={unknown}"]
+    xstep = max(1, (x1 - x0 + 1) // 6)
+    ystep = max(1, (y1 - y0 + 1) // 8)
+    for y in range(y0, y1 + 1, ystep):
+        for x in range(x0, x1 + 1, xstep):
+            top = surf.get((x, y))
+            lines.append(f"  x{x},y{y}: surface={top} "
+                         f"depth={(top - elev) if top is not None else None}")
     for l in lines:
         b.spend(len(l) + 1)
     return WM.finish(lines, b)
