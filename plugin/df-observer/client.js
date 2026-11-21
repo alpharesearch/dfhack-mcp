@@ -281,7 +281,10 @@ window.__ModuleLoader__.load({
                   }, `${a.kind}${a.coord ? ` [${a.coord}]` : ''}`),
                   // Measured live: the lean wire levels ship {id,kind,acked} only, so
                   // String(a.evidence) printed the literal word "undefined".
-                  h('span', { style: S.ev }, a.evidence ? String(a.evidence).slice(0, 110) : (a.coord ? `[${a.coord}]` : '')),
+                  // When evidence is trimmed away the row already prints the
+                  // coordinate in the kind span - repeating it here was measured live
+                  // (`crew [y -> …][y -> …]`), so the fallback stays empty.
+                  h('span', { style: S.ev }, a.evidence ? String(a.evidence).slice(0, 110) : ''),
                   h('button', {
                     style: S.ack, type: 'button', disabled: !!a.acked,
                     onClick: () => { void ctx.remote.commands.execute(sessionId, `/df-ack ${a.id}`, []).then(() => { }) },

@@ -682,6 +682,15 @@ test('the page states which data path it is showing (pull vs wire)', () => {
   const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
   assert.match(client, /panel data: \/df-panel pull #/, 'a successful pull is named with its count')
   assert.match(client, /panel data: wire only/, 'and so is the fallback')
+  // the alert row must not print the coordinate twice (measured live as
+  // `crew [y -> …][y -> …]`): the kind span owns it, the evidence span must not
+  // fall back to it.
+  const rowStart = client.indexOf("h('span', { style: S.ids }, a.id)")
+  const row = client.slice(rowStart, client.indexOf("a.acked ? t('alerts.acked')", rowStart))
+  const evLine = row.split('\n').find((l) => l.includes('style: S.ev },'))
+  assert.ok(evLine, `the evidence span line is found (row: ${row.slice(0, 80)}...)`)
+  assert.ok(!/a\.coord/.test(evLine), `the evidence span must not repeat the coordinate (saw ${evLine.trim()})`)
+  assert.match(row, /\$\{a\.kind\}\$\{a\.coord/, 'the kind span carries it')
   assert.match(client, /pull failed \(\$\{pull\.note/, 'with the reason, not silence')
   return 'panel provenance is on screen'
 })
