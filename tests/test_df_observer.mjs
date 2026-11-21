@@ -18,6 +18,7 @@ const { buildBriefing, buildWake, estimateTokens, STANDING_RULES } = await impor
 const { ObserverTransport, ObserverBug, GameOffline } = await import(path.join(pluginDir, 'observer.js'))
 const { toolDefinitions } = await import(path.join(pluginDir, 'tools.js'))
 const { default: DFObserver, Config } = await import(path.join(pluginDir, 'index.js'))
+const { remoteMethods } = await import(path.join(pluginDir, 'node_modules', '@deepseek-ai', 'dsh-typert-protocol', 'lib', 'index.js'))
 const { z } = await import(path.join(pluginDir, 'node_modules', 'zod', 'index.js'))
 
 const results = []
@@ -86,7 +87,11 @@ test('service module exports the service-class form', () => {
   assert.equal(typeof DFObserver, 'function')
   assert.deepEqual(DFObserver.inject, ['tools', 'agents', 'systemPrompt', 'sessionProjections', 'timer'])
   assert.equal(DFObserver.Config, Config)
-  return 'default export class + static inject + static Config'
+  assert.equal(typeof DFObserver.prototype.panel, 'function')
+  assert.equal(typeof DFObserver.prototype.ackAlert, 'function')
+  // Remote markers attach at construction (per instance); the full activation
+  // path is exercised by scratch/repro_df_observer.mjs and the live install.
+  return 'default export class + static inject/Config + panel/ackAlert endpoint methods'
 })
 
 test('model seeds ladder + basics todos', () => {

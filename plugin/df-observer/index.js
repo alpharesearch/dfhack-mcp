@@ -128,7 +128,7 @@ const BRIEF_SECTION_ORDER = 55
  * ClassMethodDecoratorContext whose initializer runs on the instance being
  * constructed. Requires: called from inside the constructor (`this` = instance).
  */
-function markDirectRemote(method, options) {
+function markDirectRemote(instance, method, options) {
   const decorator = Remote(options)
   let initializer = null
   decorator(function () {}, {
@@ -139,7 +139,7 @@ function markDirectRemote(method, options) {
     addInitializer(fn) { initializer = fn },
   })
   if (initializer === null) throw new Error(`df-observer: Remote marker for ${method} produced no initializer`)
-  initializer.call(this)
+  initializer.call(instance)
 }
 
 /**
@@ -170,8 +170,8 @@ export default class DFObserver extends TypertRemoteService {
     this.noteLines = []
     // Remote endpoints, marked imperatively (Node runs this module without a
     // decorator transform; the marker path below is exactly the @Remote form).
-    markDirectRemote('panel', { name: 'panel' })
-    markDirectRemote('ackAlert', { name: 'ackAlert' })
+    markDirectRemote(this, 'panel', { name: 'panel' })
+    markDirectRemote(this, 'ackAlert', { name: 'ackAlert' })
   }
 
   note(message) {
