@@ -36,7 +36,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 import { ObserverTransport } from './observer.js'
 import { FortModel, STATE_VERSION, significantChange, dfObserverProjection } from './model.js'
-import { buildBriefing, buildWake, standingRules } from './brief.js'
+import { buildBriefing, buildWake, standingRules, compactDesignations } from './brief.js'
 import { toolDefinitions, jsonSafe } from './tools.js'
 import { FILTER_SYSTEM_PROMPT, STATE_PREFIX, buildFilteredBriefing, buildFilterWake, parseVerdict } from './filter.js'
 
@@ -877,6 +877,9 @@ export default class DFObserver extends TypertRemoteService {
       paused: live.paused, pauseSource: live.pauseSource, generation: live.generation,
       facts: live.facts, rungs: live.rungs, next: live.next,
       boxes: live.boxes, piles: live.piles, shafts: live.shafts, warnings: live.warnings,
+      // The panel is fed by THIS payload (from the live model), not by the briefing
+      // wire - measured: adding the scan to the wire did nothing for the panel.
+      designations: compactDesignations(live.designations),
       todos: (state?.todos ?? live.todos).slice(0, 14),
       alerts: (state?.alerts ?? live.alerts).filter((a) => !a.cleared).slice(0, 10),
       digEvents: (state?.digEvents ?? live.digEvents).slice(0, 10),

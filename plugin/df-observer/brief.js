@@ -165,7 +165,7 @@ function pendingOutside(f, p) {
 
 /** The designation scan, small enough for the lean wire payload: totals plus the
  * biggest clusters. The panel shows it; the full scan stays in df_status. */
-function compactDesignations(d) {
+export function compactDesignations(d) {
   // Idempotent: the lean levels call it inline AND shrinkPayloadLevel calls it
   // on the result - compaction must not eat an already-compact summary (measured:
   // levels 6-8 came back with top: [] because the second pass saw no by_elev).

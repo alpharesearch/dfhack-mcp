@@ -677,6 +677,14 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
   return 'designation summary survives every lean level, under 260 chars'
 })
 
+test('the panel payload carries the designation scan (the panel is fed by panelPayload, not the wire)', () => {
+  const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  assert.match(index, /designations: compactDesignations\(live\.designations\)/, 'panelPayload includes the scan')
+  const brief = fs.readFileSync(path.join(pluginDir, 'brief.js'), 'utf8')
+  assert.match(brief, /export function compactDesignations/, 'and the helper is exported for it')
+  return 'panel feed includes the scan'
+})
+
 test('panel rows: a trimmed alert renders no literal "undefined"', () => {
   const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
   assert.match(client, /a\.evidence \? String\(a\.evidence\)/, 'evidence is guarded before stringifying')
