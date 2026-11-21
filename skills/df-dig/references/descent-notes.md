@@ -234,3 +234,14 @@ So the scale rule: **order the nearest segment first, at pick-limited size** (a 
 run for 3 picks), let it complete and become the access point, then order the next segment.
 This is §5 (middle-first) generalized: order from the *worked* end, and size each order to
 what the crew can reach and equip.
+
+## The top of the shaft is a floor, not a void (measured, in-game 38)
+I designated `UP_DOWN_STAIR_DIG` at 37 and left the tile at 38 as plain `StoneFloor4` - the
+result is a stairwell with a cliff on top: no route walks down into it. `DOWN_STAIR_DIG`
+**on the existing floor** (x43-44, y121, in-game 38) was accepted 2/2: carving stairs out of a
+floor tile is legal. So the recipe is DOWN_STAIR (fort floor) -> UP_DOWN (each level below) ->
+UP_STAIR (bottom).
+
+Second measurement from the same run: the in-game **36 designation vanished while 37 was still
+rock**. A designation below undug rock is taken back by the game - so the shaft is ordered
+per level as the dig advances, not as a 8-level stack at once.

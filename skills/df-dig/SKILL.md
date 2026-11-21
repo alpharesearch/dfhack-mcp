@@ -68,14 +68,11 @@ The player's rule, stated twice: designate the stairwell **on every level it cro
 ladder rung is literally *"Stairs connecting the levels"*. So:
 
 - A stairwell is a **continuous column, and the TOP is the fort's existing floor**: designate
-  `DOWN_STAIR_DIG` **on that floor tile** (carving stairs out of a floor is allowed - you are
-  opening the way down), then `UP_DOWN_STAIR_DIG` on every level below it, then `UP_STAIR_DIG`
-  at the bottom. Starting the shaft one level under the floor leaves a cliff: the floor above
-  is plain `StoneFloor` and nothing can walk down into the shaft. I made exactly that mistake
-  at in-game 38 -> 37 and the player caught it.
+  `DOWN_STAIR_DIG` on that floor tile (carving stairs out of a floor is allowed), then
+  `UP_DOWN_STAIR_DIG` below it, `UP_STAIR_DIG` at the bottom. Start one level under the floor
+  and you have dug a cliff - nothing walks down into the shaft.
   stairs, bottom = up-stairs. A gap in the middle is not a shaft, it is two shafts that
-  reach nothing. A designation below undug rock gets taken back by the game (measured: the 36
-  designation vanished while 37 was still rock) - order per level as the dig advances.
+  reach nothing. Order per level as the dig advances (measured caveat in references).
 - **Dig it down to the level you intend to work on, and finish it, BEFORE ordering the room
   complex on that level.** Access first is not only about a 3-wide band's flanks (§5) - it is
   the order of the whole plan. I got this backwards: I designated a 975-tile, 50-room complex
