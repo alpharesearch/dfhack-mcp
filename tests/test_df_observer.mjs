@@ -678,6 +678,24 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
   return 'designation summary survives every lean level, under 260 chars'
 })
 
+test('every STATE_FIELDS key reaches the client-visible view (4-place sync)', () => {
+  // The field set lives in FOUR places: stateSchema, init(), STATE_FIELDS, viewOf().
+  // Three earlier bugs were exactly one of them missing a field (poll/pauseAuthority/
+  // filter, then designations in STATE_FIELDS, then designations in viewOf).
+  const unit = dfObserverProjection(z)
+  const declared = Object.keys(unit.stateSchema?.shape ?? unit.stateSchema?._def?.shape ?? {})
+  const inits = Object.keys(unit.init())
+  const view = viewOf({ ...unit.init(), designations: { designated_total: 1 }, notes: ['n'] })
+  const missingView = STATE_FIELDS.filter((k) => !(k in view))
+  assert.deepEqual(missingView, [], `viewOf must expose every STATE_FIELDS key (missing: ${missingView.join(',')})`)
+  const missingInit = STATE_FIELDS.filter((k) => !(k in unit.init()))
+  assert.deepEqual(missingInit, [], `init() must define every STATE_FIELDS key (missing: ${missingInit.join(',')})`)
+  const missingSchema = STATE_FIELDS.filter((k) => !declared.includes(k))
+  assert.deepEqual(missingSchema, [], `stateSchema must declare every STATE_FIELDS key (missing: ${missingSchema.join(',')})`)
+  assert.ok('designations' in view, 'the designation scan is client-visible (measured: it was not)')
+  return `stateSchema/init/STATE_FIELDS/viewOf agree on ${STATE_FIELDS.length} fields`
+})
+
 test('/df-panel: the panel gets its full data through the session-command path', () => {
   const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
   const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
