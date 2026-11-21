@@ -108,16 +108,9 @@ the box, then reports `walls | fog | floors+stairs | pending` on every change an
 `0` dug complete (floors, no walls, no fog), `2` stalled with a reason, `-1`-pending means
 unparseable, i.e. unknown. `watch_dig.py` and `watch_building.py` are the same pattern.
 
-## 8. Geometry rules of thumb (measured on this world)
-- Surface steps down as a slope: read `cross-section` - at y=120 the surface is elev 43 at
-  x40, 41 at x52, 40 at x56, **39 at x61**, 38 at x65, 37 at x69. Digging elev 39 near x61
-  is a surface cut; the same elev at x44 has 4 levels of rock over it.
-- Aquifer band: elev 33-34 (12,703 tiles at 34). Digging **above** it is fine, **into** it floods.
-- Wagon footprint blocks tunnelling: the wagon occupies `x45-49, y118-122`, and the elev-39
-  corridor runs through it. Plan the entrance around the wagon, not through it.
-- Reachability is ours to compute (`reach-map`, `dig_reachable`): `getWalkableGroup` is
-  uncallable over RPC, `canWalkBetween` throws for adjacent stair tiles and lies for
-  same-level grass.
+## 8. Geometry of this world (measured)
+Surface steps, aquifer band, wagon footprint, reachability caveats: [references/descent-notes.md](references/descent-notes.md)
+
 ## 9. Rate and crew (plan time with these, not guesses)
 **~0.5-0.6 tiles per miner per minute** (measured: 4 miners/37 tiles = 61 s; 6 miners/66 tiles
 = ~120 s; a 2-tile stair level = 15-30 s). The crew is **pick-limited** - the embark ships 3
@@ -175,3 +168,12 @@ matters:
 - Reuse of space: when re-spacing, **NO_DIG the tiles you are giving up** (272 thin-walled room
   tiles cleared, 1,020 grid tiles returned to wall) - a designation you mean to abandon is a
   job you are making dwarves do.
+
+## 18. Wagon paths are ramped, not staired
+A caravan will not use stairs. To connect a depot to the surface: **3-wide everywhere**, flat
+sections as `DEFAULT_DIG`, every level change as **`RAMP_DIG`**, ordered middle-first per row
+band. On this fort: depot (building id 5) sits at elev 39 = in-game 38, x45-49; its frontage
+x50-55 is already floor (a path can start on existing flat ground - check before digging),
+then ramps at elev 38 (x56-58) and 37 (x59-61), then a 3-wide corridor onto the plain at 37
+(x62-71). The gate list is the same one as anywhere else: damp, depth, and never designate
+over stuff (43 tiles refused because the floor was already there).

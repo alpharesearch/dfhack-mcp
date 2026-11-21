@@ -149,3 +149,14 @@ elevation. Rules:
    both are absence read from the wrong snapshot.
 3. Cheap cross-check: `world-objects` per elevation reports dig clusters; if it lists none,
    the dig queue is empty regardless of what a cached array says.
+
+## 8. Geometry rules of thumb (measured on this world)
+- Surface steps down as a slope: read `cross-section` - at y=120 the surface is elev 43 at
+  x40, 41 at x52, 40 at x56, **39 at x61**, 38 at x65, 37 at x69. Digging elev 39 near x61
+  is a surface cut; the same elev at x44 has 4 levels of rock over it.
+- Aquifer band: elev 33-34 (12,703 tiles at 34). Digging **above** it is fine, **into** it floods.
+- Wagon footprint blocks tunnelling: the wagon occupies `x45-49, y118-122`, and the elev-39
+  corridor runs through it. Plan the entrance around the wagon, not through it.
+- Reachability is ours to compute (`reach-map`, `dig_reachable`): `getWalkableGroup` is
+  uncallable over RPC, `canWalkBetween` throws for adjacent stair tiles and lies for
+  same-level grass.
