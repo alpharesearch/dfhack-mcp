@@ -23,7 +23,15 @@ function sessionOf(exec) {
 }
 
 export function toolDefinitions({ model, projection, config, sessionFilter }) {
-  const stateOf = (exec) => (projection && sessionFilter(exec) ? projection.stateOf(sessionOf(exec)) : model.snapshot())
+  // The tools answer from the LIVE model (the observer's MCP-read memory - a
+  // derived cache, per practices.md; the log it derives from is the briefings).
+  // The session's folded tick is reported beside the answer so thin folds are
+  // visible, not silent: `logTick`.
+  const stateOf = (exec) => model.snapshot()
+  const logTickOf = (exec) => {
+    if (!(projection && sessionFilter(exec))) return null
+    try { return projection.stateOf(sessionOf(exec))?.tick ?? 0 } catch { return null }
+  }
   const payloadLine = (state, form) => `${PAYLOAD_PREFIX}${JSON.stringify({ form, tick: state.tick, data: state })}`
 
   const status = {
@@ -53,9 +61,10 @@ export function toolDefinitions({ model, projection, config, sessionFilter }) {
     },
     async execute(args, exec) {
       const state = stateOf(exec)
+      const logTick = logTickOf(exec)
       const scope = args.scope ?? 'summary'
       const body = statusBody(state, scope, config)
-      return { scope, tick: state.tick, ...body }
+      return { scope, tick: state.tick, logTick, ...body }
     },
   }
 
