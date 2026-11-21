@@ -312,3 +312,128 @@ print("OK living="..living.." dwarves="..dwarves.." citizens="..citizens.." pets
         raise LuaOpError(line)
     vals = dict(re.findall(r"(\w+)=(\d+)", line))
     return {k: int(v) for k, v in vals.items()}
+
+# The 17 flags the game's stockpile_group_set actually exposes (measured: writing
+# `settings.flags.misc` throws - "Cannot write field stockpile_group_set.misc: not
+# found" - and aborts the loop, so misc is a mats struct, not a category flag).
+CATEGORIES = ["ammo", "animals", "armor", "bars_blocks", "cloth", "coins", "corpses",
+              "finished_goods", "food", "furniture", "gems", "leather", "refuse",
+              "sheet", "stone", "weapons", "wood"]
+MATS_ONLY = ["misc"]
+
+
+async def configure_stockpile(dec, building_id: int, allow: list[str] | None = None,
+                              deny: list[str] | None = None, all_categories: bool = False,
+                              max_wheelbarrows: int | None = None,
+                              max_barrels: int | None = None,
+                              max_bins: int | None = None) -> dict:
+    """Set a stockpile's accepted categories by writing the game's own flags.
+
+    Measured on this build (53.17-r1): building_stockpilest exposes `settings.flags`
+    (stockpile_group_set) with exactly the wiki's category names, and the per-category
+    structs carry only `mats` - so the flags ARE the preset. All flags true = takes
+    everything; one flag = that preset (a wood pile = wood only); all false = "None".
+    """
+    cats = [str(c).lower().strip() for c in (allow or [])]
+    denied = [str(c).lower().strip() for c in (deny or [])]
+    for c in cats + denied:
+        if c not in CATEGORIES:
+            raise LuaOpError("unknown category '%s'; the game's names are: %s"
+                             % (c, ", ".join(CATEGORIES)))
+    wanted = CATEGORIES if all_categories else cats
+    lines = []
+    for c in CATEGORIES:
+        on = (c in wanted and c not in denied)
+        lines.append("  s.flags.%s = %s" % (c, "true" if on else "false"))
+    writes = "\n".join(lines)
+    # Measured: the container limits are NOT on the building - they are
+    # b.storage.max_barrels / max_bins / max_wheelbarrows, and give/take links are
+    # b.links.give_to_pile / take_from_pile / give_to_workshop / take_from_workshop.
+    extras = ""
+    for field, val in (("max_wheelbarrows", max_wheelbarrows), ("max_barrels", max_barrels),
+                       ("max_bins", max_bins)):
+        if val is not None:
+            extras += ("  local ok_%s, err_%s = pcall(function() b.storage.%s = %d end)\n"
+                       % (field, field, field, int(val)))
+            extras += ('  if not ok_%s then print("WARN storage.%s: "..tostring(err_%s)) end\n'
+                       % (field, field, field))
+    catlist = '", "'.join(CATEGORIES)
+    expr = """
+local b = nil
+for _,sp in ipairs(df.global.world.buildings.other.STOCKPILE) do
+  if sp.id == __ID__ then b = sp end
+end
+if b == nil then print("FAIL stockpile __ID__ not found") return end
+local s = b.settings
+local before = {}
+for _,c in ipairs{"__CATS__"} do before[#before+1] = c .. "=" .. tostring(s.flags[c]) end
+__WRITES__
+__EXTRAS__local after = {}
+for _,c in ipairs{"__CATS__"} do after[#after+1] = c .. "=" .. tostring(s.flags[c]) end
+print("OK id=" .. tostring(b.id) .. " | after: " .. table.concat(after, " "))
+""".strip().replace("__ID__", str(int(building_id))).replace("__CATS__", catlist)         .replace("__WRITES__", writes).replace("__EXTRAS__", extras)
+    out = await _lua(expr)
+    line = _one(out)
+    if line.startswith("FAIL"):
+        raise LuaOpError(line)
+    return {"success": True, "line": line, "allow": wanted, "deny": denied}
+
+async def resize_building(dec, building_id: int, w: int, h: int) -> dict:
+    """Resize a building (stockpiles included) through the game's own dfhack.buildings.setSize.
+
+    Measured: constructBuilding with nominal=true makes a 1x1 stockpile even when w/h are
+    passed - pile 12 came out x1=x2=44, y1=y2=116 (room 1x1), exactly what the player saw.
+    The game's own resize is `dfhack.buildings.setSize(b, w, h)`; extents are read back from
+    b.x1..b.x2 / b.y1..b.y2 and the usable tile count from countExtentTiles.
+    """
+    expr = """
+local b = nil
+for _,lst in ipairs({df.global.world.buildings.other.STOCKPILE}) do
+  for _,sp in ipairs(lst) do if sp.id == __ID__ then b = sp end end
+end
+if b == nil then print("FAIL building __ID__ not found") return end
+local ok, err = pcall(function() dfhack.buildings.setSize(b, __W__, __H__) end)
+if not ok then print("FAIL setSize: " .. tostring(err)) return end
+local n = 0
+pcall(function() n = dfhack.buildings.countExtentTiles(b) end)
+print(string.format("OK id=%d extent=%d..%d,%d..%d tiles=%s", b.id, b.x1, b.x2, b.y1, b.y2, tostring(n)))
+""".strip().replace("__ID__", str(int(building_id))).replace("__W__", str(int(w))).replace("__H__", str(int(h)))
+    out = await _lua(expr)
+    line = _one(out)
+    if line.startswith("FAIL"):
+        raise LuaOpError(line)
+    return {"success": True, "line": line}
+
+async def create_stockpile(dec, x: int, y: int, elev: int, w: int, h: int) -> dict:
+    """Create a MULTI-TILE stockpile exactly the way hack/lua/dfhack/buildings.lua does:
+    allocInstance -> setSize (legal only on the uncommitted instance) -> constructAbstract.
+
+    Measured on 53.17-r1: constructBuilding{..., w, h, nominal=true} yields a 1x1 stockpile,
+    and setSize on a committed building answers "expected: bld->id == -1". The library's own
+    order (buildings.lua:506-545) is allocInstance(pos, type, subtype, custom),
+    setSize(instance, width, height, direction), then constructAbstract/WithItems/WithFilters.
+    """
+    z = int(elev) + GAME_Z_OFFSET
+    lua = """
+local pos = xyz2pos(__X__, __Y__, __Z__)
+local inst = dfhack.buildings.allocInstance(pos, 21, 0, 0)
+if inst == nil then print("FAIL allocInstance") return end
+local ok, w2, h2, area, r_area = dfhack.buildings.setSize(inst, __W__, __H__, 8)
+if not ok then print("FAIL setSize: cannot place at this position") return end
+local oka = dfhack.buildings.constructAbstract(inst)
+if not oka then print("FAIL constructAbstract") return end
+local at = nil
+pcall(function() at = dfhack.buildings.findAtTile(__X__, __Y__, __Z__) end)
+if at == nil then print("FAIL built but not found at tile") return end
+local n = 0
+pcall(function() n = dfhack.buildings.countExtentTiles(at) end)
+print(string.format("OK id=%d extent=%d..%d,%d..%d tiles=%d", at.id, at.x1, at.x2, at.y1, at.y2, n))
+"""
+    expr = lua.strip()
+    for k, v in (("__X__", int(x)), ("__Y__", int(y)), ("__Z__", z), ("__W__", int(w)), ("__H__", int(h))):
+        expr = expr.replace(k, str(v))
+    out = await _lua(expr)
+    line = _one(out)
+    if line.startswith("FAIL"):
+        raise LuaOpError(line)
+    return {"success": True, "line": line}

@@ -971,6 +971,49 @@ async def magma_depth(x: int = Query(...), y: int = Query(...),
     """Distance down to magma from a dig point - the HOT warning as a number. The magma crust sits far below the fort band, so this scans downward in coarse windows and returns the first magma elevation and how many levels below your dig it is."""
     return await world.magma_depth_below(x, y, elev, e_min=e_min, step=step)
 
+@app.post("/create-stockpile", operation_id="create_stockpile")
+async def create_stockpile(body: dict):
+    """Create a multi-tile stockpile (abstract -> setSize -> completeBuild). Use this, not place_building, for any pile bigger than 1 tile; then set its categories with /configure-stockpile."""
+    try:
+        dec = await world._dec(await world._gen())
+        return await LO.create_stockpile(dec, int(body["x"]), int(body["y"]), int(body["elev"]),
+                                         int(body["w"]), int(body["h"]))
+    except LO.LuaOpError as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/resize-building", operation_id="resize_building")
+async def resize_building(body: dict):
+    """Resize a building - stockpiles included - with the game's own setSize. constructBuilding with nominal=true makes a 1x1 stockpile no matter what w/h you pass (measured), so big piles need this call afterwards."""
+    try:
+        dec = await world._dec(await world._gen())
+        return await LO.resize_building(dec, int(body["building_id"]), int(body["w"]), int(body["h"]))
+    except LO.LuaOpError as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/configure-stockpile", operation_id="configure_stockpile")
+async def configure_stockpile(body: dict):
+    """Set a stockpile's accepted categories, container limits and wheelbarrows.
+
+    Body: {"building_id": 12, "allow": ["wood"], "deny": ["stone"], "all_categories": false,
+    "max_wheelbarrows": 3, "max_barrels": 0, "max_bins": 0}. The game's own category names
+    are: ammo, animals, armor, bars_blocks, cloth, coins, corpses, finished_goods, food,
+    furniture, gems, leather, misc, refuse, sheet, stone, weapons, wood. all_categories=true
+    with a deny list is the general pile (take everything except stone and wood, per the
+    quickstart). A wood pile near the entrance is allow=["wood"].
+    """
+    try:
+        dec = await world._dec(await world._gen())
+        return await LO.configure_stockpile(
+            dec, int(body["building_id"]), allow=body.get("allow"), deny=body.get("deny"),
+            all_categories=bool(body.get("all_categories", False)),
+            max_wheelbarrows=body.get("max_wheelbarrows"),
+            max_barrels=body.get("max_barrels"), max_bins=body.get("max_bins"))
+    except LO.LuaOpError as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/survey", operation_id="survey")
 async def survey(elev: int = Query(...), x0: int = Query(...), y0: int = Query(...),
                  x1: int = Query(...), y1: int = Query(...)):
