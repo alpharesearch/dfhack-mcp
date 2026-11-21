@@ -109,6 +109,16 @@ install() {
 
 update() {
   check
+  local current installed_version
+  current="$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('$DIR/package.json','utf8')).version)")"
+  installed_version="$(node -e "
+    const fs = require('node:fs')
+    try { process.stdout.write(JSON.parse(fs.readFileSync('$HOME/.dsh/profiles/$PROFILE/node_modules/$PKG/package.json','utf8')).version) }
+    catch { process.stdout.write('none') }" 2>/dev/null || echo none)"
+  if [[ "$installed_version" == "$current" ]]; then
+    say "NOTE: a live profile REUSES the loaded module when the version is unchanged ($current)."
+    say "      Bump 'version' in package.json before installing code changes, then re-run update."
+  fi
   if installed; then
     say "removing the installed copy (a fresh module generation needs this)"
     dsh plugin --profile "$PROFILE" remove "$PKG" || true

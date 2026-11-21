@@ -116,3 +116,6 @@ config object, so copy the keys you change.
   syntax, so they are applied at module load.
 - Picks are `ITEM_WEAPON_PICK` **weapon** items (the TOOL group holds
   wheelbarrows/scrolls); the picks probe reads that.
+
+- Reinstalling a linked bundle at the SAME version reuses the loaded module in a
+  live profile: bump `version` when the code changes (measured 0.1.0 -> 0.1.1).

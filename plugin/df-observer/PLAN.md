@@ -334,3 +334,9 @@ the installed web profile, that path does not exist for third-party bundles:
 - Consequence: the panel shows the session's folded view, which updates at
   briefing cadence (`inject_max_spacing_ms`), not per poll - by design, since
   the log is the truth the panel may show.
+
+Staleness (measured): a linked reinstall of the SAME version reuses the loaded
+module in a live profile - the reinstall reports `application: applied` and the
+plugin re-activates, but the code is the old module. Each deploy that changes
+code must therefore bump `version` (0.1.0 -> 0.1.1 measured: after the bump the
+new command registered and the new payload fields appeared).
