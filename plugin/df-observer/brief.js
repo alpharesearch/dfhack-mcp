@@ -257,6 +257,18 @@ const SHRINK_LEVELS = [
 
 export const SHRINK_MAX = SHRINK_LEVELS.length - 1
 
+/** Small versions of the panel's sections, so the leanest wire levels can still
+ * feed a panel: same field NAMES the panel reads, just fewer and shorter. */
+function compactPanelSections(p) {
+  return {
+    boxes: (p.boxes ?? []).slice(0, 4).map((b) => ({ elev: b.elev, box: b.box, to_dig: b.to_dig ?? null, dug: b.dug ?? null, pending: b.pending ?? null })),
+    piles: (p.piles ?? []).slice(0, 4).map((pl) => ({ id: pl.id, found: pl.found, total: pl.total ?? 0, accepts: pl.accepts ?? null })),
+    rungs: (p.rungs ?? []).slice(0, 24).map((r) => ({ id: r.id, done: !!r.done, title: String(r.title ?? '').slice(0, 48) })),
+    notes: (p.notes ?? []).slice(0, 3).map((n) => String(n).slice(0, 120)),
+    designations: compactDesignations(p.designations),
+  }
+}
+
 export function shrinkPayloadLevel(payload, level) {
   const data = SHRINK_LEVELS[Math.max(0, Math.min(level, SHRINK_MAX))](payload)
   // One shape for the designation scan at every level: the panel renders it, and
@@ -265,12 +277,22 @@ export function shrinkPayloadLevel(payload, level) {
   return data
 }
 
-/** Pick the richest payload level whose size fits `cap`. */
+/** Pick the richest payload level whose size fits `cap`.
+ *
+ * The panel renders its sections from THIS payload (the projection wire - the
+ * @Remote panel surface a third-party bundle cannot reach), so the compact panel
+ * fields ride along WHEN THEY FIT: measured at cap 300 the fill pushed the
+ * briefing to 350 tokens and broke the ledger-first contract, so the fill is
+ * tried per level and dropped when the budget cannot pay for it. */
 function shrinkPayload(payload, cap) {
+  const fill = compactPanelSections(payload)
+  const fits = (data) => estimateTokens(JSON.stringify({ form: 'briefing', tick: payload.tick, data })) <= cap
   for (let level = 0; level <= SHRINK_MAX; level += 1) {
     const data = shrinkPayloadLevel(payload, level)
-    const size = estimateTokens(JSON.stringify({ form: 'briefing', tick: payload.tick, data }))
-    if (size <= cap) return data
+    const withFill = { ...data }
+    for (const key of Object.keys(fill)) if (withFill[key] === undefined) withFill[key] = fill[key]
+    if (fits(withFill)) return withFill
+    if (fits(data)) return data
   }
   return shrinkPayloadLevel(payload, SHRINK_MAX)
 }

@@ -667,12 +667,13 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
       { elev: 41, designated_tiles: 83, clusters: [{ x0: 38, x1: 48, y0: 113, y1: 122, tiles: 83 }] },
       { elev: 22, designated_tiles: 4, clusters: [{ x0: 43, x1: 44, y0: 121, y1: 122, tiles: 4 }] }] },
   }
-  for (const level of [4, 5, 6]) {
+  for (const level of [4, 5, 6, 7, 8]) {
     const data = shrinkPayloadLevel(payload, level)
     assert.ok(data.designations, `level ${level} must carry designations (the panel folds the wire payload)`)
     assert.equal(data.designations.designated_total, 107, `level ${level} totals`)
     assert.equal(data.designations.top[0].tiles, 83, `level ${level} ranks clusters by size`)
     assert.ok(JSON.stringify(data.designations).length < 260, `level ${level} stays compact (${JSON.stringify(data.designations).length} chars)`)
+    assert.ok(JSON.stringify(data).length < 4200, `level ${level} wire stays small (${JSON.stringify(data).length} chars)`)
   }
   return 'designation summary survives every lean level, under 260 chars'
 })
@@ -696,6 +697,32 @@ test('panel rows: a trimmed alert renders no literal "undefined"', () => {
     assert.ok(a.evidence === undefined || String(a.evidence).length <= 200, `level ${level} evidence is short`)
   }
   return 'no literal undefined in alert rows; the leanest level still says where'
+})
+
+test('the panel wire gets its sections when the budget pays for them', () => {
+  const payload = {
+    tick: 9, online: true, paused: false, generation: 1, poll: 8000, pauseAuthority: 'off',
+    facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 54, drink: 0, alcohol: 0, meals: 0, raw_food: 0, seeds: 59, pending_dig: 18, water_tiles: 1030, magma_tiles: 0, date: { year: 103, month: 3, day: 4 } },
+    reports: [], notes: ['plugin: filter session live'],
+    boxes: [{ elev: 41, box: [38, 113, 48, 122], to_dig: 17, dug: 16, pending: 0 }],
+    piles: [{ id: 20, found: 1, total: 54, accepts: 'food' }],
+    rungs: [{ id: 1, title: 'Pause / labour check', done: true }],
+    designations: { designated_total: 107, by_elev: [{ elev: 41, designated_tiles: 83, clusters: [{ x0: 38, x1: 48, y0: 113, y1: 122, tiles: 83 }] }] },
+    todos: [{ id: 21, state: 'open', evidence: 'x' }, { id: 165, state: 'open', evidence: 'y' }],
+    alerts: [{ id: 'A1', kind: 'crew', coord: 'pile 20', acked: false }],
+  }
+  const rich = buildBriefing(payload, { maxTokens: 700 })
+  const line = rich.text.split('\n').find((l) => l.startsWith('[df-observer] '))
+  const wire = JSON.parse(line.slice('[df-observer] '.length)).data
+  for (const key of ['boxes', 'piles', 'rungs', 'notes', 'designations']) {
+    assert.ok(Array.isArray(wire[key]) || (key === 'designations' && wire[key]?.top), `the Config budget (700) carries ${key} for the panel (saw ${JSON.stringify(wire[key])})`)
+  }
+  // ledger-first: a tight budget keeps the ledger and drops the fill, never busts
+  const tight = buildBriefing(payload, { maxTokens: 300 })
+  assert.ok(tight.tokens <= 300, `tight budget respected (${tight.tokens})`)
+  const tightWire = JSON.parse(tight.text.split('\n').find((l) => l.startsWith('[df-observer] ')).slice('[df-observer] '.length)).data
+  assert.deepEqual(tightWire.todos.map((t) => `${t.id}:${t.state}`), ['21:open', '165:open'], 'ledger survives the tight budget')
+  return `panel sections ride the wire when affordable (700 yes, 300 ledger-first at ${tight.tokens})`
 })
 
 test('ledger + box storage keys are path-safe', () => {
