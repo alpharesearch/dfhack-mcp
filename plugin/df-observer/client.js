@@ -155,8 +155,30 @@ window.__ModuleLoader__.load({
         const sessionId = props.sessionId
         // The Host computes this from the session log (projection `wire.view`);
         // the framework re-renders us when the view reference changes.
-        const snap = props.useProjection('dfObserver')
+        const folded = props.useProjection('dfObserver')
         const [open, setOpen] = React.useState(asPage)
+        // The full panel data arrives through the SAME session-command path the
+        // Ack uses (`/df-panel`): the briefing wire is ledger-first and cannot
+        // carry boxes/piles/rungs on top of a 30-row ledger at the Config cap.
+        const [extra, setExtra] = React.useState(null)
+        React.useEffect(() => {
+          if (!asPage || !sessionId) return undefined
+          let stop = false
+          const pull = async () => {
+            try {
+              const r = await ctx.remote.commands.execute(sessionId, '/df-panel', [])
+              const txt = r?.result?.text ?? r?.text ?? ''
+              const j = JSON.parse(txt)
+              if (!stop && j && j.tick != null) setExtra(j)
+            } catch {
+              // the folded wire keeps the panel alive - no alert, no crash
+            }
+          }
+          pull()
+          const timer = setInterval(pull, 10000)
+          return () => { stop = true; clearInterval(timer) }
+        }, [sessionId])
+        const snap = extra ? { ...folded, ...extra } : folded
         if (!snap || snap.tick === 0) {
           return h('div', { style: S.panel },
             h('div', { style: S.head },

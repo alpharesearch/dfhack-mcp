@@ -306,6 +306,21 @@ export default class DFObserver extends TypertRemoteService {
       },
     }), 'df-observer: /df-ack command')
 
+    // The panel's own data pull. The briefing wire is ledger-first (measured: at
+    // the Config cap of 700 there is no room for boxes/piles/rungs on top of a
+    // 30-row ledger), and a third-party client cannot reach an @Remote surface -
+    // so the full read goes through the SAME session-command path the Ack uses.
+    ctx.effect(() => ctx.commands.register({
+      name: 'df-panel',
+      description: 'Read the observer\'s full current panel payload (ladder, boxes, piles, shafts, ledger, alerts, notes, designation scan) as JSON.',
+      input: { hint: '(no arguments)' },
+      handler: ({ agent }) => {
+        const sessionId = agent?.session ?? agent?.id
+        const payload = this.panelPayload(typeof sessionId === 'string' ? sessionId : undefined)
+        return { kind: 'success', text: JSON.stringify(payload) }
+      },
+    }), 'df-observer: /df-panel command')
+
     // ---- filter subagent surface (Config-gated; OFF by default) ----
     if (config.filter_enabled) this.installFilterSurface()
 
@@ -830,6 +845,33 @@ export default class DFObserver extends TypertRemoteService {
   }
 
   // ---------------------------------------------------------------------
+  /** Everything the panel renders, from the live model (served by /df-panel). */
+  panelPayload(sessionId) {
+    const live = this.model.payload()
+    let state = null
+    if (sessionId && this.projection) {
+      try {
+        state = this.projection.stateOf(this.ctx.agents.get(sessionId)?.session ?? sessionId)
+      } catch {
+        state = null
+      }
+    }
+    return {
+      tick: live.tick, observedAt: live.observedAt, online: live.online,
+      paused: live.paused, pauseSource: live.pauseSource, generation: live.generation,
+      poll: live.poll, pauseAuthority: live.pauseAuthority, filter: live.filter,
+      facts: live.facts, rungs: live.rungs, next: live.next, designations: live.designations,
+      boxes: live.boxes, piles: live.piles, shafts: live.shafts, warnings: live.warnings,
+      todos: (state?.todos ?? live.todos).slice(0, 14),
+      alerts: (state?.alerts ?? live.alerts).filter((a) => !a.cleared).slice(0, 10),
+      digEvents: (state?.digEvents ?? live.digEvents).slice(0, 10),
+      pauseEvents: (state?.pauseEvents ?? live.pauseEvents).slice(0, 8),
+      reports: live.reports, crashlog: live.crashlog,
+      notes: [...(live.notes ?? []), ...this.noteLines.slice(-4).map((n) => n.message)].slice(0, 8),
+      overload: live.overload, sessionFolded: !!state,
+    }
+  }
+
   ackAlert(id) {
     const alert = this.model.ackAlert(String(id))
     return { ok: !!alert, id, tick: this.model.tick }

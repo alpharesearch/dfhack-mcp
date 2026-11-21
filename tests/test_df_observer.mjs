@@ -678,10 +678,22 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
   return 'designation summary survives every lean level, under 260 chars'
 })
 
+test('/df-panel: the panel gets its full data through the session-command path', () => {
+  const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
+  assert.match(index, /name: 'df-panel'/, 'the command is registered')
+  assert.match(index, /panelPayload\(typeof sessionId === 'string' \? sessionId : undefined\)/, 'it serves panelPayload for the calling session')
+  assert.match(client, /execute\(sessionId, '\/df-panel', \[\]\)/, 'the page pulls it like it pulls /df-ack')
+  assert.match(client, /const snap = extra \? \{ \.\.\.folded, \.\.\.extra \} : folded/, 'the pull merges over the folded wire')
+  assert.match(client, /setInterval\(pull, 10000\)/, 'and refreshes on a timer')
+  return '/df-panel command + page pull wired'
+})
+
 test('the panel has no unreachable Remote surface - it reads the projection wire', () => {
   const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
   const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
-  assert.ok(!/panelPayload/.test(index), 'the dead panelPayload() surface is gone (measured: the client never receives it)')
+  // panelPayload is back WITH a consumer: the /df-panel session command (the
+  // @Remote surface a third-party client cannot reach is still not used).
   assert.ok(!/remote\.${'dfObserver'}/.test(client), 'the client does not depend on an unresolvable remote namespace')
   assert.match(index, /third-party bundle\n \*     CANNOT reach an `@Remote` surface/, 'and the header says what was measured')
   return 'no phantom panel Remote; the wire is the panel feed'

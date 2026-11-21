@@ -259,12 +259,15 @@ export const SHRINK_MAX = SHRINK_LEVELS.length - 1
 
 /** Small versions of the panel's sections, so the leanest wire levels can still
  * feed a panel: same field NAMES the panel reads, just fewer and shorter. */
+// Sized for the LIVE ledger (measured: a generous fill - 21 rungs with titles -
+// cost ~400 tokens and did not fit the Config cap of 700, so the panel got
+// nothing). These are the fields the panel's rows actually read.
 function compactPanelSections(p) {
   return {
-    boxes: (p.boxes ?? []).slice(0, 4).map((b) => ({ elev: b.elev, box: b.box, to_dig: b.to_dig ?? null, dug: b.dug ?? null, pending: b.pending ?? null })),
-    piles: (p.piles ?? []).slice(0, 4).map((pl) => ({ id: pl.id, found: pl.found, total: pl.total ?? 0, accepts: pl.accepts ?? null })),
-    rungs: (p.rungs ?? []).slice(0, 24).map((r) => ({ id: r.id, done: !!r.done, title: String(r.title ?? '').slice(0, 48) })),
-    notes: (p.notes ?? []).slice(0, 3).map((n) => String(n).slice(0, 120)),
+    boxes: (p.boxes ?? []).slice(0, 3).map((b) => ({ elev: b.elev, to_dig: b.to_dig ?? null, dug: b.dug ?? null, pending: b.pending ?? null })),
+    piles: (p.piles ?? []).slice(0, 3).map((pl) => ({ id: pl.id, found: pl.found, total: pl.total ?? 0 })),
+    rungs: (p.rungs ?? []).filter((r) => !r.done).slice(0, 5).map((r) => ({ id: r.id, done: false, title: String(r.title ?? '').slice(0, 28) })),
+    notes: (p.notes ?? []).slice(0, 2).map((n) => String(n).slice(0, 90)),
     designations: compactDesignations(p.designations),
   }
 }
@@ -313,9 +316,22 @@ export function buildBriefing(payload, { maxTokens, form = 'briefing' }) {
     ...healthLines(payload, caps.health),
     'Rules: progress = positive tile state, never absence; every number names its box/elev; NO DATA is labelled; each to-do carries its acceptance test; know-how: skills df-dig / df-stockpile.',
   ].join('\n')
+  const fill = compactPanelSections(payload)
+  const lineOf = (data) => `${PAYLOAD_PREFIX}${JSON.stringify({ form, tick: payload.tick, data })}`
+  const withPanelSections = (data) => {
+    const out = { ...data }
+    for (const key of Object.keys(fill)) if (out[key] === undefined) out[key] = fill[key]
+    return out
+  }
   for (let level = 0; level <= SHRINK_MAX; level += 1) {
     const data = shrinkPayloadLevel(payload, level)
-    const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form, tick: payload.tick, data })}`
+    // The panel renders from this wire line (the @Remote panel surface is not
+    // reachable by a third-party bundle - measured), so the panel's sections ride
+    // along WHEN THE BUDGET PAYS: tried first, plain data as the fallback.
+    const filled = withPanelSections(data)
+    const filledLine = lineOf(filled)
+    const plainLine = lineOf(data)
+    const stateLine = estimateTokens(filledLine) <= maxTokens - 40 ? filledLine : plainLine
     const payloadTokens = estimateTokens(stateLine)
     if (payloadTokens > maxTokens - 40 && level < SHRINK_MAX) continue
     // Trim ONLY as much as the budget needs: start at body=0 (full prose) and
@@ -337,7 +353,8 @@ export function buildBriefing(payload, { maxTokens, form = 'briefing' }) {
       if (tokens <= maxTokens) return { text: out, tokens, payloadLevel: level }
     }
   }
-  // Last resort: leanest payload, header-only body (labelled as budget-trimmed).
+  // Last resort: leanest payload WITHOUT the panel fill, header-only body, and the
+  // over-budget result labelled - the caller must never read a bust as a success.
   const data = shrinkPayloadLevel(payload, SHRINK_MAX)
   const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form, tick: payload.tick, data })}`
   const out = `FORT BRIEFING (budget-trimmed) tick ${payload.tick}\n${stateLine}`
