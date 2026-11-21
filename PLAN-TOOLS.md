@@ -579,3 +579,17 @@ Correct rule now in `dig_adit.py`, per column, before designating:
 - **refuse only if the tile at elev+1 is explored and open** - that is breaching a void or
   an underground pool, the genuine roof hazard,
 - fog above is a reported note, not a refusal.
+
+### Standing decisions from the player (after the render crash)
+- **Keep the DFHack `overlay` plugin.** It is on the crash stack (`render_things` ->
+  `overlay.plug.so`, "no Lua involvement"), and the player chose to keep it. So the crash
+  risk is accepted on the game side; our mitigation is to feed the view *clean geometry*:
+  piles with no holes (`countExtentTiles == area`), no designations over stuff, no designations
+  on open air, and the stair footprint as a block. Verify geometry after every build.
+- **The stairwell is STOPPED.** It is carved 2x2 from in-game 38 (StoneStairD) down to 30
+  (StoneStairUD), crossing the aquifer band (32-33) on the way; there are **no pending stair
+  designations**. Nothing below 30 is ordered. Any future descent is a drainage project first
+  (the shaft column shows no water, `watch_water.py` is the tripwire), decided by the player.
+- Consequence for the plan: work continues on the levels that exist - 38 (surface/road/piles),
+  37 and 36 (wings), 31-30 (already reachable off the stair) - and the ladder rungs that need
+  depth (smelter, farm irrigation, cistern) are deferred, not assumed.
