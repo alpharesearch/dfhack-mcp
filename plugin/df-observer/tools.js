@@ -43,6 +43,11 @@ export function jsonSafe(value, depth = 0) {
 }
 
 export function toolDefinitions({ model, projection, config, sessionFilter }) {
+  // Tool schemas ride in EVERY request header of a target agent: measured 962
+  // tokens with the long how-to text. `tool_docs: compact` (default) keeps the
+  // guidance in the skills and the briefing; `full` restores the teaching text.
+  const docs = config.tool_docs ?? 'compact'
+  const verbose = docs === 'full'
   // The tools answer from the LIVE model (the observer's MCP-read memory - a
   // derived cache, per practices.md; the log it derives from is the briefings).
   // The session's folded tick is reported beside the answer so thin folds are
@@ -69,7 +74,9 @@ export function toolDefinitions({ model, projection, config, sessionFilter }) {
         scope: {
           type: 'string',
           enum: ['summary', 'boxes', 'piles', 'shafts', 'ladder', 'health', 'full'],
-          description: 'Which slice to return. summary: one bounded digest (default). boxes: every monitored box with to_dig/dug/pending and the last dig events. piles: watched pile ids with extents, accepted categories, container limits, on-pile counts. shafts: monitored columns with aquifer/water/magma elevations. ladder: rungs with keys/why and the NEXT suggestion. health: pause state + attribution, generation, offline window, crash-log file names/sizes. full: everything, capped. Use a named scope instead of full when you can.',
+          description: verbose
+            ? 'Which slice to return. summary: one bounded digest (default). boxes: every monitored box with to_dig/dug/pending and the last dig events. piles: watched pile ids with extents, accepted categories, container limits, on-pile counts. shafts: monitored columns with aquifer/water/magma elevations. ladder: rungs with keys/why and the NEXT suggestion. health: pause state + attribution, generation, offline window, crash-log file names/sizes. full: everything, capped. Use a named scope instead of full when you can.'
+            : 'summary (default) | boxes | piles | shafts | ladder | health (pause attribution + notes + crash log) | full. Prefer a named scope.',
         },
       },
       required: [],
@@ -103,20 +110,26 @@ export function toolDefinitions({ model, projection, config, sessionFilter }) {
         action: {
           type: 'string',
           enum: ['list', 'add', 'done', 'why'],
-          description: 'list: the ledger (bounded). add: register a task the plugin will verify. done: close task `id` - provide the evidence you proved. why: the evidence trail of task `id` (acceptance spec, last check, status flips).',
+          description: verbose
+            ? 'list: the ledger (bounded). add: register a task the plugin will verify. done: close task `id` - provide the evidence you proved. why: the evidence trail of task `id` (acceptance spec, last check, status flips).'
+            : 'list | add | done (id + evidence) | why (id).',
         },
-        title: { type: 'string', description: 'For add: short task name. Required with add.' },
+        title: { type: 'string', description: verbose ? 'For add: short task name. Required with add.' : 'For add: task name.' },
         accept: {
           type: 'object',
           additionalProperties: true,
-          description: 'For add: the acceptance test the plugin runs. kind: tiles_progress (params elev,x0,y0,x1,y1,min_dug; passes at to_dig==0 && dug>=min_dug in that box - it must be a monitored box, else the test reports NO DATA) | pile_category (category,min_items) | pile_categories (categories[]) | pile_general | rung (rung: ladder rung id) | buildings_kw (keyword,min) | crew_picks | manual (no plugin check). Omit for manual.',
+          description: verbose
+            ? 'For add: the acceptance test the plugin runs. kind: tiles_progress (params elev,x0,y0,x1,y1,min_dug; passes at to_dig==0 && dug>=min_dug in that box - it must be a monitored box, else the test reports NO DATA) | pile_category (category,min_items) | pile_categories (categories[]) | pile_general | rung (rung: ladder rung id) | buildings_kw (keyword,min) | crew_picks | manual (no plugin check). Omit for manual.'
+            : 'For add: {kind, params}. kinds: tiles_progress{elev,x0,y0,x1,y1,min_dug} (box must be monitored) | pile_category{category,min_items} | pile_categories{categories[]} | pile_general | rung{rung} | buildings_kw{keyword,min} | manual.',
         },
         box: {
           type: 'array', items: { type: 'number' },
-          description: 'For add with tiles_progress: [x0,y0,x1,y1,elev] in in-game elevations - the plugin watches this box in its survey list from now on.',
+          description: verbose
+            ? 'For add with tiles_progress: [x0,y0,x1,y1,elev] in in-game elevations - the plugin watches this box in its survey list from now on.'
+            : 'For tiles_progress: [x0,y0,x1,y1,elev] - the box joins the survey list.',
         },
-        id: { type: 'number', description: 'For done/why: the task id from list.' },
-        evidence: { type: 'string', description: 'For done: the proof you measured (tile counts, building ids, probe output). A close without evidence is labelled as the model\'s own claim.' },
+        id: { type: 'number', description: 'For done/why.' },
+        evidence: { type: 'string', description: verbose ? 'For done: the proof you measured (tile counts, building ids, probe output). A close without evidence is labelled as the model\'s own claim.' : 'For done: the proof you measured; without it the close is labelled a claim.' },
       },
       required: ['action'],
       additionalProperties: false,

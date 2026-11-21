@@ -119,6 +119,8 @@ export const Config = z.object({
   /** Rules section budget (measured: the full text costs ~316 tokens on EVERY
    * assembly): full | compact (default: only what a briefing line cannot say) | off. */
   rules_mode: z.enum(['full', 'compact', 'off']).default('compact'),
+  /** full = the long tool how-to text; compact = terse labels (measured 962 -> ~520 tokens per request). */
+  tool_docs: z.enum(['full', 'compact']).default('compact'),
   /** Alert when the population falls by this many dwarves between reads. The
    * observer's own rule: absence of reports is not absence of a cause. */
   pop_drop_min: z.number().int().min(1).default(5),
