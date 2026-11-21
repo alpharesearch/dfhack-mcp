@@ -114,3 +114,22 @@ Rules this adds:
 3. **A level accumulates plans.** Every earlier design on that elevation is part of the
    terrain now - the same lesson as "your copy landed on top of my example", generalized:
    mirroring, extending and gridding must all read the current dug footprint first.
+
+## Diagonal contact is a connection (measured, and it invalidated my separation)
+The player's rule: *when tiles diagonally touch, things can move between these rooms*. In DF
+units move diagonally, and so do water, vermin, miasma and ambush - a corner touch is an open
+door for everything except a wagons' path. Proof: rebuilding the reach graph with the four
+diagonal neighbours merged my "separated" components from **63 down to 17** on the same map.
+
+Consequences for design and tools:
+1. **Separation requires no corner contact.** Two open areas whose tiles touch diagonally are
+   one space. Thick walls buy separation only if the wall is also diagonal-clean (a 1-tile wall
+   column between two open rows leaks at the corners where either side is open).
+2. **The graph must use 8-neighbour links** (plus stair/ramp z-links). My 4-neighbour version
+   under-connected the fort - so `dig_reachable` was too optimistic and "is this room cut off"
+   was answered wrong.
+3. **Openings must traverse the entire wall thickness.** My 2-tile-wall redesign put the opening
+   tile in the outer wall row only, leaving an inner wall tile - sealed rooms. Fixed by ordering
+   both rows (32 tiles across four levels), and doors go in the 1-wide passage.
+4. Water is the worst case of this rule: a diagonal gap into an aquifer-touched area is a leak,
+   not a technicality.

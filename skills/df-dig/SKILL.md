@@ -172,8 +172,11 @@ matters:
   tiles were simply given back to the mountain and the level reads better for it.
 - **Wall columns between bands**: 2 columns, not 1 (bands at x36-39 and x42-45, hall at y123;
   x40-41 stay wall).
-- **Openings stay 1 tile** - that is what a door is for. Order the opening, then build the door;
-  a 2-wide opening is a hallway inside your bedroom.
+- **Openings stay 1 tile and must reach the hall through the whole wall** - a passage that stops
+  one tile short seals the room. Doors are built in them.
+- **Diagonal contact IS a connection.** Dwarves move diagonally; so do water, vermin, miasma and
+  ambush. My 4-neighbour reach graph called rooms separated and the game said otherwise - with
+  diagonals the map's components collapsed from 63 to 17. Separation needs no corner touching.
 - **Count the open area, not the room count.** Support/cave-in thresholds are unverified on this
   build (§13), so the conservative reading is: keep single rooms small (4x4), keep walls thick,
   and do not merge rooms into a hall by accident - if two rooms' walls come out, you have dug a

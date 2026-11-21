@@ -1195,7 +1195,11 @@ class WorldModel:
                 x, y, z = stack.pop()
                 g = band[(x, y)].get(z, " ")
                 neigh = []
-                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                # DWARVES MOVE DIAGONALLY in DF, and so do water, vermin, miasma and ambush
+                # - so diagonal contact between open areas IS a path. A 4-neighbour graph
+                # reported rooms as separated when the game treats them as connected.
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1),
+                               (1, 1), (1, -1), (-1, 1), (-1, -1)):
                     neigh.append((x + dx, y + dy, z))
                 if g == "=":                 # up-down stair: the level above and below
                     neigh.append((x, y, z + 1))
