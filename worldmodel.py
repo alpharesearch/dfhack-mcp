@@ -1305,6 +1305,8 @@ class WorldModel:
                     c = "stairs"
                 elif g == "/":
                     c = "ramp"
+                elif g == " ":
+                    c = "open"            # open air (cavern): nothing to dig, never designate
                 elif g in ("~",):
                     c = "water"
                 elif g in (".", "g", "s", "S", "b", "v"):
