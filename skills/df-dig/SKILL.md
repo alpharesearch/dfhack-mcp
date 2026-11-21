@@ -136,3 +136,48 @@ pick-limited.
 
 ## 10-15. Strata, water work, cave-ins, descent learnings, rates
 See [references/descent-notes.md](references/descent-notes.md) - the measured detail lives there so this body stays bounded and cheap to load.
+
+## 16. Plan in Z: one district per level, on the strata map
+A shaft is not an inconvenience, it is the spine of the fort. Order per **elevation**, chosen
+by what the strata allow (measured on this world, in-game numbers):
+| ui elev | our elev | Stratum / verdict |
+|---|---|---|
+| 36 | 37 | soil/grass layer, depth 2-3 under surface 39-40 -> **farm level** (5x5 soil room) |
+| 35 | 36 | dry stone above the aquifer, mineral vein band -> **bedrooms/dining/offices** (the grid) |
+| 34-33 | 35-34 | **aquifer band - NO-DIG.** This is the barrier: 12,703 aquifer tiles at elev 34, water bodies east. Rooms here flood. |
+| 31-27 | 32-28 | below the band, dry (damp *flags* only, no water) -> **industry stack**: storage, smelter (magnetite+coal are in the veins), workshops |
+| 25 | 26 | deep, and the shaft column reads **aquifer at 25** - keep small, plan drainage |
+Per level, the shape that works (94 tiles each):
+`4x4 landing` touching the stair column -> `1-wide hall` -> `4x4 rooms` off the hall with a
+**1-tile opening** each and a **wall row between every room**. The landing is what makes a
+level usable; a level without a landing is rock with a hole in it.
+Rules:
+- The stairwell **head** is designated per level with `UP_DOWN_STAIR_DIG`; a level above the
+  current top needs its own stair head (the farm level at 37 was opened that way).
+- Gates per level, not per plan: `hazards` + `depth-profile` + `survey` on each elevation
+  before ordering it. The same x/y box can be legal at 32 and fatal at 34.
+- Watch the stack as a stack: `scripts/dig_levels.py --levels 37:..,36:..,32:..` reports
+  `walls/fog/floor/pend` per level and finishes only when every level reads floors, no walls,
+  no fog. Levels complete in whatever order the crew reaches them.
+
+## 17. Walls are the design, not the leftover
+My first room plans used the thinnest wall that technically separates two rooms (1 tile), and
+the player's verdict was correct: **not enough wall**. The rules that fix it, in the order that
+matters:
+- **2 tiles of wall minimum** between a room and a hall, and between adjacent rooms. 1-tile
+  walls are weak (they read as thin as a doorframe), give no privacy, no support, and no space
+  for a door + frame.
+- **Wall rows between room rows: use the pitch.** Rooms 4 tall + **2+ wall rows** = pitch >= 6.
+  My bedroom grid went from pitch 5 (1 wall row, 1020 tiles) to pitch 10 - 1,020 designated
+  tiles were simply given back to the mountain and the level reads better for it.
+- **Wall columns between bands**: 2 columns, not 1 (bands at x36-39 and x42-45, hall at y123;
+  x40-41 stay wall).
+- **Openings stay 1 tile** - that is what a door is for. Order the opening, then build the door;
+  a 2-wide opening is a hallway inside your bedroom.
+- **Count the open area, not the room count.** Support/cave-in thresholds are unverified on this
+  build (§13), so the conservative reading is: keep single rooms small (4x4), keep walls thick,
+  and do not merge rooms into a hall by accident - if two rooms' walls come out, you have dug a
+  big unsupported room and paid for it twice.
+- Reuse of space: when re-spacing, **NO_DIG the tiles you are giving up** (272 thin-walled room
+  tiles cleared, 1,020 grid tiles returned to wall) - a designation you mean to abandon is a
+  job you are making dwarves do.
