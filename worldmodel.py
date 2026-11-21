@@ -1302,6 +1302,71 @@ class WorldModel:
                 "note": "workable from a walkable neighbour in the dwarves' component"}
 
 
+    async def designation_clusters(self, e0: int, e1: int, limit: int = 12) -> dict:
+        """Where the game's dig designations physically are, per in-game elevation.
+
+        Block-granularity scan (16x16 tiles) over the band: every block that carries
+        designations is counted, and adjacent designated blocks are merged into one
+        rectangle. The plugin uses this to name the backlog the watched boxes do not
+        explain (measured: "pending dig 103, watched boxes 0")."""
+        gen = await self._gen()
+        memo = getattr(self, "_desig_memo", None)
+        if memo is None or memo.get("gen") != gen:
+            memo = self._desig_memo = {"gen": gen, "cells": {}}
+        out = []
+        for elev in range(int(e0), int(e1) + 1):
+            z = elev + GAME_Z_OFFSET
+            blocks = await self.cache.blocks(z, z + 1, gen)
+            hits = {}
+            for b in blocks:
+                key = (int(b.map_x), int(b.map_y))
+                cell = memo["cells"].get(key)
+                if cell is None:
+                    n = 0
+                    names = dig_names()
+                    desig = b.tile_dig_designation
+                    for i in range(len(desig)):
+                        dn = names.get(int(desig[i]))
+                        if dn and dn != "NO_DIG":
+                            n += 1
+                    cell = memo["cells"][key] = n
+                if cell:
+                    hits[key] = cell
+            if not hits:
+                continue
+            # Merge orthogonally adjacent designated blocks into components.
+            seen = set()
+            clusters = []
+            for start in hits:
+                if start in seen:
+                    continue
+                stack = [start]
+                group = []
+                while stack:
+                    cur = stack.pop()
+                    if cur in seen:
+                        continue
+                    seen.add(cur)
+                    group.append(cur)
+                    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        nb = (cur[0] + dx, cur[1] + dy)
+                        if nb in hits and nb not in seen:
+                            stack.append(nb)
+                xs = [g[0] for g in group]
+                ys = [g[1] for g in group]
+                clusters.append({
+                    "x0": min(xs) * 16, "x1": max(xs) * 16 + 15,
+                    "y0": min(ys) * 16, "y1": max(ys) * 16 + 15,
+                    "tiles": sum(hits[g] for g in group),
+                    "blocks": len(group),
+                })
+            clusters.sort(key=lambda c: -c["tiles"])
+            if clusters:
+                out.append({"elev": elev, "clusters": clusters[:limit],
+                            "designated_tiles": sum(c["tiles"] for c in clusters)})
+        return {"band": [int(e0), int(e1)], "by_elev": out,
+                "designated_total": sum(c["tiles"] for e in out for c in e["clusters"])}
+
     async def survey(self, elev: int, x0: int, y0: int, x1: int, y1: int) -> dict:
         """Pre-flight check for a designation box: what is on every tile, and what is safe to
         order. NEVER designate over stuff - floors, stairs, ramps, buildings, items, and

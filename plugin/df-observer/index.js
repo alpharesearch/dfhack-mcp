@@ -414,7 +414,11 @@ export default class DFObserver extends TypertRemoteService {
     const cfg = this.config
     const isDeep = index % cfg.deep_every === 0
     const seen = new Set()
-    const boxes = [...cfg.monitored_boxes, ...(this.model?.extraBoxes ?? [])]
+    // The ladder's NEXT box joins the survey list: a suggestion whose tiles are
+    // never read is advice the agent cannot verify (measured: "unproven").
+    const nextBox = this.model?.nextBox ?? null
+    const boxes = [...cfg.monitored_boxes, ...(this.model?.extraBoxes ?? []), ...(nextBox ? [nextBox] : [])]
+      .filter((b, i, arr) => arr.findIndex((o) => o[0] === b[0] && o[1] === b[1] && o[2] === b[2] && o[3] === b[3] && o[4] === b[4]) === i)
       .filter((b) => {
         const k = b.join(',')
         if (seen.has(k)) return false

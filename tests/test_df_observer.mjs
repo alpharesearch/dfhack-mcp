@@ -632,6 +632,25 @@ test('tool answers stamp the age of the newest game read', async () => {
   return 'read age stamped in the header line'
 })
 
+test('the ladder NEXT box joins the survey list (suggestions get proven tiles)', () => {
+  const model = freshModel()
+  model.ingestDeep({ rungs: [], notes: [], piles: [], next: null })
+  assert.equal(model.nextBox, null, 'no suggestion -> no box')
+  model.ingestDeep({ rungs: [], notes: [], piles: [],
+    next: { id: 'refuse', title: 'Refuse pile OUTSIDE (miasma)', keys: 'p', why: 'miasma',
+      at: { elev: 36, x0: 65, y0: 113, x1: 71, y1: 119, region: 'A' } } })
+  const box = model.nextBox
+  assert.deepEqual(box, [65, 113, 71, 119, 36], 'the suggestion box is a survey box (in-game elev)')
+  // dedupe: a suggestion already in monitored_boxes must not be surveyed twice
+  const list = [...model.cfg.monitored_boxes, ...(model.extraBoxes ?? []), ...(box ? [box] : [])]
+    .filter((b, i, arr) => arr.findIndex((o) => o[0] === b[0] && o[1] === b[1] && o[2] === b[2] && o[3] === b[3] && o[4] === b[4]) === i)
+  const dupes = list.length - new Set(list.map((b) => b.join(','))).size
+  assert.equal(dupes, 0, 'no duplicate surveys')
+  model.ingestDeep({ rungs: [], notes: [], piles: [], next: null })
+  assert.equal(model.nextBox, null, 'a cleared suggestion clears the box')
+  return 'NEXT suggestion box is surveyed, deduped, and cleared with the suggestion'
+})
+
 test('the pending split names the backlog outside the watched boxes', async () => {
   const model = freshModel()
   model.ingestFast({ paused: false, generation: 1,

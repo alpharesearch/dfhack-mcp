@@ -893,6 +893,17 @@ export class FortModel {
   }
 
   /** The complete post-change state the model sees, as plain JSON. */
+  /** The ladder's NEXT suggestion as a survey box [x0,y0,x1,y1,elev], when the
+   * server anchored one. The filter measured the gap: the suggested refuse box's
+   * tile counts were "unproven" because we never surveyed it. */
+  get nextBox() {
+    const at = this.next?.at ?? this.next?.box
+    if (!at) return null
+    const { x0, y0, x1, y1, elev } = at
+    if ([x0, y0, x1, y1, elev].some((v) => !Number.isFinite(Number(v)))) return null
+    return [Number(x0), Number(y0), Number(x1), Number(y1), Number(elev)]
+  }
+
   payload() {
     const compactAlerts = this.alerts.filter((a) => !a.cleared).slice(0, 20).map((a) => ({
       id: a.id, kind: a.kind, evidence: a.evidence, coord: a.coord, suggested: a.suggested,
