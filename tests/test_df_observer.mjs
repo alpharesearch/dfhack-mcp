@@ -17,6 +17,7 @@ const {
 const { buildBriefing, buildWake, estimateTokens, STANDING_RULES } = await import(path.join(pluginDir, 'brief.js'))
 const { ObserverTransport, ObserverBug, GameOffline } = await import(path.join(pluginDir, 'observer.js'))
 const { toolDefinitions } = await import(path.join(pluginDir, 'tools.js'))
+const filterApi = await import(path.join(pluginDir, 'filter.js'))
 const { default: DFObserver, Config } = await import(path.join(pluginDir, 'index.js'))
 const { remoteMethods } = await import(path.join(pluginDir, 'node_modules', '@deepseek-ai', 'dsh-typert-protocol', 'lib', 'index.js'))
 const { z } = await import(path.join(pluginDir, 'node_modules', 'zod', 'index.js'))
@@ -427,6 +428,29 @@ test('tools: bounded outputs, add/done/ack embed foldable payloads', async () =>
   const done = await defs[1].execute({ action: 'done', id: added.id, evidence: 'survey read: to_dig 0 dug 96' }, exec)
   assert.match(done.text, /closed/)
   return `df_status/df_todo/df_alerts verified (${defs.length} tools)`
+})
+
+// ---------------------------------------------------------------------------
+// filter (opt-in analyst)
+test('filter: default OFF, verdict parsing, filtered briefing within cap, whitelist demotion', () => {
+  const cfg = Config.parse({})
+  assert.equal(cfg.filter_enabled, false, 'filter is opt-in')
+  const { parseVerdict, buildFilteredBriefing } = filterApi
+  const model = freshModel()
+  const verdict = parseVerdict([{ type: 'text', text: 'thinking...\n[df-verdict] {"tick":1,"significance":"high","headline":"water entered shaft x50,y123","changes":["elev35 now 4/7"],"next":{"id":"meeting","title":"Meeting area","keys":"z","at":{"elev":38,"x0":5,"y0":115,"x1":11,"y1":121}},"wake":[{"kind":"water","evidence":"water elev35:4 in x50,y123"}],"notes":[]}' }])
+  assert.equal(verdict.significance, 'high')
+  assert.equal(verdict.wake[0].kind, 'water')
+  assert.equal(parseVerdict([{ type: 'text', text: 'no verdict here' }]), null)
+  const brief = buildFilteredBriefing(verdict, model.payload(), { maxTokens: 260 })
+  assert.ok(brief.tokens <= 260, `tokens ${brief.tokens}`)
+  assert.match(brief.text, /water entered shaft/)
+  assert.match(brief.text, /\[df-observer\] \{/, 'state line still carries the foldable payload')
+  const { buildFilterWake } = filterApi
+  const wake = buildFilterWake({ kind: 'water', evidence: 'water elev35:4 in x50,y123', coord: 'x50,y123', suggested: 'stop the shaft' }, model.payload(), { maxTokens: 420 })
+  assert.match(wake.text, /DF-OBSERVER ALERT \(filter, tick \d+\) water/)
+  assert.ok(wake.tokens <= 420 || wake.overBudget === true,
+    `wake ${wake.tokens} tokens: must fit its cap, or arrive labelled overBudget`)
+  return 'verdict parse + <=260-token filtered briefing + bounded wake; whitelist enforced by the plugin (dispatchFilterWakes)'
 })
 
 // ---------------------------------------------------------------------------

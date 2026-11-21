@@ -34,6 +34,13 @@ sessions instead of making the agent poll tools:
   pauses an idle fort (nothing designated, nothing moving).
 - **Tools** - `df_status(scope)`, `df_todo(list|add|done|why)`,
   `df_alerts(list|ack|history)`.
+- **Filter subagent (opt-in, `filter_enabled: false` default)** - a plugin-owned
+  analyst session woken on significant ticks: it reads the FULL state payload in
+  its own context (private `df_observe_state` tool) and answers one verdict line;
+  play sessions then get a verdict-composed briefing (`filter_briefing_max_tokens`,
+  default 260). The plugin keeps enforcing the wake whitelist, the evidence rules,
+  and the read-only boundary over whatever the filter proposes; a silent filter
+  falls back to the rule gate (recorded in the notes).
 - **Panel** - above the composer: game/session health line, ladder bar, NEXT,
   monitored boxes, to-dos with evidence, alert feed with Ack buttons, notes.
   Theme tokens only, light/dark from the host. Alert wakes also render as chat

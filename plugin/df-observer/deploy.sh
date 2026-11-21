@@ -20,7 +20,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$DIR/../.." && pwd)"
 PKG="@local/df-observer"
 PROFILE="${DSH_PROFILE:-web}"
-JS=(index.js observer.js model.js brief.js tools.js client.js)
+JS=(index.js observer.js model.js brief.js tools.js filter.js client.js)
 
 say()  { printf '\033[1m==>\033[0m %s\n' "$*"; }
 fail() { printf '\033[31mFAIL\033[0m %s\n' "$*" >&2; exit 1; }

@@ -207,6 +207,7 @@ window.__ModuleLoader__.load({
               h('span', { key: 'tk' }, `${t('health.tick')} ${snap.tick}`),
               h('span', { key: 'p' }, `${t('health.poll')} ${Math.round((snap.pollIntervalMs ?? 0) / 1000)}s`),
               h('span', { key: 'pa' }, `${t('pause.authority')} ${snap.config?.pause_authority ?? 'off'}`),
+              snap.filter?.enabled ? h('span', { key: 'fl' }, `filter ${snap.filter.live ? 'live' : 'spawning'}${snap.filter.verdictTick != null ? ` @${snap.filter.verdictTick}` : ''}${snap.filter.fallback ? ' (fallback)' : ''}`) : null,
               snap.sessionFolded ? h('span', { key: 'sf' }, t('session.folded')) : null),
             h('button', {
               class: 'dfo-toggle', type: 'button', 'aria-expanded': open,

@@ -275,3 +275,28 @@ Measured pile-probe fields (53.17-r1): accepted categories live in
 `b.settings.flags[<category name>]`; `b.flags` is `building_flags` (no
 `active`, no numeric indices in range); container limits in
 `b.storage.max_barrels/max_bins/max_wheelbarrows`; elevation `b.z - 129`.
+
+
+## 11. Filter subagent (player proposal 2026-11-21, implemented as opt-in)
+
+The token limits are starting points, not verdicts: the rule-gate (model.js)
+decides significance from numeric deltas and cannot notice patterns (stalled
+shafts + pick exhaustion + a flood arriving behind a quiet ladder) the way a
+model can. So the plugin can own a **filter agent**: a persistent session
+spawned by the plugin (`sessionController.create`, Config `filter_enabled`,
+default OFF) that:
+
+- is woken on significant ticks with a one-line instruction (its own context
+  absorbs the cost - not the play sessions');
+- reads the FULL observation payload through a private tool `df_observe_state`
+  (registered only for that agent);
+- answers with exactly one verdict line `[df-verdict] {tick, significance,
+  headline, changes[], next, wake[], notes[]}`;
+- the plugin then composes the play-session briefing FROM the verdict
+  (`filter_briefing_max_tokens`, default 260) and appends the foldable state
+  line (shrink ladder, ledger always present).
+
+Boundaries stay plugin-enforced: `wake[].kind` outside `Config.alert_wakes` is
+demoted to briefing text; the filter has no game tools; verdict older than
+`filter_timeout_ms` -> the rule-gate briefing resumes (recorded in notes).
+Measured: rule briefing ~600-950 tokens/step; filtered target ~150-260.

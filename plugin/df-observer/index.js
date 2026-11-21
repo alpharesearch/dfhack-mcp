@@ -38,6 +38,7 @@ import { ObserverTransport } from './observer.js'
 import { FortModel, STATE_VERSION, significantChange, dfObserverProjection } from './model.js'
 import { STANDING_RULES, buildBriefing, buildWake } from './brief.js'
 import { toolDefinitions } from './tools.js'
+import { FILTER_SYSTEM_PROMPT, buildFilteredBriefing, buildFilterWake, parseVerdict } from './filter.js'
 
 /** Every tunable lives here so the player edits `cordis.patch.yml`, not code. */
 export const Config = z.object({
@@ -117,6 +118,24 @@ export const Config = z.object({
   wake_enabled: z.boolean().default(true),
   /** Panel refresh cadence the client half should use. */
   panel_poll_ms: z.number().int().min(2000).default(5000),
+
+  /** Filter subagent (plan §11): a plugin-owned analyst session that reads the
+   * full observation payload in ITS context and answers with one compact
+   * verdict; play sessions get the filtered briefing. Default OFF - measure,
+   * then flip. The wake whitelist stays Config-enforced over the filter. */
+  filter_enabled: z.boolean().default(false),
+  /** Preset the filter session runs (empty = profile default). */
+  filter_agent_preset: z.string().default(''),
+  /** Optional explicit model route for the filter ({provider, model}). */
+  filter_provider: z.string().default(''),
+  filter_model: z.string().default(''),
+  /** Cap on the filtered briefing injected into play sessions. */
+  filter_briefing_max_tokens: z.number().int().min(80).default(260),
+  /** Fall back to the rule-gated briefing if no verdict arrives this long
+   * after a filter wake (the filter session is not the game's gatekeeper). */
+  filter_timeout_ms: z.number().int().min(10000).default(120000),
+  /** Max size of the state payload the filter tool returns (filter context). */
+  filter_state_max_tokens: z.number().int().min(400).default(2600),
 }).prefault({})
 
 
@@ -168,6 +187,11 @@ export default class DFObserver extends TypertRemoteService {
     this.abort = new AbortController()
     this.lastWakeTick = 0
     this.noteLines = []
+    this.filterSessionId = null
+    this.filterVerdict = null
+    this.filterWokeAt = null
+    this.filterFallback = false
+    this.filterPromptInstalled = false
     // Remote endpoints, marked imperatively (Node runs this module without a
     // decorator transform; the marker path below is exactly the @Remote form).
     markDirectRemote(this, 'panel', { name: 'panel' })
@@ -229,6 +253,9 @@ export default class DFObserver extends TypertRemoteService {
       this.disposers.clear()
       this.agents.clear()
     }, 'df-observer: agent disposers')
+
+    // ---- filter subagent surface (Config-gated; OFF by default) ----
+    if (config.filter_enabled) this.installFilterSurface()
 
     // ---- the poll loop ----
     ctx.effect(() => {
@@ -348,7 +375,15 @@ export default class DFObserver extends TypertRemoteService {
     if (isDeep) this.model.ingestDeep(data)
     const raised = this.model.evaluate({})
     await this.dispatchAlerts(raised)
+    const gateNotes = this.filterEnabled()
+      ? significantChange(this.lastGateSignal, this.model.payload(), { min_to_dig_delta: this.config.min_to_dig_delta })
+      : []
+    if (this.filterEnabled() && (isDeep || gateNotes.length)) {
+      this.lastGateSignal = this.model.payload()
+      this.wakeFilter(gateNotes)
+    }
     await this.dispatchBriefing()
+    await this.dispatchFilterWakes()
     await this.maybePauseFor(raised)
     await this.maybeAutoResume()
   }
@@ -357,10 +392,24 @@ export default class DFObserver extends TypertRemoteService {
   // Briefing (inject, delta-gated, bounded) and wakes (followup, whitelisted)
   // ---------------------------------------------------------------------
 
+  filterEnabled() {
+    return this.config.filter_enabled === true
+  }
+
+  /** The verdict is usable only for the tick (or later) it was drawn from. */
+  freshVerdict(payload) {
+    const verdict = this.filterVerdict
+    if (!verdict) return null
+    if (verdict.tick < payload.tick - this.config.deep_every * 2) return null
+    return verdict
+  }
+
   async dispatchBriefing() {
     if (this.config.briefing_mode === 'off') return
     const payload = this.model.payload()
     const now = Date.now()
+    const verdict = this.filterEnabled() ? this.freshVerdict(payload) : null
+    const timedOut = this.filterEnabled() && this.filterTimedOut()
     for (const agent of this.liveTargets()) {
       const entry = this.agents.get(agent.id)
       if (!entry) continue
@@ -369,14 +418,55 @@ export default class DFObserver extends TypertRemoteService {
         : significantChange(entry.lastSignal, payload, { min_to_dig_delta: this.config.min_to_dig_delta })
       const spaced = now - entry.lastAt >= this.config.inject_min_spacing_ms
       const overdue = now - entry.lastAt >= this.config.inject_max_spacing_ms
-      if (!changed.length && !overdue) continue
-      if (!spaced && !overdue) continue
-      const brief = buildBriefing(payload, { maxTokens: this.config.briefing_max_tokens })
+      let brief = null
+      if (verdict) {
+        // The filter spoke: significance decides, the plugin composes the text.
+        if (verdict.significance === 'noise' && !overdue) continue
+        if (verdict.significance !== 'high' && !spaced && !overdue) continue
+        brief = buildFilteredBriefing(verdict, payload, {
+          maxTokens: this.config.filter_briefing_max_tokens,
+        })
+      } else {
+        if (this.filterEnabled() && !timedOut) continue   // verdict pending; do not pre-empt it
+        if (!changed.length && !overdue) continue
+        if (!spaced && !overdue) continue
+        brief = buildBriefing(payload, { maxTokens: this.config.briefing_max_tokens })
+        if (timedOut && !this.filterFallback) {
+          this.filterFallback = true
+          this.model.notes = ['filter silent past Config.filter_timeout_ms: rule-gate briefing resumed',
+            ...this.model.notes].slice(0, 12)
+        }
+      }
       this.injectMessage(agent, brief, 'briefing')
       entry.lastSignal = payload
       entry.lastAt = now
       entry.lastTick = payload.tick
       this.model.briefings += 1
+    }
+  }
+
+  /** Filter-proposed wakes are plugin-approved: kind must be in Config.alert_wakes. */
+  async dispatchFilterWakes() {
+    if (!this.filterEnabled()) return
+    const verdict = this.filterVerdict
+    if (!verdict?.wake?.length) return
+    if (verdict.tick !== this.model.tick) return
+    const payload = this.model.payload()
+    const now = Date.now()
+    for (const proposed of verdict.wake) {
+      if (!this.config.alert_wakes.includes(proposed.kind)) continue
+      const alert = this.model.alerts.find((a) => a.kind === proposed.kind && !a.cleared && !a.acked)
+        ?? { id: `F${this.model.tick}`, kind: proposed.kind, evidence: proposed.evidence,
+             coord: '', suggested: '', acked: false }
+      for (const agent of this.liveTargets()) {
+        const entry = this.agents.get(agent.id)
+        if (!entry || alert.wakeSent) continue
+        if (now - entry.lastWakeAt < this.config.wake_min_spacing_ms) continue
+        const wake = buildFilterWake({ ...alert, evidence: proposed.evidence || alert.evidence }, payload)
+        this.injectMessage(agent, wake, 'alert')
+        alert.wakeSent = true
+        entry.lastWakeAt = now
+      }
     }
   }
 
@@ -409,6 +499,127 @@ export default class DFObserver extends TypertRemoteService {
     } catch (error) {
       this.note(`inject failed for ${agent.id}: ${error?.message ?? error}`)
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // Filter subagent: spawn once, brief through its verdict, fall back to the
+  // rule gate when it is silent. The plugin keeps every boundary enforced.
+  // ---------------------------------------------------------------------
+
+  installFilterSurface() {
+    const { ctx, config } = this
+    this.filterSessionId = `df-observer-filter-${Date.now().toString(36)}`
+    // The filter's standing rules: scoped to its own session only.
+    ctx.effect(() => ctx.systemPrompt.section({
+      name: 'df-observer-filter',
+      order: BRIEF_SECTION_ORDER + 1,
+      text: (assemble) => (assemble?.session?.id === this.filterSessionId || assemble?.agent?.id === this.filterSessionId)
+        ? FILTER_SYSTEM_PROMPT : '',
+    }), 'df-observer: filter prompt')
+    // The filter's only read: the full observation payload (its context pays).
+    ctx.effect(() => ctx.tools.register({
+      name: 'df_observe_state',
+      description: 'Read the observer\'s complete current state payload (facts, boxes by tile categories, piles, shafts, warnings, rungs, ledger, alerts). Only the df-observer filter session calls this; answer with one [df-verdict] line as your instructions require.',
+      parameters: {
+        type: 'object',
+        properties: {
+          focus: { type: 'string', description: 'Optional focus word (boxes|piles|shafts|ledger|alerts|ladder) to trim the answer toward; everything is always present in full at default.' },
+        },
+        required: [],
+        additionalProperties: false,
+      },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: (args, value) => [{ type: 'text', text: typeof value?.text === 'string' ? value.text : JSON.stringify(value) }],
+      },
+      async execute() {
+        const text = JSON.stringify(this.model.payload())
+        const cap = this.config.filter_state_max_tokens * 4
+        return { text: text.length > cap ? `${text.slice(0, cap)}…(truncated: labelled, never a fact)` : text }
+      },
+    }, { when: ({ agent }) => agent?.id === this.filterSessionId }), 'df-observer: filter tool')
+    // Verdict capture: the filter session's assistant answers fold into the
+    // plugin's live state; the filter session's own log keeps them durably.
+    ctx.on('assistant/message', ({ agent }) => {
+      if (agent.id !== this.filterSessionId) return
+      const events = agent.session?.events ?? []
+      for (let i = events.length - 1; i >= 0; i -= 1) {
+        const event = events[i]
+        if (event?.type !== 'assistant/message') continue
+        const verdict = parseVerdict(event.data?.content)
+        if (verdict) { this.acceptVerdict(verdict); return }
+      }
+    })
+    ctx.effect(() => () => {
+      const agent = this.filterAgent()
+      if (agent) { try { agent.cancel('df-observer: plugin disposed') } catch { /* already gone */ } }
+    }, 'df-observer: filter disposal')
+  }
+
+  filterAgent() {
+    return this.filterSessionId ? this.ctx.agents.get(this.filterSessionId) : undefined
+  }
+
+  async ensureFilterAgent() {
+    if (!this.config.filter_enabled || this.filterAgent()) return this.filterAgent()
+    const controller = this.ctx.get('sessionController')
+    if (controller === undefined) {
+      this.note('filter enabled but no sessionController in this composition: filter inactive (rule gate continues)')
+      this.config = { ...this.config, filter_enabled: false }
+      return undefined
+    }
+    try {
+      await controller.create({
+        sessionId: this.filterSessionId,
+        cwd: process.cwd(),
+        ...(this.config.filter_agent_preset ? { agentPreset: this.config.filter_agent_preset } : {}),
+      })
+      for (let i = 0; i < 20 && !this.filterAgent(); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+      const agent = this.filterAgent()
+      if (agent && this.config.filter_provider && this.config.filter_model) {
+        try { agent.model.set({ provider: this.config.filter_provider, model: this.config.filter_model }) } catch (e) {
+          this.note(`filter model route rejected: ${e?.message ?? e}`)
+        }
+      }
+      this.note(agent ? `filter session live: ${this.filterSessionId}` : 'filter session created but not live yet')
+      return agent
+    } catch (error) {
+      this.note(`filter spawn failed: ${error?.message ?? error}`)
+      return undefined
+    }
+  }
+
+  acceptVerdict(verdict) {
+    this.filterVerdict = verdict
+    this.filterVerdictAt = Date.now()
+    this.filterFallback = false
+  }
+
+  filterWakeMessage(tick, gateNotes) {
+    return createUserMessage({
+      source: { kind: 'df-observer', form: 'filter-tick', summary: 'DF observer filter tick' },
+      content: [{ type: 'text', text: `Observation tick ${tick}.${gateNotes.length ? ` Numeric gate: ${gateNotes.join(', ')}.` : ''} Read df_observe_state, then answer with exactly one [df-verdict] line per your instructions.` }],
+    })
+  }
+
+  wakeFilter(gateNotes) {
+    const agent = this.filterAgent() ?? null
+    void (async () => {
+      const live = agent ?? await this.ensureFilterAgent()
+      if (!live) return
+      this.filterWokeAt = Date.now()
+      try { live.followup(this.filterWakeMessage(this.model.tick, gateNotes)) } catch (e) {
+        this.note(`filter wake failed: ${e?.message ?? e}`)
+      }
+    })()
+  }
+
+  filterTimedOut() {
+    if (this.filterWokeAt === null) return false
+    if (this.filterVerdictAt && this.filterVerdictAt >= this.filterWokeAt) return false
+    return Date.now() - this.filterWokeAt > this.config.filter_timeout_ms
   }
 
   // ---------------------------------------------------------------------
@@ -482,6 +693,14 @@ export default class DFObserver extends TypertRemoteService {
       crashlog: live.crashlog, notes: [...(live.notes ?? []), ...notes].slice(0, 10),
       overload: live.overload,
       pollIntervalMs: this.currentIntervalMs(),
+      filter: {
+        enabled: this.filterEnabled(),
+        session: this.filterSessionId,
+        live: !!this.filterAgent(),
+        verdictTick: this.filterVerdict?.tick ?? null,
+        significance: this.filterVerdict?.significance ?? null,
+        fallback: this.filterFallback,
+      },
       config: {
         pause_authority: this.config.pause_authority,
         alert_wakes: this.config.alert_wakes,

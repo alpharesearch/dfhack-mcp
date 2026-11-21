@@ -61,5 +61,11 @@
         pile_full_items: 150
         agents: []
         brief_subagents: false
+        # Filter subagent (plan §11): set true to let a plugin-owned analyst
+        # session read the full state and condense the briefing to ~260 tokens.
+        filter_enabled: false
+        filter_agent_preset: ''
+        filter_briefing_max_tokens: 260
+        filter_timeout_ms: 120000
         wake_enabled: true
         panel_poll_ms: 5000
