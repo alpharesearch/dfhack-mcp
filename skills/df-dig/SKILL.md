@@ -173,3 +173,22 @@ not observed.
 7. Workshops/furniture need a stone+wood economy: hauling routes, then mason/carpenter.
 Each step ends with a **re-survey**: `world-cache-reset` + `depth-profile` + `hazards` on
 the new box, because the dig revealed ground you can now plan on.
+
+## 15. Learnings from the 9-level descent (measured this run)
+- **Data absence is not open air.** My own layer read `band.get(...).get(e, " ")`, so a tile
+  with no cached data reported as a void: the descent stopped at elev 31 announcing a cavern
+  that did not exist (the dwarves had dug `MineralStairUD` there). Rule: **unknown is its own
+  state**; any default that turns "no data" into a positive fact is a bug that invents world
+  features. Same class as the earlier traps (count 0 = dug, zero walls = tunnel).
+- **The cached window must cover the range you ask about.** `probe-plan` built its stack from
+  the fort band (32-43), so everything below 32 read as fog. Ask for 25, fetch 25.
+- **Up-down stairs advance the shaft by one level per designation:** digging an
+  `UP_DOWN_STAIR_DIG` at level L yields the stair at L **and** the corresponding stair tile on
+  L-1, so the level below often shows stairs before you order it. Tile truth per level:
+  `StoneStairUD` / `MineralStairUD` (the vein band at elev 36 gave mineral stairs).
+- **Crossing the aquifer (elev 33-34 here) has been dry so far** - water 0 at every stair tile
+  after the breach. That is not a promise: `column_water()` checks the shaft column before and
+  after each level and **exit 4 = WET, stop** (the player's rule: *just stop when wet*). Log
+  the damp *flags*, stop on *water*.
+- Descent rates: 2 stair tiles per level, ~15-30 s per level with the crew on it - 9 levels in
+  a few minutes. Stairwells are cheap; rooms are the expensive part.

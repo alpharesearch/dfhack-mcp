@@ -1433,8 +1433,9 @@ class WorldModel:
             elif g == "?":
                 # Fog and damp are not mutually exclusive: an unexplored tile in an aquifer
                 # column is the worst kind of surprise, so say both.
-                verdict = ("fog: unexplored - designation here is rejected, probe the "
-                           "neighbour" + wet)
+                verdict = ("fog: unexplored - the game ACCEPTS a designation here and it "
+                           "queues (measured); it stays unworkable until digging reveals it"
+                           + wet)
             elif aq_above or wat_above:
                 verdict = ("avoid: DAMP - aquifer/water in this column at/above "
                            f"(aquifer{aq_above[:3]} water{sorted(wat_above)[:3]}); digging "
