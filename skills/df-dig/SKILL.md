@@ -166,3 +166,13 @@ nothing to dig. Per tile, the decision is:
 | floor / existing ramp / stairs | **nothing** - and never designate over it |
 
 Measured payoff on this fort: the wagon road needed **zero digging** - the hill already carries a 3-wide ramp chain, proven by `/wagon-path` (1,989 tiles, reaches x=191). Detail in references.
+
+## 16b. Put the stairs in the middle - hub and spokes
+A level planned as rooms hanging off a corridor that starts at the shaft wastes the shaft: the
+stair is an edge, every walk crosses the level. Plan it as a **hub**: a 5x5 landing **with the
+stair tiles inside it**, then halls radiating out (N/S/E/W, 1-wide), then rooms **along the
+halls** - 4x4 bedrooms, 2x2 storages - each with a 1-wide opening through the full wall
+thickness, 2-tile walls between rooms and between rooms and halls. Ordered outward from the hub
+(nearest first) so the dug hub is the access point for every spoke, and the spokes are the
+access points for the rooms. Level 36 on this fort: hub 25 + halls 51 + eight 4x4 + four 2x2
+rooms + 24 opening tiles = 244 tiles, gates clean (damp 0, shallow 0, over-stuff 0).
