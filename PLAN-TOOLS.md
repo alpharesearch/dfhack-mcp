@@ -452,3 +452,52 @@ this **before** designating, and must say "unknown" when it cannot know.
 - `GET /magma-depth?x&y&elev` -> contiguous 12-level downward scan, first magma elevation,
   `levels_to_magma`, and `scanned_to` (the honest "we do not know" field).
 - `tunnel-sites?...&dry=true` (default) -> depth + rock + dry, in one query.
+
+# Fog-driven replanning (the plan is provisional, by design)
+
+The player's words: *"for this game it is normal that the player sometimes needs to abandon
+the initial plan because of the fog, just dig deeper or somewhere else."* So the system must
+not treat a rejected plan as failure - **replanning is the loop**, and fog is a first-class
+state, not an absence of data.
+
+## The loop
+1. **`probe-plan?x&y&elev0&elev1`** - rank the elevations of ONE column with per-level
+   verdicts: `probe here` (solid, depth ok) / `avoid: DAMP` (aquifer or water in the column
+   at/above) / `shallow` (surface cut) / `fog` (unexplored, designation rejected) /
+   `open air`. This is the "abandon and go deeper/elsewhere" decision made explicit.
+2. **Probe, do not commit.** Designate a short 1-wide adit (a few tiles) at the chosen
+   level, watch it with `watch_dig.py`, then re-read: digging reveals tiles, and revealed
+   tiles are the only legal sites for designations.
+3. **`tunnel-sites` with fallbacks** - query several shapes (e.g. 15x3, 12x3, 8x3) and keep
+   the ranked list: deeper, longer, more rock on top, versus shorter, closer to the fort.
+   The plan carries 2-3 candidates, not one.
+4. **Re-survey after every dig completes.** `world_cache_reset` + `depth-profile` +
+   `hazards` on the new box. Never extend a design into fog because it "looked right".
+
+## Elevation numbering (fixed, and it mattered)
+The player's map panel prints **"Elevation N"**. Measured from the player's report: the
+long dig line at RPC **z=162** is shown as **Elevation 33**, i.e. the in-game number is
+`z - 129`, one LESS than our `elev = z - 128`. My probes kept missing the player's site
+because of this off-by-one. Every view now prints both:
+- band table gained a `ui` column;
+- `tile_at` returns `ui_elev`;
+- `depth-profile` and `hazards` headers say "in-game Elevation N".
+
+## What the probe plan showed on the live map
+`probe-plan x55,y108, elev 40..33`:
+```
+  elev40 (ui 39) [?] depth=4  - fog
+  elev39 (ui 38) [?] depth=5  - fog
+  elev38 (ui 37) [?] depth=6  - fog
+  elev37 (ui 36) [?] depth=7  - fog
+  elev36 (ui 35) [.] depth=8  - probe here: solid, depth 8
+  elev35..33     [?] depth 9-11 - fog
+```
+and `hazards` on the player's line (elev 34 = in-game 33, x50-60 y108-112):
+```
+  damp tiles: 11 | magma-below 0 | clean 44
+  DAMP x50,y108: aquifer@[34]   (and x51..x55 same)
+```
+So the player's dig stopped exactly where the aquifer layer crosses the tunnel - the model
+reproduces the game's DAMP warning, tile by tile, and the probe plan offers the legal
+alternative (elev 36, depth 8, dry) at the same column.

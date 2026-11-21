@@ -864,6 +864,22 @@ async def tunnel_sites(length: int = Query(12, ge=4, le=40), width: int = Query(
         b.spend(len(l) + 1)
     return WM.finish(lines, b)
 
+@app.get("/probe-plan", operation_id="probe_plan")
+async def probe_plan(x: int = Query(...), y: int = Query(...),
+                     elev0: int = Query(..., description="lowest elevation to consider"),
+                     elev1: int = Query(..., description="highest elevation to consider"),
+                     min_depth: int = Query(2, ge=1, le=12)):
+    """Rank the elevations in ONE column for a probe dig - the way a player beats fog. Plans change mid-game: dig a short 1-wide adit, read the strata, then go deeper / shallower / elsewhere. Per elevation it reports glyph, depth under the local surface, and a verdict: probe here (solid, deep enough), avoid (damp: aquifer or water in the column at/above - digging floods the works), shallow (surface cut), fog (designation rejected), or open air."""
+    rows = await world.probe_plan(x, y, elev0, elev1, min_depth=min_depth)
+    b = WM.Budget(1500)
+    lines = [f"probe plan at x{x},y{y}, elevations {elev1} down to {elev0} "
+             f"(ui = in-game Elevation panel number)"]
+    for r in rows:
+        lines.append(f"  elev{r['elev']} (ui {r['ui_elev']}) [{r['glyph']}] depth={r['depth']} - {r['verdict']}")
+    for l in lines:
+        b.spend(len(l) + 1)
+    return WM.finish(lines, b)
+
 @app.get("/hazards", operation_id="hazards")
 async def hazards(x0: int = Query(...), y0: int = Query(...),
                   x1: int = Query(...), y1: int = Query(...),
@@ -873,7 +889,7 @@ async def hazards(x0: int = Query(...), y0: int = Query(...),
     z0, z1 = await world.fort_band()
     hz = await world.hazard_map(z0 - WM.GAME_Z_OFFSET, z1 - WM.GAME_Z_OFFSET)
     b = WM.Budget(max_tokens)
-    lines = [f"hazards at elev {elev}, x{x0}-{x1} y{y0}-{y1}"]
+    lines = [f"hazards at elev {elev} (in-game Elevation {elev - 1}), x{x0}-{x1} y{y0}-{y1}"]
     damp = hot = wet = clean = 0
     worst = []
     for y in range(y0, y1 + 1):
