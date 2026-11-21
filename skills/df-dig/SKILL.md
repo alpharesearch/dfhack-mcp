@@ -125,18 +125,15 @@ A shaft is not an inconvenience, it is the spine of the fort. Order per **elevat
 by what the strata allow (measured on this world, in-game numbers):
 Strata table for this world: [references/descent-notes.md](references/descent-notes.md)
 
-Per level, the shape that works (94 tiles each):
-`4x4 landing` touching the stair column -> `1-wide hall` -> `4x4 rooms` off the hall with a
-**1-tile opening** each and a **wall row between every room**. The landing is what makes a
-level usable; a level without a landing is rock with a hole in it.
+Per level: `4x4 landing` on the stair column -> `1-wide hall` -> `4x4 rooms` with 1-tile
+openings and 2-tile walls. A level without a landing is rock with a hole in it.
 Rules:
 - The stairwell **head** is designated per level with `UP_DOWN_STAIR_DIG`; a level above the
   current top needs its own stair head (the farm level at 37 was opened that way).
 - Gates per level, not per plan: `hazards` + `depth-profile` + `survey` on each elevation
   before ordering it. The same x/y box can be legal at 32 and fatal at 34.
-- Watch the stack as a stack: `scripts/dig_levels.py --levels 37:..,36:..,32:..` reports
-  `walls/fog/floor/pend` per level and finishes only when every level reads floors, no walls,
-  no fog. Levels complete in whatever order the crew reaches them.
+- Watch the stack with `scripts/dig_levels.py` (per-level walls/fog/floor/pend); levels
+  complete in whatever order the crew reaches them.
 
 ## 17. Walls are the design, not the leftover
 My first room plans used the thinnest wall that technically separates two rooms (1 tile), and
