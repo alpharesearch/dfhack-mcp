@@ -826,6 +826,94 @@ async def unit_counts():
     except LO.LuaOpError as e:
         return {"error": str(e)}
 
+# ---------------------------------------------------------------------------
+# VERTICAL MODEL - because a tunnel is defined by what is ABOVE it.
+# The first play test dug a "tunnel" with overburden 0 (a surface cut) while the
+# player's line at the same elevation had 2 levels of rock over it. Per-level maps
+# cannot express that; columns, overburden and cross-sections can.
+# ---------------------------------------------------------------------------
+
+@app.get("/column", operation_id="column")
+async def column(x: int = Query(...), y: int = Query(...),
+                 e0: int = Query(None), e1: int = Query(None)):
+    """The tile column at (x,y), top elevation to bottom, as compact glyphs (# wall, . floor, ' ' open, ~ water, ? hidden). This is how you read a mountain vertically: if the tiles above your dig level are '#', you are tunnelling; if they are ' ', you are trenching the surface."""
+    return await world.column(x, y, e0, e1)
+
+@app.get("/tunnel-sites", operation_id="tunnel_sites")
+async def tunnel_sites(length: int = Query(12, ge=4, le=40), width: int = Query(3, ge=1, le=8),
+                       min_depth: int = Query(2, ge=1, le=12),
+                       near_x: int = Query(None), near_y: int = Query(None),
+                       near_elev: int = Query(None),
+                       max_tokens: int = Query(1500)):
+    """Find tunnel lines that obey the player's rule: solid rock, `width` rows, `length` tiles, on one elevation, each tile at least `min_depth` BELOW its local surface (mountain stays on top), rock-sealed at the far end, with explored walkable ground at the entrance. Ranked by depth then distance to near_x/near_y/near_elev (pass the wagon or fort centre). THIS is the tool that prevents a 'tunnel' dug on the surface with nothing above it."""
+    near = (near_x, near_y, near_elev) if None not in (near_x, near_y, near_elev) else None
+    sites = await world.tunnel_sites(length=length, width=width, min_depth=min_depth, near=near)
+    b = WM.Budget(max_tokens)
+    lines = [f"tunnel sites: length>={length} width={width} min_depth={min_depth}"
+             + (f" near=({near_x},{near_y},{near_elev})" if near else "")]
+    for i, r in enumerate(sites, 1):
+        lines.append(f"  {i}. elev{r['elev']} x{r['x0']}-{r['x1']} y{r['y0']}-{r['y1']} "
+                     f"depth>={r['min_depth']} tiles={r['tiles']} entrance={r['entrance']}"
+                     + (f" dist={r['dist_to_near']}" if r['dist_to_near'] is not None else ""))
+    if not sites:
+        lines.append("  none - try a shorter length, a smaller min_depth, or explore first "
+                     "(designations cannot land on unexplored tiles)")
+    for l in lines:
+        b.spend(len(l) + 1)
+    return WM.finish(lines, b)
+
+@app.get("/depth-profile", operation_id="depth_profile")
+async def depth_profile(elev: int = Query(..., description="the elevation you plan to dig at"),
+                        x0: int = Query(...), x1: int = Query(...),
+                        y0: int = Query(...), y1: int = Query(...),
+                        min_tokens: int = Query(0), max_tokens: int = Query(2000)):
+    """Depth under the local surface for every tile in a rectangle: the mountain-on-top check, tile by tile. depth 0 = you would be trenching the surface; depth >= 2 = a tunnel. Reports each tile's glyph and depth so a plan can be judged before it is designated, and the ceiling verified after digging."""
+    z0, z1 = await world.fort_band()
+    surf = await world.surface_map(z0 - WM.GAME_Z_OFFSET, z1 - WM.GAME_Z_OFFSET)
+    b = WM.Budget(max_tokens)
+    lines = [f"depth under surface at elev {elev}, x{x0}-{x1} y{y0}-{y1}"]
+    shallow = 0; deep = 0; unknown = 0
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            top = surf.get((x, y))
+            d = (top - elev) if top is not None else None
+            if d is None:
+                unknown += 1
+            elif d < 2:
+                shallow += 1
+            else:
+                deep += 1
+            if (x - x0) % 4 == 0:
+                lines.append(f"  x{x},y{y}: surface={top} depth={d}")
+    lines.append(f"  tiles: deep(>=2)={deep} shallow(<2)={shallow} unexplored={unknown}")
+    for l in lines:
+        b.spend(len(l) + 1)
+    return WM.finish(lines, b)
+
+@app.get("/overburden", operation_id="overburden")
+async def overburden(x: int = Query(...), y: int = Query(...),
+                     elev: int = Query(..., description="game elevation to dig at")):
+    """Count of NON-AIR levels above (x,y,elev): the tunnel-vs-trench test. overburden 0 = surface cut, 1 = shallow, >=2 = a real tunnel with mountain on top. overburden_unknown counts hidden tiles above, which you must not plan against."""
+    return await world.overburden(x, y, elev)
+
+@app.get("/cross-section", operation_id="cross_section")
+async def cross_section(axis: str = Query("y", description="'y' fixes y=at and walks x; 'x' fixes x=at and walks y"),
+                        at: int = Query(...), a0: int = Query(...), a1: int = Query(...),
+                        e0: int = Query(None), e1: int = Query(None),
+                        max_tokens: int = Query(2000)):
+    """A vertical slice through the map - the only compact way to SEE the mountain. Rows are elevations top-down, so rock over a candidate dig line is visible as a column of '#'. Use it before designating a tunnel, and after digging, to prove the ceiling is intact."""
+    res = await world.cross_section(axis, at, a0, a1, e0, e1)
+    b = WM.Budget(max_tokens)
+    lines = [res["head"]] + res["rows"]
+    kept = []
+    for l in lines:
+        if b.allow(len(l) + 1):
+            b.spend(len(l) + 1)
+            kept.append(l)
+        else:
+            b.note("lines", 1)
+    return WM.finish(kept, b)
+
 @app.get("/labor-list", operation_id="labor_list")
 async def labor_list():
     """Every labor name you can pass to set_unit_labors (the DFHack unit_labor enum, decoded from the game). Use these exact strings - MINING, MASON, CARPENTER, PLANT, IRRIGATE, FARMER, CRAFTSMAN, TRANSPORT, ..."""

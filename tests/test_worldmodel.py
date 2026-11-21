@@ -149,6 +149,7 @@ def test_ladder_reports_the_first_broken_rung_with_keys():
     facts.stairs = WM.Counter({"stairs_ud": 4})
     facts.water_tiles = facts.magma_tiles = 0
     facts.floor_tiles = 100
+    facts.underground_floors = 60      # depth>=2: the entrance rung means a TUNNEL
     facts.walkable = 0
     facts.regions = []
     facts.pop, facts.soldiers, facts.hostile = 10, 0, 0
@@ -172,6 +173,32 @@ def test_ladder_reports_the_first_broken_rung_with_keys():
     assert "every quickstart rung is satisfied" in txt2, txt2[-400:]
 
 
+
+def test_ladder_entrance_rung_requires_overburden():
+    """A fresh embark has thousands of GRASS floors. `floor_tiles >= 40` reported
+    '[x] Entry tunnel dug' with no tunnel at all - the rungs that describe dug space
+    must be depth-aware, because a tunnel is defined by rock ABOVE it."""
+    facts = WM.FortFacts.__new__(WM.FortFacts)
+    facts.levels = []
+    facts.stairs = {1: 4}
+    facts.designations = 0
+    facts.water_tiles = facts.magma_tiles = 0
+    facts.floor_tiles = 22105          # the open plain
+    facts.underground_floors = 0       # nothing dug
+    facts.walkable = 2000
+    facts.regions = []
+    facts.pop, facts.soldiers, facts.hostile = 7, 0, 0
+    facts.miners, facts.hunters = 4, 0
+    facts.food = facts.drink = facts.wood = facts.stone = facts.metal = facts.barrels = 0
+    facts.count_built = lambda *k: 0
+    facts.built = lambda *k: False
+    facts.built_names = []
+    txt = "\n".join(WM.progress_lines(facts))
+    assert "[ ] Entry tunnel dug" in txt, txt[:600]
+    assert "underground floors (depth>=2): 0" in txt
+    facts.underground_floors = 25
+    txt2 = "\n".join(WM.progress_lines(facts))
+    assert "[x] Entry tunnel dug" in txt2, txt2[:600]
 def test_projection_size_stays_in_budget():
     """The whole point of the layer: a briefing must be hundreds of tokens, not 100k."""
     class L:

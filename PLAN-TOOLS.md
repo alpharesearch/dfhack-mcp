@@ -368,3 +368,48 @@ and tokens; the watcher (1) and announcements (2) move waiting out of the model.
    free, non-water tiles, a legally valid site for that type, and non-empty matching
    materials. So the plan's `survey` op must answer, for a requested rectangle: accepted
    count, rejected count and **why**, before any designation or placement is issued.
+
+# The z-level system (built, plus one requirement it exposed)
+
+## Built now
+| Tool | What it answers |
+|---|---|
+| `column?x&y` | the tile stack top->bottom as glyphs: is there rock above the level I want to dig? |
+| `overburden?x&y&elev` | count of non-air levels above a dig tile; `overburden_unknown` for fog |
+| `depth-profile?elev&x0..x1&y0..y1` | per-tile depth under the local surface over a rectangle: `deep(>=2) / shallow(<2) / unexplored` |
+| `cross-section?axis&at&a0..a1` | a vertical slice of the map as text - the mountain visible, ceiling checkable |
+| `tunnel-sites?length&width&min_depth&near_*` | candidate tunnel lines obeying the player rule (solid, width x length on one z, each tile >= min_depth below its local surface, rock-sealed far end, explored walkable entrance), ranked by depth then distance to the wagon/fort |
+
+Measured on the live map with these tools:
+- your line `elev39 x44-59 y117-123`: **deep(>=2)=110, shallow=2, unexplored=0** (depth 2-5) - a tunnel;
+- my line `elev39 x60-66`: **deep=7, shallow=42** - a trench on the hillside surface;
+- cross-section at y=120 shows the slope stepping down eastward: surface 43 at x40, 41 at x52,
+  40 at x56, **39 at x61**, 38 at x65, 37 at x69 - so digging at 39 near x60-66 IS the surface;
+- `tunnel-sites length=12 width=3 min_depth=2` returns **none**: no such explored run exists
+  near the fort. The tool correctly refuses to plan a tunnel inside fog. Exploration, not
+  imagination, is the prerequisite.
+
+## What it exposed: depth is necessary, not sufficient
+The new depth-aware entrance rung reported `[x]` with `underground floors (depth>=2): 1569` -
+those are **natural caverns** (elev 36 has `GrassDryFloor`/`StoneFloor` at depth 3+). Dug
+space and natural space look identical in a tile census.
+
+So the ladder's dug-space rungs must be driven by **observed transitions**, not snapshots:
+- `dug_floors` = tiles that were wall and became floor **since the layer's baseline**
+  (`world_delta`'s tile-level version), tracked persistently in the server.
+- `dug_stairs`, `built_rooms` the same way: transition-verified.
+- The layer already diffs per-level aggregates; the missing piece is a tile-level snapshot
+  (band glyph grid, ~442k entries, one windowed read) compared on refresh.
+Until then the honest label for those rungs is "underground floors incl. natural caverns"
+- the number must not be read as "we dug this".
+
+## Standing rules added by this test
+1. **Never plan against fog**: designations on unexplored tiles are silently rejected; depth
+   in unexplored columns is unknown. `depth-profile` and `tunnel-sites` report unexplored counts.
+2. **Tunnel = overburden >= 2.** Enforce it in `tunnel-sites` (done) and in the ladder
+   (entrance rung requires depth>=2 floors, transition-verified once dug tracking exists).
+3. **Verify a tunnel by its ceiling**: `cross-section` after digging must still show the
+   levels above as `#`. A missing ceiling is a cave-in risk, and it is visible as text.
+4. **Stair shafts are the z-level trap** (the ladder's own keys say "designate EVERY z"):
+   planned tool `shaft-plan?x&y&from_elev&to_elev` returning the per-z designation kind
+   (top = down-stairs, middle = up-down, bottom = up-stairs) so a shaft is never half-ordered.

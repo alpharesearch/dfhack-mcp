@@ -1055,6 +1055,223 @@ class WorldModel:
     async def _dec(self, gen: int) -> Decoders:
         return await self.dec.load(gen)
 
+    # ---- vertical model ----------------------------------------------------
+    # A tunnel is defined by what is ABOVE it. Digging at a z with no rock over it is a
+    # surface cut, not a tunnel - the lesson from the first play test (my site at
+    # 62,120,elev39 had overburden 0; the player's at 46,119 had 2).
+
+    AIR = (" ", "~")          # open air / liquid: nothing to dig through above
+
+    async def _stack(self, e0: int, e1: int, gen: int | None = None):
+        """(x,y) -> {elev: glyph} for a band of levels, from the cached grids."""
+        if gen is None:
+            gen = await self._gen()
+        ck = (e0, e1, gen)
+        cached = getattr(self, "_stack_cache", None)
+        if cached is None:
+            cached = self._stack_cache = {}
+        if ck in cached:
+            return cached[ck]          # already the (band, levels) tuple
+        levels = await self.levels(e0, e1, force=True) if False else await self.levels(e0, e1)
+        band = {}
+        for lv in levels:
+            ox, oy = lv.origin
+            for y in range(lv.rows):
+                row = lv.grid[y]
+                for x in range(lv.cols):
+                    band.setdefault((ox + x, oy + y), {})[lv.elev] = row[x]
+        if len(cached) > 4:
+            cached.clear()
+        cached[ck] = (band, levels)
+        return cached[ck]
+
+    async def column(self, x: int, y: int, e0: int | None = None,
+                     e1: int | None = None) -> dict:
+        """The tile column at (x,y), top elevation to bottom, as compact glyphs.
+
+        This is how a model reads a mountain: '43:o 42:f 41:w 40:w 39:w 38:w' says the
+        tile at 39 has rock over it. Glyphs: # wall, . floor, ' ' open, ~ water, ? hidden.
+        """
+        if e0 is None or e1 is None:
+            z0, z1 = await self.fort_band()
+            e0, e1 = z0 - GAME_Z_OFFSET, z1 - GAME_Z_OFFSET
+        band, _ = await self._stack(e0, e1)
+        col = band.get((int(x), int(y)), {})
+        profile = " ".join(f"{e}:{col.get(e, ' ')}" for e in sorted(col, reverse=True))
+        return {"x": int(x), "y": int(y), "elev_range": [e0, e1], "column": profile,
+                "open_top": min([e for e, g in col.items() if g not in self.AIR] or [None])
+                if any(g not in self.AIR for g in col.values()) else None}
+
+    async def surface_map(self, e0: int | None = None, e1: int | None = None) -> dict:
+        """(x,y) -> top-most NON-AIR explored elevation: the local ground surface.
+
+        The tunnel rule falls out of this in one subtraction: a dig at z is a tunnel
+        (mountain on top) when surface_z(x,y) - z >= 2; at depth 0 you are trenching the
+        surface. Unexplored columns answer None and must not be planned against.
+        """
+        if e0 is None or e1 is None:
+            z0, z1 = await self.fort_band()
+            e0, e1 = z0 - GAME_Z_OFFSET, z1 - GAME_Z_OFFSET
+        band, _ = await self._stack(e0, e1)
+        out = {}
+        for xy, col in band.items():
+            top = None
+            for e in sorted(col, reverse=True):
+                g = col[e]
+                if g == "?":
+                    continue
+                if g not in self.AIR:
+                    top = e
+                    break
+            out[xy] = top
+        return out
+
+    async def depth(self, x: int, y: int, elev: int) -> dict:
+        """Depth under the local surface at (x,y,elev), i.e. mountain-on-top thickness."""
+        z0, z1 = await self.fort_band()
+        surf = await self.surface_map(z0 - GAME_Z_OFFSET, z1 - GAME_Z_OFFSET)
+        top = surf.get((int(x), int(y)))
+        return {"x": int(x), "y": int(y), "elev": int(elev),
+                "surface_elev": top,
+                "depth_under_surface": (top - int(elev)) if top is not None else None}
+
+    async def annotate_depth(self, facts: "FortFacts") -> "FortFacts":
+        """Count floor tiles that sit at depth >=2 under their local surface.
+
+        That number - not raw floor_tiles - is what distinguishes a dug tunnel from a
+        grassland, and it is what the ladder's entrance rung now checks.
+        """
+        z0, z1 = await self.fort_band()
+        e0, e1 = z0 - GAME_Z_OFFSET, z1 - GAME_Z_OFFSET
+        surf = await self.surface_map(e0, e1)
+        band, _ = await self._stack(e0, e1)
+        n = 0
+        for (x, y), col in band.items():
+            top = surf.get((x, y))
+            if top is None:
+                continue
+            for e, g in col.items():
+                if top - e >= 2 and g in (".", "s", "S"):     # floor / smooth / constructed
+                    n += 1
+        facts.underground_floors = n
+        return facts
+
+    async def tunnel_sites(self, length: int = 12, width: int = 3, min_depth: int = 2,
+                           near: tuple | None = None, max_sites: int = 8) -> list[dict]:
+        """Rank candidate tunnel lines by the rule a player actually uses.
+
+        A site is: `length` tiles long and `width` rows wide on ONE elevation, every tile
+        solid rock ('#'), every tile at least `min_depth` under its local surface (so the
+        mountain stays on top), the run enclosed by rock at the far end, and an entrance
+        tile at the near end that is explored, walkable ground (floor/ramp). Ranked by
+        depth then by distance to `near` (the fort/wagon), because a tunnel you cannot
+        reach is scenery.
+        """
+        z0, z1 = await self.fort_band()
+        e0, e1 = z0 - GAME_Z_OFFSET, z1 - GAME_Z_OFFSET
+        surf = await self.surface_map(e0, e1)
+        levels = await self.levels(e0, e1)
+        sites = []
+        L, W, MD = int(length), int(width), int(min_depth)
+        for lv in levels:
+            ox, oy = lv.origin
+            for y in range(0, lv.rows - (W - 1)):
+                x = 0
+                while x < lv.cols - (L - 1):
+                    ok = True
+                    depths = []
+                    for dy in range(W):
+                        for dx in range(L):
+                            g = lv.grid[y + dy][x + dx]
+                            if g != "#":
+                                ok = False
+                                break
+                            d = surf.get((ox + x + dx, oy + y + dy))
+                            d = (lv.elev - d) if d is None else (d - lv.elev)
+                            depths.append(d)
+                        if not ok:
+                            break
+                    if not ok:
+                        x += 1
+                        continue
+                    if any(d is None or d < MD for d in depths):
+                        x += 1
+                        continue
+                    # entrance: explored walkable ground just east of the run
+                    ex, ey = x + L, y + (W // 2)
+                    entrance = lv.grid[y + (W // 2)][ex] if ex < lv.cols else " "
+                    if entrance not in (".", "g", "s", "/"):
+                        x += 1
+                        continue
+                    xs, ys = ox + x, oy + y
+                    dist = None
+                    if near:
+                        nx, ny, ne = near
+                        dist = abs(xs - nx) + abs(ys - ny) + abs(lv.elev - ne) * 2
+                    dmin = min(d for d in depths if d is not None)
+                    sites.append({"elev": lv.elev, "x0": xs, "y0": ys,
+                                  "x1": xs + L - 1, "y1": ys + W - 1,
+                                  "length": L, "width": W, "min_depth": dmin,
+                                  "entrance": [ox + ex, oy + y + (W // 2), lv.elev],
+                                  "tiles": L * W, "dist_to_near": dist})
+                    x += L
+        sites.sort(key=lambda r: (-r["min_depth"], r["dist_to_near"] if r["dist_to_near"] is not None else 10**9))
+        return sites[:max_sites]
+
+    async def overburden(self, x: int, y: int, elev: int, e_top: int | None = None) -> dict:
+        """How many levels of non-air sit ABOVE (x,y,elev): the tunnel-vs-trench test.
+
+        Hidden tiles ('?') are counted as unknown and reported: you cannot trust a site
+        whose overburden is unexplored, and designations there are rejected anyway.
+        """
+        z0, z1 = await self.fort_band()
+        e0 = z0 - GAME_Z_OFFSET
+        e1 = e_top if e_top is not None else z1 - GAME_Z_OFFSET
+        band, _ = await self._stack(e0, e1)
+        col = band.get((int(x), int(y)), {})
+        solid = 0
+        unknown = 0
+        for e in range(int(elev) + 1, e1 + 1):
+            g = col.get(e, " ")
+            if g == "?":
+                unknown += 1
+            elif g not in self.AIR:
+                solid += 1
+        below = 0
+        for e in range(e0, int(elev)):
+            g = col.get(e, " ")
+            if g == "?":
+                below += 1
+            elif g not in self.AIR:
+                below += 1
+        return {"x": int(x), "y": int(y), "elev": int(elev),
+                "overburden": solid, "overburden_unknown": unknown,
+                "underburden_solid": below, "at": col.get(int(elev), " ")}
+
+    async def cross_section(self, axis: str, at: int, a0: int, a1: int,
+                            e0: int | None = None, e1: int | None = None) -> dict:
+        """A vertical slice through the map - the only way to see a mountain as text.
+
+        axis='y' fixes y=at and walks x from a0..a1; axis='x' fixes x=at and walks y.
+        Rows are elevations (top first), so overburden is visible as the column of '#'
+        above the dig line.
+        """
+        z0, z1 = await self.fort_band()
+        e0 = e0 if e0 is not None else z0 - GAME_Z_OFFSET
+        e1 = e1 if e1 is not None else z1 - GAME_Z_OFFSET
+        band, _ = await self._stack(e0, e1)
+        a0, a1 = int(a0), int(a1)
+        rows = []
+        for e in range(e1, e0 - 1, -1):
+            cells = []
+            for a in range(a0, a1 + 1):
+                xy = (a, int(at)) if axis == "y" else (int(at), a)
+                cells.append(band.get(xy, {}).get(e, " "))
+            rows.append(f"{e:>3} |" + "".join(cells))
+        ruler = "    |" + "".join(str((a % 10)) for a in range(a0, a1 + 1))
+        head = f"section axis={axis} at={at} span {a0}-{a1} elev {e0}-{e1}\n{ruler}"
+        return {"head": head, "rows": rows}
+
     async def tile_at(self, x: int, y: int, elev: int, force: bool = False) -> dict:
         """One tile read from the block cache: tiletype, its decoded name and glyph class,
         water/magma, hidden, dig designation, construction material, item count, and the
@@ -1319,6 +1536,7 @@ class WorldModel:
         dec = await self._dec(gen)
         lv = await self.levels(e0, e1)
         facts = FortFacts(lv, await load_units(dec, gen, self._state), dec)
+        await self.annotate_depth(facts)        # depth >=2 floors: the tunnel truth
         b = Budget(max_tokens)
         lines = [f"progress elev {e0}-{e1}"]
         for l in progress_lines(facts):
@@ -1458,6 +1676,7 @@ class FortFacts:
         self.water_tiles = 0
         self.magma_tiles = 0
         self.floor_tiles = 0
+        self.underground_floors = 0   # floors at depth >=2: a dug tunnel, not a plain
         self.walkable = 0
         self.regions: list[tuple[int, dict]] = []
         for lv in levels:
@@ -1521,9 +1740,11 @@ _LADDER = [
     ("labors", "Two dwarves on Miners (embark has 3 picks); Hunters/Fisherdwarves = nobody",
      lambda f: f.miners >= 2, "y -> Miners -> tick 2 dwarves -> Esc",
      "one miner is the default; a 1-wide tunnel takes one miner per end"),
-    ("entrance", "Entry tunnel dug (1 wide, 10-20 long) from the wagon to safety",
-     lambda f: f.floor_tiles >= 40, "m -> m (mine) in a cliff, or m -> u (channel) a 3x3 pit on flat ground",
-     "the entrance is the fort's only defended opening"),
+    ("entrance", "Entry tunnel dug with mountain on top (>=20 floor tiles at depth >=2)",
+     # floor_tiles >= 40 was satisfied by a fresh embark's 22,105 GRASS floors, so the
+     # ladder cried [x] with no tunnel at all. A tunnel is defined by OVERBURDEN.
+     lambda f: getattr(f, "underground_floors", 0) >= 20, "m -> m (mine) in a cliff face, 3 wide, >=10 long, with >=2 levels of rock above every tile",
+     "the entrance is the fort's only defended opening; a cut on the surface is not a tunnel"),
     ("stairwell", "Stairs connecting the levels",
      lambda f: sum(f.stairs.values()) >= 2, "m -> t: click the room floor, scroll one level down, click again",
      "designate EVERY z the shaft passes: top=down-stairs, middle=up-down, bottom=up-stairs"),
@@ -1588,7 +1809,8 @@ def progress_lines(facts: FortFacts, with_next: bool = True) -> list[str]:
     lines = [f"LADDER (quickstart order) | pop {facts.pop}, soldiers {facts.soldiers}, "
              f"hostile {facts.hostile} | food {facts.food}, drink {facts.drink}, "
              f"wood {facts.wood}, stone {facts.stone}, metal {facts.metal} | "
-             f"miners {facts.miners}, pending dig {facts.designations}"]
+             f"miners {facts.miners}, pending dig {facts.designations}",
+             f"underground floors (depth>=2): {getattr(facts, 'underground_floors', 0)}"]
     missing = []
     for rid, rung, done, keys, why in _LADDER:
         ok = done(facts)
