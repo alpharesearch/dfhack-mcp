@@ -1406,6 +1406,10 @@ class WorldModel:
         """
         z0, z1 = await self.fort_band()
         e0, e1 = z0 - GAME_Z_OFFSET, z1 - GAME_Z_OFFSET
+        # Honour the REQUESTED range, not just the fort band: a descent to elev 25 needs the
+        # stack to cover 25, and outside the cached band every tile used to read as fog.
+        e0 = min(e0, int(elev0))
+        e1 = max(e1, int(elev1))
         surf = await self.surface_map(e0, e1)
         hz = await self.hazard_map(e0, e1)
         band, _ = await self._stack(e0, e1)
@@ -1414,7 +1418,11 @@ class WorldModel:
         top = surf.get((int(x), int(y)))
         out = []
         for e in range(int(elev1), int(elev0) - 1, -1):
-            g = col.get(e, " ")
+            # DATA ABSENCE IS NOT OPEN AIR. col.get(e, " ") made an unexplored level read as
+            # a void, so a descent stopped at fog and reported a cavern that did not exist.
+            g = col.get(e)
+            if g is None:
+                g = "?"
             d = (top - e) if top is not None else None
             aq_above = [a for a in rec["aquifer"] if a >= e]
             wat_above = [a for a in rec["water"] if a >= e]
@@ -1542,14 +1550,18 @@ class WorldModel:
         solid = 0
         unknown = 0
         for e in range(int(elev) + 1, e1 + 1):
-            g = col.get(e, " ")
+            g = col.get(e)
+            if g is None:
+                g = "?"
             if g == "?":
                 unknown += 1
             elif g not in self.AIR:
                 solid += 1
         below = 0
         for e in range(e0, int(elev)):
-            g = col.get(e, " ")
+            g = col.get(e)
+            if g is None:
+                g = "?"
             if g == "?":
                 below += 1
             elif g not in self.AIR:
@@ -1576,7 +1588,8 @@ class WorldModel:
             cells = []
             for a in range(a0, a1 + 1):
                 xy = (a, int(at)) if axis == "y" else (int(at), a)
-                cells.append(band.get(xy, {}).get(e, " "))
+                gv = band.get(xy, {}).get(e)
+                cells.append("?" if gv is None else gv)
             rows.append(f"{e:>3} |" + "".join(cells))
         ruler = "    |" + "".join(str((a % 10)) for a in range(a0, a1 + 1))
         head = f"section axis={axis} at={at} span {a0}-{a1} elev {e0}-{e1} (add 1 for the in-game Elevation panel number)\n{ruler}"
