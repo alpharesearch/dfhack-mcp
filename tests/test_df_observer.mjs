@@ -630,6 +630,24 @@ test('tool answers stamp the age of the newest game read', async () => {
   return 'read age stamped in the header line'
 })
 
+test('payload carries lastCheck so df_todo why can show the trail', async () => {
+  const model = freshModel()
+  const todo = model.addTodo({ title: 'elev35 adit dug', accept: { kind: 'tiles_progress', elev: 35, x0: 45, x1: 66, y0: 121, y1: 122, min_dug: 44 } })
+  model.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 21, drink: 0, wood: 1, stone: 159, metal: 0, barrels: 18, pending_dig: 24 },
+    buildings: [], boxes: [{ elev: 35, box: [45, 121, 66, 122], to_dig: 20, dug: 24, pending: 4, hidden: 0 }],
+    shafts: [], warnings: { designated_tiles: 24, damp_tiles: 0, hot_tiles: 0 }, notes: [] })
+  model.evaluate(model.cfg)
+  const row = model.payload().todos.find((t) => t.id === todo.id)
+  assert.ok(row.lastCheck, 'the payload carries lastCheck')
+  assert.equal(row.lastCheck.ok, false, 'the check ran and failed on the numbers')
+  assert.match(row.lastCheck.evidence, /to_dig 20, dug 24/, row.lastCheck.evidence)
+  const defs = toolDefinitions({ model, projection: null, config: model.cfg, sessionFilter: () => true })
+  const res = await defs.find((d) => d.name === 'df_todo').execute({ action: 'why', id: todo.id }, { agent: { id: 'play-1' } })
+  assert.match(res.text, /last check: tick \d+ fail: /, `why shows the trail: ${res.text}`)
+  return 'lastCheck in the payload; df_todo why shows the trail'
+})
+
 test('game_says: a noteworthy report raises an alert with the verbatim quote, once', () => {
   const model = freshModel()
   const ingest = (reports) => model.ingestDeep({ rungs: [], next: null, notes: [], piles: [], reports })

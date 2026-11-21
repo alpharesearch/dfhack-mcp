@@ -935,6 +935,12 @@ export class FortModel {
       todos: this.todos.slice(0, 40).map((t) => ({
         id: t.id, title: t.title, origin: t.origin, state: t.state, accept: t.accept,
         evidence: t.evidence, box: t.box, cite: t.cite,
+        // `lastCheck` was missing here, so `df_todo why` could only ever answer
+        // "last check: none" - the acceptance runs, the payload dropped it.
+        lastCheck: t.lastCheck ? {
+          tick: t.lastCheck.tick, ok: t.lastCheck.ok, noData: t.lastCheck.noData === true,
+          evidence: String(t.lastCheck.evidence ?? '').slice(0, 90),
+        } : null,
       })),
       digEvents: this.digEvents.slice(0, 24),
       pauseEvents: this.pauseEvents.slice(0, 12),
