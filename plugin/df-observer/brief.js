@@ -310,6 +310,7 @@ export const STANDING_RULES = [
   'A FORT BRIEFING arrives unprompted as an injected user message; it is state, not a request - act on it only when it concerns your current task.',
   'Read it by these rules: every dig number is a tile-category count (to_dig = rock+hidden, dug = floor+stairs+ramp) for the named box at the named IN-GAME Elevation; completion is only ever claimed from to_dig==0 AND dug>0, never from absence, painted glyphs, truncation, or a designation count.',
   'Lines labelled NO DATA / not computed mean the read produced nothing: say so, never infer from silence. Elevations in your own writing must stay in-game panel numbers (z = elev + 129).',
+  'Designations go on ROCK tiles only: survey first, never a whole box - DEFAULT_DIG over floors, stairs, ramps, buildings or items destroys them (measured: two stairs lost that way). A dug count that DECREASES raises the tile_state_lost alert: rebuild, then designate rock only.',
   'Each to-do lists its acceptance test; the plugin runs it against MCP reads and quotes the evidence when a status flips - cite the evidence, not the flip.',
   'For how-to, load the skills: df-dig (tunnels, depth, damp/hot, shafts, proof of a dig) and df-stockpile (piles, categories, hauling proof). The observer carries state, not doctrine.',
   'Deeper queries: df_status (scope summary|boxes|piles|shafts|ladder|health|full), df_todo, df_alerts. The plugin is read-only towards the game; with Config.pause_authority=off it never pauses anything.',
@@ -324,7 +325,7 @@ export const STANDING_RULES = [
 export const STANDING_RULES_COMPACT = [
   'DF observer (Dwarf Fortress MCP): a FORT BRIEFING is injected state, not a request - act on it only when it concerns your task.',
   'Dig numbers are tile categories at a named box/IN-GAME elevation; complete = to_dig==0 AND dug>0; NO DATA means the read produced nothing - never infer from silence.',
-  'To-dos carry acceptance tests run against live MCP reads: cite the quoted evidence. Details: df_status / df_todo / df_alerts. The plugin is read-only towards the game.',
+  'Designate rock tiles only (survey first) - over floors/stairs/items it destroys them; a dug count dropping = tile_state_lost. To-dos carry acceptance tests run against live MCP reads: cite the quoted evidence. Details: df_status / df_todo / df_alerts. The plugin is read-only towards the game.',
 ].join('\n')
 
 export function standingRules(mode = 'compact') {

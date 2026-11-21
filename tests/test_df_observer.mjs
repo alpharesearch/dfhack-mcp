@@ -82,7 +82,7 @@ test('config defaults and ranges', () => {
   assert.equal(baseCfg.poll_paused_ms, 60000)
   assert.equal(baseCfg.pause_authority, 'off')
   assert.equal(baseCfg.auto_resume, false)
-  assert.deepEqual(baseCfg.alert_wakes, ['water', 'dig_complete', 'game_crashed', 'game_offline'])
+  assert.deepEqual(baseCfg.alert_wakes, ['water', 'dig_complete', 'tile_state_lost', 'game_crashed', 'game_offline'])
   assert.equal(baseCfg.overload_todos, 20, 'a normal embark ledger is not an overload')
   assert.throws(() => Config.parse({ poll_running_ms: 16000 }))
   assert.throws(() => Config.parse({ pause_authority: 'manual_suggestion' }))
@@ -573,6 +573,41 @@ test('GAME SAYS: the game reports are quoted in the briefing', () => {
   quiet.ingestDeep({ rungs: [], next: null, piles: [], crashlog: null, notes: [], reports: [{ year: 101, text: 'The forge is operating.' }] })
   assert.ok(!quiet.evaluate(quiet.cfg).some((a) => a.key === 'game-says-supply'), 'no false supply alert')
   return 'reports quoted; the game\'s supply hint becomes an alert with coordinates'
+})
+
+// ---------------------------------------------------------------------------
+// wake boundary: steer reaches a busy agent at its next step
+test('delivery: alerts steer, briefings inject, followup only as fallback', async () => {
+  const { deliveryOf } = await import(path.join(pluginDir, 'index.js'))
+  assert.equal(deliveryOf('alert', { steer() {}, followup() {} }), 'steer', 'an alert to an agent with steer uses steer')
+  assert.equal(deliveryOf('alert', { followup() {} }), 'followup', 'no steer -> followup fallback')
+  assert.equal(deliveryOf('briefing', { steer() {}, inject() {} }), 'inject', 'briefings never wake')
+  assert.equal(deliveryOf('tool', { steer() {}, inject() {} }), 'inject')
+  return 'boundary rule extracted and verified'
+})
+
+// ---------------------------------------------------------------------------
+// the dug-decrease guard (measured: a whole-box designation destroyed two stairs)
+test('tile_state_lost: a shrinking dug count raises the alert with both numbers', () => {
+  const model = freshModel()
+  const ingest = (dug) => model.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 79, dwarves: 21, miners: 2, food: 0, drink: 1, wood: 0, stone: 13, metal: 0, barrels: 21, pending_dig: 0 },
+    buildings: [], boxes: [{ elev: 36, box: [43, 122, 49, 124], to_dig: 0, dug, pending: 0 }],
+    shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [] })
+  ingest(21)
+  model.evaluate(model.cfg)                       // baseline established
+  const quiet = model.evaluate(model.cfg)
+  assert.ok(!quiet.some((a) => a.kind === 'tile_state_lost'), 'no alert when dug is steady')
+  ingest(19)                                      // two stairs vanish
+  const raised = model.evaluate(model.cfg)
+  const loss = raised.find((a) => a.kind === 'tile_state_lost')
+  assert.ok(loss, 'the decrease raises the alert')
+  assert.match(loss.evidence, /dug 21 -> 19/, `both numbers quoted: ${loss.evidence}`)
+  assert.match(loss.evidence, /x43-49 y122-124 elev36/)
+  assert.match(loss.suggested, /rebuild/i)
+  ingest(21)                                      // rebuilt: rises are silent
+  assert.ok(!model.evaluate(model.cfg).some((a) => a.kind === 'tile_state_lost'), 'a rebuild is not an alert')
+  return 'dug decrease alerts with both numbers; increases stay silent'
 })
 
 // ---------------------------------------------------------------------------

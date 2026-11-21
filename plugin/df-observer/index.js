@@ -180,6 +180,19 @@ function markRemotePrototype(Class, method, options) {
  * The plugin service: owns the poller, the live model, the session projection,
  * the per-agent briefing/wake state, the tools, and the panel Remote methods.
  */
+/**
+ * Which inbox boundary a message uses (player-measured: a `followup` wake on a
+ * busy agent sits above the composer as a queued turn until it is pressed).
+ *   alert   -> steer  (idle agent: starts a turn; busy agent: consumes it at
+ *            its next step boundary, so the play agent sees it mid-task)
+ *   else    -> inject (context for the next pre-step, never wakes)
+ * Falls back to followup when this Agent has no steer.
+ */
+export function deliveryOf(form, agent) {
+  if (form !== 'alert') return 'inject'
+  return typeof agent?.steer === 'function' ? 'steer' : 'followup'
+}
+
 export default class DFObserver extends TypertRemoteService {
   static inject = ['tools', 'agents', 'systemPrompt', 'sessionProjections', 'timer', 'commands', 'storageDomain']
   static Config = Config
@@ -608,10 +621,25 @@ export default class DFObserver extends TypertRemoteService {
       // until other input arrives (practices.md), which is right for briefings
       // (state, not a request) and wrong for the wake conditions the plan pays
       // for - water, a drained face, a crash, the game going offline.
-      ;(wake ? agent.followup : agent.inject).call(agent, createUserMessage({
+      const message = createUserMessage({
         source: { kind: 'df-observer', form, summary: form === 'alert' ? 'DF observer alert' : 'DF observer briefing' },
         content: [{ type: 'text', text }],
-      }))
+      })
+      if (deliveryOf(form, agent) === 'steer') {
+        agent.steer(message)
+      } else if (wake) {
+        // An alert must reach a BUSY agent too. Measured (player report): via
+        // `followup` the wake sat above the composer as a queued turn until the
+        // player pressed it. `steer` is the right boundary - "an idle driver
+        // starts a turn; a running driver consumes it at its next step
+        // boundary" - so steer first, and fall back to followup only if this
+        // Agent has no steer.
+        if (typeof agent.steer === 'function') agent.steer(message)
+        else agent.followup(message)
+      } else {
+        // Briefings are state, not a request: inject (never wakes the driver).
+        agent.inject(message)
+      }
     } catch (error) {
       this.note(`inject failed for ${agent.id}: ${error?.message ?? error}`)
     }
