@@ -486,6 +486,27 @@ test('acceptance tiles_progress: finds monitored boxes in payload shape', () => 
 })
 
 // ---------------------------------------------------------------------------
+// wake advice must match what the acceptance proved
+test('wake advice follows the acceptance kind (pile to-do is not a dug box)', async () => {
+  const { todoAdvice } = await import(pluginDir + '/model.js')
+  assert.match(todoAdvice({ accept: { kind: 'pile_category' } }), /pile acceptance verified/)
+  assert.match(todoAdvice({ accept: { kind: 'buildings_kw' } }), /building count proven/)
+  assert.match(todoAdvice({ accept: { kind: 'rung' } }), /ladder rung satisfied/)
+  assert.match(todoAdvice({ accept: { kind: 'tiles_progress' } }), /box is dug/)
+  const model = freshModel()
+  model.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 79, dwarves: 21, miners: 2, food: 0, drink: 1, wood: 2, stone: 13, metal: 0, barrels: 21, pending_dig: 0 },
+    boxes: [], shafts: [], warnings: null, notes: [] })
+  model.ingestDeep({ rungs: [], next: null, notes: [], piles: { 19: { id: 19, found: 1, accepts: 'stone', total: 13, elev: 36, x0: 30, x1: 33, y0: 126, y1: 128 } } })
+  model.addTodo({ title: 'stone pile has stone', accept: { kind: 'pile_category', category: 'stone', min_items: 1 } })
+  const raised = model.evaluate(model.cfg)
+  const done = raised.find((a) => a.kind === 'dig_complete')
+  assert.ok(done, 'pile to-do raised dig_complete')
+  assert.match(done.suggested, /pile acceptance verified/, `advice fits the proof: ${done.suggested}`)
+  return 'advice per acceptance family; pile flip no longer says "box is dug"'
+})
+
+// ---------------------------------------------------------------------------
 // pile rows arrive keyed by id
 test('pile rows: object-keyed payload shape is accepted', () => {
   const model = freshModel()

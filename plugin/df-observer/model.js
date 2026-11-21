@@ -264,6 +264,19 @@ export const SUGGESTIONS = {
   transport: 'the observer hit a 4xx from the MCP server = OUR bug: report it, do not retry blindly',
 }
 
+/** The advice must match what the acceptance test actually proved (measured: a
+ * pile to-do woke the agent with "box is dug - verify the ceiling"). */
+export function todoAdvice(todo) {
+  const kind = todo?.accept?.kind
+  if (kind === 'tiles_progress') return SUGGESTIONS.dig_complete
+  if (kind === 'pile_category' || kind === 'pile_categories' || kind === 'pile_general') {
+    return 'pile acceptance verified by the live pile read: keep its categories and container limits as the build grows (df-stockpile §3, §5)'
+  }
+  if (kind === 'buildings_kw') return 'building count proven by the live building read: check access and materials before relying on it (df-stockpile §2)'
+  if (kind === 'rung') return 'ladder rung satisfied: take the NEXT rung from fort_progress, in order (PLAN §4)'
+  return 'to-do acceptance passed on the live read: cite the evidence, do not re-probe blindly'
+}
+
 let alertSeq = 0
 
 export function makeAlert({ kind, key, evidence, coord = '', suggested, nowMs }) {
@@ -447,7 +460,7 @@ export class FortModel {
   evaluate({ nowMs = Date.now() } = {}) {
     const raised = []
     const cfg = this.cfg
-    const raise = (kind, key, evidence, coord) => {
+    const raise = (kind, key, evidence, coord, advice = null) => {
       const active = this.alerts.find((a) => a.key === key && !a.cleared)
       if (active) {
         if (active.acked) return null      // acked: silence repeats until the condition clears
@@ -458,7 +471,7 @@ export class FortModel {
         if (changed) raised.push(active)
         return changed ? active : null
       }
-      const alert = makeAlert({ kind, key, evidence, coord, suggested: SUGGESTIONS[kind], nowMs })
+      const alert = makeAlert({ kind, key, evidence, coord, suggested: advice ?? SUGGESTIONS[kind], nowMs })
       alert.firstTick = this.tick
       alert.lastTick = this.tick
       raised.push(alert)
@@ -639,7 +652,7 @@ export class FortModel {
         if (nextState === 'done') {
           this.digEvents.push({ tick: this.tick, kind: 'todo_done', todo: todo.id, title: todo.title, evidence })
           this.trim('digEvents', 40)
-          raise('dig_complete', `todo-${todo.id}`, `to-do #${todo.id} "${todo.title}" -> done: ${evidence}`, todo.box ? `x${todo.box[0]}-${todo.box[2]} y${todo.box[1]}-${todo.box[3]} elev${todo.box[4]}` : '')
+          raise('dig_complete', `todo-${todo.id}`, `to-do #${todo.id} "${todo.title}" -> done: ${evidence}`, todo.box ? `x${todo.box[0]}-${todo.box[2]} y${todo.box[1]}-${todo.box[3]} elev${todo.box[4]}` : '', todoAdvice(todo))
         } else if (wasDone) {
           raise('todo_reopened', `todo-reopen-${todo.id}`, `to-do #${todo.id} "${todo.title}" reopened: ${evidence}`, '')
         }
