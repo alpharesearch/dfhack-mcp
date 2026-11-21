@@ -928,3 +928,38 @@ Measured caps for the FILTERED briefing on the live fort (18-row ledger, level-8
 
 The floor is the filter's own prose, so these caps are the honest price list for a
 readable panel: `filter_briefing_max_tokens: 420` in this profile.
+
+## 31. Buildings are a fort-wide fact (server fix, live-verified)
+
+The player said *"we already have a farm plot"* while the observer wrote
+*"farm plot still unbuilt"*. Both statements were about the same fort, and the
+disagreement was a **window bug**, not an opinion:
+
+| read | buildings seen | `farm` rung |
+|---|---|---|
+| watched band 22–45 | no Farm Plot | done=false → briefing asserted "unbuilt" |
+| map-wide 0–128 | **Farm Plot x1, Farmer's Workshop x1** | **done=true** |
+
+Fix (`714a5d4`, deployed to :8000 after testing on :8006):
+`world.buildings_mapwide()` walks the cached blocks' building lists with no tile
+census; `main.py` feeds it to the rollup *and* to the rung predicates, and rebuilds
+`facts.built_names` — FortFacts derives that list in `__init__`, so replacing
+`facts.buildings` alone left every rung predicate reading stale names (measured:
+`farm rung done: false` even with the map-wide list).
+
+Cost, warm: **562 ms map-wide vs 647 ms band-only** (cold first call 6.9 s). The
+response keeps `buildings_band_only` and labels `buildings_scope`.
+
+Live proof: to-dos **#21 and #210 flipped to done** with evidence
+`rung farm satisfied: Farm plot…`, and the filter headline *"Farm era begins:
+Farm Plot + Farmer's Workshop + 2nd Still"*.
+
+Rule this adds to the plugin's contract: **a building check is never band-scoped**.
+Bands are for tiles (dig, water, shaft columns); buildings, stockpile ids, zones and
+workshops are fort-wide objects. `tests/test_observe.py` now fails the endpoint if
+`buildings_scope != map-wide`, if the map-wide view is smaller than the band view,
+or if a rung is undone while its building exists on the map.
+
+Side effects found on the way (0.1.81): box-less completions printed bare
+`dig_complete` with `coord: ""` (A30–A33) — now `#210 buildings_kw`; and
+`df_status boxes` printed a phantom `4t/undefinedblk` field.
