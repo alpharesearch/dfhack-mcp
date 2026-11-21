@@ -17,7 +17,7 @@ const {
   FortModel, dfObserverProjection, significantChange, runAcceptance, seedTodos, parsePayload, viewOf,
   PAYLOAD_PREFIX, STATE_FIELDS,
 } = await import(path.join(pluginDir, 'model.js'))
-const { buildBriefing, buildWake, estimateTokens, STANDING_RULES } = await import(path.join(pluginDir, 'brief.js'))
+const { buildBriefing, buildWake, estimateTokens, STANDING_RULES, shrinkPayloadLevel } = await import(path.join(pluginDir, 'brief.js'))
 const ConfigSchemaForTest = (await import(path.join(pluginDir, 'index.js'))).Config
 const { ObserverTransport, ObserverBug, GameOffline } = await import(path.join(pluginDir, 'observer.js'))
 const { toolDefinitions } = await import(path.join(pluginDir, 'tools.js'))
@@ -655,6 +655,26 @@ test('unwatched_designations names a big designation cluster outside the monitor
   model.evaluate(model.cfg)
   assert.ok(!model.alerts.find((a) => a.kind === 'unwatched_designations' && !a.cleared), 'the alert clears with the designations')
   return 'unwatched designations named with a runnable watch recipe'
+})
+
+test('lean wire payloads keep the designation summary the panel needs', () => {
+  const payload = {
+    tick: 12, online: true, paused: false, pauseSource: null, generation: 1, poll: 8000,
+    pauseAuthority: 'off', filter: null, overload: null,
+    facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 75, drink: 0, alcohol: 0, meals: 0, raw_food: 0, seeds: 53, pending_dig: 18, water_tiles: 1030, magma_tiles: 0, date: { year: 103, month: 2, day: 4 } },
+    reports: [], todos: [], alerts: [], digEvents: [], boxes: [], piles: [],
+    designations: { band: [22, 45], designated_total: 107, by_elev: [
+      { elev: 41, designated_tiles: 83, clusters: [{ x0: 38, x1: 48, y0: 113, y1: 122, tiles: 83 }] },
+      { elev: 22, designated_tiles: 4, clusters: [{ x0: 43, x1: 44, y0: 121, y1: 122, tiles: 4 }] }] },
+  }
+  for (const level of [4, 5, 6]) {
+    const data = shrinkPayloadLevel(payload, level)
+    assert.ok(data.designations, `level ${level} must carry designations (the panel folds the wire payload)`)
+    assert.equal(data.designations.designated_total, 107, `level ${level} totals`)
+    assert.equal(data.designations.top[0].tiles, 83, `level ${level} ranks clusters by size`)
+    assert.ok(JSON.stringify(data.designations).length < 260, `level ${level} stays compact (${JSON.stringify(data.designations).length} chars)`)
+  }
+  return 'designation summary survives every lean level, under 260 chars'
 })
 
 test('ledger + box storage keys are path-safe', () => {

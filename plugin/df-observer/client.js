@@ -228,14 +228,15 @@ window.__ModuleLoader__.load({
                       r?.year != null ? `Y${r.year} ` : '',
                       String(r?.text ?? '').slice(0, 140))))
               : null,
-            snap.designations?.by_elev?.length
+            (snap.designations?.top?.length || snap.designations?.by_elev?.length)
               ? h('div', { style: S.sec },
                 h('div', { style: S.secTitle }, t('designations')),
-                (snap.designations.by_elev ?? []).slice(0, 5).map((e, i) => h('div', { key: i, style: S.note },
-                  `elev${e.elev}: `,
-                  (e.clusters ?? []).slice(0, 3).map((c, j) => h('span', { key: j, style: S.ids },
-                    `x${c.x0}-${c.x1} y${c.y0}-${c.y1} ${c.tiles}t${j < Math.min((e.clusters ?? []).length, 3) - 1 ? ' · ' : ''}`)),
-                  e.designated_tiles !== (e.clusters ?? []).reduce((n, c) => n + c.tiles, 0) ? ' …' : '')))
+                h('div', { style: S.note }, `${snap.designations.designated_total ?? '?'} ${t('designatedTiles') ?? 'designated tiles'}`),
+                (snap.designations.top?.length
+                  ? snap.designations.top
+                  : (snap.designations.by_elev ?? []).flatMap((e) => (e.clusters ?? []).slice(0, 2).map((c) => ({ ...c, elev: e.elev })))
+                ).slice(0, 5).map((c, i) => h('div', { key: i, style: S.note },
+                  `elev${c.elev}: x${c.x0}-${c.x1} y${c.y0}-${c.y1} - ${c.tiles}t`)))
               : null,
             (snap.notes ?? []).length
               ? h('div', { style: S.sec },

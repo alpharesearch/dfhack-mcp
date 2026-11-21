@@ -163,6 +163,22 @@ function pendingOutside(f, p) {
   return outside >= 0 ? outside : '?'
 }
 
+/** The designation scan, small enough for the lean wire payload: totals plus the
+ * biggest clusters. The panel shows it; the full scan stays in df_status. */
+function compactDesignations(d) {
+  // Idempotent: the lean levels call it inline AND shrinkPayloadLevel calls it
+  // on the result - compaction must not eat an already-compact summary (measured:
+  // levels 6-8 came back with top: [] because the second pass saw no by_elev).
+  if (d && Array.isArray(d.top)) return { designated_total: d.designated_total ?? null, top: d.top.slice(0, 4) }
+  if (!d?.by_elev?.length) return d ? { designated_total: d.designated_total ?? null, top: [] } : null
+  const top = []
+  for (const e of d.by_elev) {
+    for (const c of (e.clusters ?? []).slice(0, 2)) top.push({ elev: e.elev, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, tiles: c.tiles })
+  }
+  top.sort((a, b) => b.tiles - a.tiles)
+  return { designated_total: d.designated_total ?? null, top: top.slice(0, 4) }
+}
+
 function compactFacts(f) {
   if (!f) return null
   const out = {}
@@ -217,6 +233,7 @@ const SHRINK_LEVELS = [
   (p) => ({ tick: p.tick, online: p.online, paused: p.paused, pauseSource: p.pauseSource,
     generation: p.generation, poll: p.poll, pauseAuthority: p.pauseAuthority, filter: p.filter,
     facts: p.facts, overload: p.overload, reports: (p.reports ?? []).slice(-3),
+    designations: compactDesignations(p.designations),
     boxes: (p.boxes ?? []).slice(0, 6),
     todos: (p.todos ?? []).slice(0, 14).map(shrinkCompactTodo),
     alerts: (p.alerts ?? []).slice(0, 10).map(shrinkCompactAlert),
@@ -224,12 +241,14 @@ const SHRINK_LEVELS = [
   (p) => ({ tick: p.tick, online: p.online, paused: p.paused, generation: p.generation ?? null,
     poll: p.poll ?? null, pauseSource: p.pauseSource ?? null, pauseAuthority: p.pauseAuthority ?? null,
     facts: compactFacts(p.facts), reports: (p.reports ?? []).slice(-2),
+    designations: compactDesignations(p.designations),
     todos: (p.todos ?? []).slice(0, 24).map((t) => ({ id: t.id, state: t.state, evidence: String(t.evidence ?? '').slice(0, 60) })),
     alerts: (p.alerts ?? []).slice(0, 8).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked })),
     digEvents: (p.digEvents ?? []).slice(0, 6) }),
   (p) => ({ tick: p.tick, online: p.online, paused: p.paused, poll: p.poll,
     generation: p.generation ?? null, pauseSource: p.pauseSource ?? null,
     pauseAuthority: p.pauseAuthority, facts: compactFacts(p.facts), reports: (p.reports ?? []).slice(-1),
+    designations: compactDesignations(p.designations),
     todos: (p.todos ?? []).slice(0, 30).map((t) => ({ id: t.id, state: t.state })),
     alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked })) }),
 ]
@@ -237,7 +256,11 @@ const SHRINK_LEVELS = [
 export const SHRINK_MAX = SHRINK_LEVELS.length - 1
 
 export function shrinkPayloadLevel(payload, level) {
-  return SHRINK_LEVELS[Math.max(0, Math.min(level, SHRINK_MAX))](payload)
+  const data = SHRINK_LEVELS[Math.max(0, Math.min(level, SHRINK_MAX))](payload)
+  // One shape for the designation scan at every level: the panel renders it, and
+  // the wire payload stays small (measured: levels 0-5 passed the full scan).
+  if (data.designations !== undefined) data.designations = compactDesignations(data.designations)
+  return data
 }
 
 /** Pick the richest payload level whose size fits `cap`. */
