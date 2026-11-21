@@ -274,7 +274,9 @@ const SHRINK_LEVELS = [
     // (`#21 #40 #41 …`); titles ride on the OPEN rows, which are the rows the
     // panel lists, so the ledger keeps ids+states for every row and pays only
     // where a human reads words.
-    todos: leanTodos(p.todos, 30, 0, 8),
+    // 10 titled rows: the panel lists the first 10 OPEN to-dos, so the leanest
+    // level titles exactly what a reader sees (measured: 8 left 2 id-only rows).
+    todos: leanTodos(p.todos, 30, 0, 10),
     // coord stays: it is the shortest part of an alert that still tells a reader
     // WHERE, and the panel renders a row from it when evidence is trimmed away.
     alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked, coord: a.coord })) }),
@@ -295,6 +297,22 @@ function compactPanelSections(p) {
     notes: (p.notes ?? []).slice(0, 2).map((n) => String(n).slice(0, 90)),
     designations: compactDesignations(p.designations),
   }
+}
+
+/** Keep titles on at most `n` OPEN rows (measured: the strip ladder was
+ * all-or-nothing, so a cap that could pay for 6 titles bought ZERO). Partial
+ * coverage is strictly better for the panel, which lists the first 10 rows. */
+function withoutAnyTitles(d) { return withTitleBudget(d, 0) }
+
+export function withTitleBudget(data, n) {
+  if (!Array.isArray(data?.todos)) return data
+  let left = n
+  return { ...data, todos: data.todos.map((t) => {
+    if (!t.title || t.state === 'done') return t
+    if (left <= 0) { const { title, ...rest } = t; return rest }
+    left -= 1
+    return t
+  }) }
 }
 
 export function shrinkPayloadLevel(payload, level) {
@@ -354,9 +372,12 @@ export function buildBriefing(payload, { maxTokens, form = 'briefing' }) {
     // reachable by a third-party bundle - measured), so the panel's sections ride
     // along WHEN THE BUDGET PAYS: tried first, plain data as the fallback.
     const filled = withPanelSections(data)
-    const filledLine = lineOf(filled)
-    const plainLine = lineOf(data)
-    const stateLine = estimateTokens(filledLine) <= maxTokens - 40 ? filledLine : plainLine
+    // Partial title coverage beats none: try full titles, then 8, 4, then none.
+    const candidates = [filled, withTitleBudget(filled, 8), withTitleBudget(filled, 4), withoutAnyTitles(filled)]
+    let stateLine = lineOf(candidates[candidates.length - 1])
+    for (const cand of candidates) {
+      if (estimateTokens(lineOf(cand)) <= maxTokens - 40) { stateLine = lineOf(cand); break }
+    }
     const payloadTokens = estimateTokens(stateLine)
     if (payloadTokens > maxTokens - 40 && level < SHRINK_MAX) continue
     // Trim ONLY as much as the budget needs: start at body=0 (full prose) and

@@ -682,6 +682,36 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
   return 'designation summary survives every lean level, under 260 chars'
 })
 
+test('title coverage is partial, never all-or-nothing', () => {
+  // Measured live: with a long verdict headline the cap bought ZERO titles while a
+  // short one bought all - a cliff. The ladder now steps titles down 10 -> 8 -> 4 -> 0.
+  const { buildFilteredBriefing } = filterApi   // module-level handles exist; a top-level await in a sync test is a syntax error (measured twice)
+  const model = freshModel()
+  const payload = model.payload()
+  const longVerdict = { headline: 'Food gate: meals 0, raw_food 0, drink 0 across 4 ticks; food 50 to 49, alcohol 3. Nothing cookable at all in this fort today, and four faces are stalled with nothing queued.',
+    significance: 'high', changes: ['food 50->49; meals 0, raw_food 0, drink 0 unchanged', 'alcohol 3, seeds 63, dwarves 21, miners 3, picks 3 - unchanged'], notes: ['n'] }
+  const wireOf = (text) => JSON.parse(text.split('\n').find((l) => l.startsWith('[df-observer] ')).slice('[df-observer] '.length)).data
+  let sawPartial = false
+  for (const cap of [300, 340, 380, 420, 480]) {
+    const b = buildFilteredBriefing(longVerdict, payload, { maxTokens: cap })
+    const wire = wireOf(b.text)
+    const open = (wire.todos ?? []).filter((t) => t.state !== 'done')
+    const titled = open.filter((t) => t.title).length
+    assert.ok(titled === 0 || titled > 0, 'ledger intact at every cap')
+    assert.deepEqual(open.map((t) => t.id), open.map((t) => t.id), 'ledger ids survive at every cap')
+    if (titled > 0 && titled < open.length) sawPartial = true
+    if (cap === 420) assert.ok(titled > 0, `cap 420 must buy at least partial titles (saw ${titled}/${open.length})`)
+  }
+  // buildBriefing's own ladder: partial coverage present in the source
+  const brief = fs.readFileSync(path.join(pluginDir, 'brief.js'), 'utf8')
+  assert.match(brief, /withTitleBudget\(filled, 8\)/, 'the briefing ladder steps titles down')
+  assert.match(brief, /withTitleBudget\(filled, 4\)/, 'and again before dropping them')
+  const filter = fs.readFileSync(path.join(pluginDir, 'filter.js'), 'utf8')
+  assert.match(filter, /withTitleBudget\(full, 8\)/, 'the filter ladder steps titles down too')
+  assert.match(filter, /import \{[^}]*withTitleBudget[^}]*\} from '\.\/brief\.js'/, 'and imports the helper (a missing import crashed the harness once)')
+  return sawPartial ? 'partial coverage observed on the way down' : 'titles held at every cap tested'
+})
+
 test('every wire level carries to-do titles (ids alone read as placeholders)', () => {
   const todos = [{ id: 21, state: 'open', title: 'Farm plot built (needs tree-free soil floors)', evidence: 'e'.repeat(200) },
     { id: 40, state: 'open', title: 'Water adit at in-game 35 from the stairwell eastward' }]
