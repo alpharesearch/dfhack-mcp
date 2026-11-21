@@ -698,3 +698,24 @@ Panel defect found and fixed (0.1.45): the projection `stateSchema` did not
 declare `poll`, `pauseAuthority` or `filter`, so the folded state dropped them -
 the chips read `poll ?`, `pause ?` and the filter chip never rendered. The
 schema and payload are now asserted in sync by a test (42 checks).
+
+## 23. Acceptance (e) closed: the panel in both themes (0.1.47)
+
+The GUI's theme is `html[data-ds-theme-source]` + `body[data-ds-dark-theme]`.
+Screenshots of the observer panel in the dock, same fold:
+
+- dark: `Fort observer · running · gen 1 · tick 18 · poll 8s · pause off`
+  (green health dot, ladder bar, to-do rows) - `scratch/panel-047-dark.png`
+- light (theme attributes flipped, then restored): the same header reads cleanly
+  on white - `scratch/panel-047-light.png`
+
+The chips only became real values after 0.1.46 (the fold carries
+`poll`/`pauseAuthority`/`filter`); `pause off` is the plugin stating it has no
+pause authority, and the Ack path was proven in-feed (`A10 … "acked": true`).
+
+Acceptance (a)-(e) are therefore all closed with live evidence:
+(a) tool/payload parity - `df_status` vs `/observe`; (b) cadence 8.14 s avg
+running, 60 s paused (observed 8000 -> 60000 in the payload); (c) real
+`dig_complete` wake with quoted evidence (box2 21/21, tunnel 96/96, stairwell 4/4);
+(d) player pause -> `PAUSED` + `last pause: game-auto-or-player @tick 8`, zero
+plugin writes; (e) panel in light + dark with working chips, to-dos and Ack.
