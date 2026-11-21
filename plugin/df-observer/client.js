@@ -10,7 +10,9 @@
  *     shipped local panels do it;
  *   - Chat rows through `ctx.uiConversation.events.register()` with the view keyed
  *     by the Definition's kind in `conversation.chat.node`;
- *   - game/session state read from the Host half through the package's `panel` Remote.
+ *   - session state read through the projection wire (`props.useProjection`),
+ *     actions through the shipped `remote.commands` namespace (`/df-ack`) -
+ *     a third-party bundle cannot add its own `ctx.remote` namespace.
  *
  * @module @local/df-observer/client
  */
@@ -132,38 +134,18 @@ window.__ModuleLoader__.load({
       return DOT.idle
     }
 
-    function usePanel(ctx, sessionId, pollMs) {
-      const [snap, setSnap] = React.useState(null)
-      const [error, setError] = React.useState(null)
-      React.useEffect(() => {
-        let live = true
-        const tick = async () => {
-          try {
-            const value = await ctx.remote.dfObserver.panel(sessionId ?? null)
-            if (!live) return
-            setSnap(value)
-            setError(null)
-          } catch (e) {
-            if (live) setError(String(e?.message ?? e))
-          }
-        }
-        void tick()
-        const timer = setInterval(tick, Math.max(2000, pollMs))
-        return () => { live = false; clearInterval(timer) }
-      }, [sessionId, pollMs])
-      return { snap, error }
-    }
-
     function Panel(ctx) {
       return function DfObserverPanel(props) {
         const sessionId = props.sessionId
-        const { snap, error } = usePanel(ctx, sessionId, 5000)
+        // The Host computes this from the session log (projection `wire.view`);
+        // the framework re-renders us when the view reference changes.
+        const snap = props.useProjection('dfObserver')
         const [open, setOpen] = React.useState(false)
-        if (!snap) {
+        if (!snap || snap.tick === 0) {
           return h('div', { style: S.panel },
             h('div', { style: S.head },
               h('span', { style: S.title }, t('title')),
-              h('span', { style: S.meta }, error ? `! ${error}` : t('empty'))))
+              h('span', { style: S.meta }, t('empty'))))
         }
         const done = (snap.rungs ?? []).filter((r) => r.done).length
         const total = (snap.rungs ?? []).length
@@ -231,7 +213,7 @@ window.__ModuleLoader__.load({
                   h('span', { style: S.ev }, String(a.evidence).slice(0, 110)),
                   h('button', {
                     style: S.ack, type: 'button', disabled: !!a.acked,
-                    onClick: () => { void ctx.remote.dfObserver.ackAlert(a.id).then(() => { }) },
+                    onClick: () => { void ctx.remote.commands.execute(sessionId, `/df-ack ${a.id}`, []).then(() => { }) },
                   }, a.acked ? t('alerts.acked') : t('alerts.ack'))))
                 : h('div', { style: S.note }, t('alerts.none'))),
             (snap.notes ?? []).length
@@ -319,7 +301,7 @@ window.__ModuleLoader__.load({
     // 'remote' leaves ctx.remote.dfObserver undefined; 'remote.dfObserver' works,
     // the same way dsh-dox declares 'remote.workspaceFiles').
     return {
-      inject: ['slots', 'uiConversation', 'remote', 'remote.dfObserver', 'locale'],
+      inject: ['slots', 'uiConversation', 'remote', 'remote.commands', 'locale'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { en: UI_EN, zh: UI_ZH }), 'df-observer: dictionaries')
         ctx.effect(() => ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({

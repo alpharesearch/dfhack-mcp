@@ -745,6 +745,12 @@ function mergePayload(state, payload) {
 export const dfObserverProjection = (z) => ({
   key: 'dfObserver',
   stateVersion: STATE_VERSION,
+  // `wire.view` publishes the folded view to the Client (practices.md: the
+  // panel reads the value the Host already computed; the Client folds nothing).
+  wire: {
+    viewSchema: z.json(),
+    view: (state) => viewOf(state),
+  },
   stateSchema: z.object({
     tick: z.number().default(0),
     online: z.boolean().nullable().default(null),
@@ -790,6 +796,24 @@ export const dfObserverProjection = (z) => ({
         const payload = parsePayload(event.data.message?.content)
         if (!payload || payload.form !== 'tool') return state
         return mergePayload(state, payload)
+      }
+      case 'command/run': {
+        // `/df-ack <id>` (the panel's Ack, and the same words a human may type):
+        // fold the ack into THIS session's view - log-truth, no side channel.
+        const line = typeof event.data?.rawInput === 'string' ? event.data.rawInput.trim() : ''
+        const match = /^\/df-ack\s+(\S+)/.exec(line)
+        if (!match) return state
+        const id = match[1]
+        let changed = false
+        const alerts = (state.alerts ?? []).map((a) => {
+          if (!a || a.id !== id || a.acked) return a
+          changed = true
+          return { ...a, acked: true }
+        })
+        if (!changed) return state
+        const next = { ...state, alerts }
+        delete next._view
+        return next
       }
       default:
         return state

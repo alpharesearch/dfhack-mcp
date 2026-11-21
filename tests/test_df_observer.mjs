@@ -15,6 +15,7 @@ const pluginDir = path.join(here, '..', 'plugin', 'df-observer')
 
 const {
   FortModel, dfObserverProjection, significantChange, runAcceptance, seedTodos, parsePayload, viewOf,
+  PAYLOAD_PREFIX,
 } = await import(path.join(pluginDir, 'model.js'))
 const { buildBriefing, buildWake, estimateTokens, STANDING_RULES } = await import(path.join(pluginDir, 'brief.js'))
 const { ObserverTransport, ObserverBug, GameOffline } = await import(path.join(pluginDir, 'observer.js'))
@@ -89,7 +90,7 @@ test('config defaults and ranges', () => {
 
 test('service module exports the service-class form', () => {
   assert.equal(typeof DFObserver, 'function')
-  assert.deepEqual(DFObserver.inject, ['tools', 'agents', 'systemPrompt', 'sessionProjections', 'timer'])
+  assert.deepEqual(DFObserver.inject, ['tools', 'agents', 'systemPrompt', 'sessionProjections', 'timer', 'commands'])
   assert.equal(DFObserver.Config, Config)
   assert.equal(typeof DFObserver.prototype.panel, 'function')
   assert.equal(typeof DFObserver.prototype.ackAlert, 'function')
@@ -458,6 +459,24 @@ test('filter: default OFF, verdict parsing, filtered briefing within cap, whitel
 // ---------------------------------------------------------------------------
 // panel Remote: markers must exist on the PROTOTYPE at module load (the
 // gateway binds endpoints when the service is constructed).
+test('client path: projection wire.view publishes the panel view; /df-ack folds from command/run', async () => {
+  const unit = dfObserverProjection(z)
+  assert.ok(unit.wire?.view && unit.wire?.viewSchema, 'wire.view declared (client-visible through the snapshot)')
+  let state = unit.init()
+  const payloadLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: 5, data: { tick: 5, online: true, paused: true, alerts: [{ id: 'A9', kind: 'water', acked: false }] } })}`
+  state = unit.apply(state, { type: 'user/message', data: { content: [{ type: 'text', text: `FORT BRIEFING\n${payloadLine}` }] } })
+  const view = unit.wire.view(state)
+  assert.equal(view.tick, 5)
+  assert.equal(view.alerts[0].acked, false)
+  assert.equal(unit.wire.view(state), view, 'view is reference-stable (publication suppression)')
+  const acked = unit.apply(state, { type: 'command/run', data: { rawInput: '/df-ack A9' } })
+  assert.notEqual(acked, state, 'ack changes the folded state')
+  assert.equal(unit.wire.view(acked).alerts[0].acked, true, 'panel sees the ack')
+  assert.equal(unit.apply(acked, { type: 'command/run', data: { rawInput: '/df-ack NOPE' } }), acked, 'unknown id: same reference')
+  assert.equal(unit.apply(acked, { type: 'command/run', data: { rawInput: '/other' } }), acked, 'foreign command: same reference')
+  return 'wire.view + reference stability + /df-ack fold verified'
+})
+
 test('remote: panel/ackAlert are marked Remote before construction', async () => {
   const mod = await import(path.join(pluginDir, 'index.js'))
   const { createTypertRemoteInfo } = await import(path.join(pluginDir, 'node_modules', '@deepseek-ai', 'dsh-typert-protocol', 'lib', 'index.js'))
@@ -526,10 +545,10 @@ test('client: factory registers, apply wires slots, panel renders with token-onl
       register: (opts) => { calls.push(['register', opts.name, opts.id ?? opts.key]); return () => {} },
     },
     uiConversation: { events: { register: (def) => { calls.push(['events', def.kind, def.target]); return () => {} } } },
-    remote: { dfObserver: { panel: async () => fakeSnapshotForRender, ackAlert: async () => ({ ok: true }) } },
+    remote: { commands: { execute: async () => ({ commandId: 'c1', result: { kind: 'success' } }) } },
   }
   const plugin = factory((name) => { if (name === 'react') return fakeReactOf(); throw new Error(name) })
-  assert.equal(plugin.inject.join(','), 'slots,uiConversation,remote,remote.dfObserver,locale')
+  assert.equal(plugin.inject.join(','), 'slots,uiConversation,remote,remote.commands,locale')
   plugin.apply(ctx)
   const names = calls.map((c) => c.join(':'))
   assert.ok(names.includes('locale:dfObserver:en+zh'), 'dictionaries registered (en+zh)')
@@ -550,11 +569,11 @@ test('client: factory registers, apply wires slots, panel renders with token-onl
       register: (opts, comp) => { if (opts.name === 'conversation.input.dock') component = comp; return () => {} },
     },
     uiConversation: { events: { register: () => () => {} } },
-    remote: { dfObserver: { panel: async () => fakeSnapshotForRender, ackAlert: async () => ({ ok: true }) } },
+    remote: { commands: { execute: async () => ({ commandId: 'c1', result: { kind: 'success' } }) } },
   }
   registered.reg.factory((name) => { if (name === 'react') return fakeReactOf(); throw new Error(name) }).apply(renderCtx)
   assert.equal(typeof component, 'function', 'panel component captured')
-  const tree = component({ sessionId: 'session-1' })
+  const tree = component({ sessionId: 'session-1', useProjection: () => fakeSnapshotForRender })
   const walked = JSON.stringify(tree)
   assert.match(walked, /Fort observer/, 'panel title renders')
   assert.match(walked, /water/, 'alert row renders')

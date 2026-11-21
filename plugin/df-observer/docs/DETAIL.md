@@ -41,7 +41,10 @@ sessions instead of making the agent poll tools:
   default 260). The plugin keeps enforcing the wake whitelist, the evidence rules,
   and the read-only boundary over whatever the filter proposes; a silent filter
   falls back to the rule gate (recorded in the notes).
-- **Panel** - above the composer: game/session health line, ladder bar, NEXT,
+- **Panel** - above the composer. It renders the session's *folded projection view*
+  (the same log-derived state the model reads, published by the projection's
+  `wire.view`); its **Ack** button runs the `/df-ack <id>` session command, the same
+  words a human can type in the composer: game/session health line, ladder bar, NEXT,
   monitored boxes, to-dos with evidence, alert feed with Ack buttons, notes.
   Theme tokens only, light/dark from the host. Alert wakes also render as chat
   rows.

@@ -116,9 +116,6 @@ export const Config = z.object({
   brief_subagents: z.boolean().default(false),
   /** Quiet switches (player asks for a silent agent). */
   wake_enabled: z.boolean().default(true),
-  /** Panel refresh cadence the client half should use. */
-  panel_poll_ms: z.number().int().min(2000).default(5000),
-
   /** Filter subagent (plan §11): a plugin-owned analyst session that reads the
    * full observation payload in ITS context and answers with one compact
    * verdict; play sessions get the filtered briefing. Default OFF - measure,
@@ -178,7 +175,7 @@ function markRemotePrototype(Class, method, options) {
  * the per-agent briefing/wake state, the tools, and the panel Remote methods.
  */
 export default class DFObserver extends TypertRemoteService {
-  static inject = ['tools', 'agents', 'systemPrompt', 'sessionProjections', 'timer']
+  static inject = ['tools', 'agents', 'systemPrompt', 'sessionProjections', 'timer', 'commands']
   static Config = Config
 
   constructor(ctx, config = Config.parse({})) {
@@ -266,6 +263,27 @@ export default class DFObserver extends TypertRemoteService {
       this.disposers.clear()
       this.agents.clear()
     }, 'df-observer: agent disposers')
+
+    // ---- the panel's Ack, and the human's words, as a session command ----
+    // (practices.md/user-actions.md: one Host operation, called by the UI through
+    // `ctx.remote.commands.execute(sessionId, line, [])` and by the agent through
+    // `df_alerts({action:"ack"})` - both land on model.ackAlert.)
+    ctx.effect(() => ctx.commands.register({
+      name: 'df-ack',
+      description: 'Silence repeats of one DF observer alert until its condition clears: /df-ack <alert-id>',
+      input: { hint: '<alert-id> (from df_alerts / the observer panel)' },
+      handler: ({ agent, rawInput }) => {
+        const id = String(rawInput ?? '').trim().split(/\s+/)[0]
+        if (!id) return { kind: 'error', text: 'df-ack: give an alert id, e.g. /df-ack A12' }
+        const alert = this.model.ackAlert(id)
+        if (!alert) {
+          const known = this.model.alerts.map((a) => a.id).join(', ')
+          return { kind: 'error', text: `df-ack: no alert "${id}". Active ids: ${known || 'none'}` }
+        }
+        void agent
+        return { kind: 'success', text: `df-ack: ${alert.id} (${alert.kind}) silenced until its condition clears.` }
+      },
+    }), 'df-observer: /df-ack command')
 
     // ---- filter subagent surface (Config-gated; OFF by default) ----
     if (config.filter_enabled) this.installFilterSurface()
@@ -739,7 +757,6 @@ export default class DFObserver extends TypertRemoteService {
         briefing_max_tokens: this.config.briefing_max_tokens,
         poll_running_ms: this.config.poll_running_ms,
         poll_paused_ms: this.config.poll_paused_ms,
-        panel_poll_ms: this.config.panel_poll_ms,
         stateVersion: STATE_VERSION,
       },
       sessionFolded: !!state,
@@ -755,8 +772,9 @@ export default class DFObserver extends TypertRemoteService {
     return { ok: !!alert, id, tick: this.model.tick }
   }
 }
-
-// The panel Remote is marked at module load (the gateway reads the prototype
-// descriptor when the service is constructed, which happens on activation).
-markRemotePrototype(DFObserver, 'panel', { name: 'panel' })
-markRemotePrototype(DFObserver, 'ackAlert', { name: 'ackAlert' })
+// The panel reads the projection's `wire.view` (client-visible through the
+// session snapshot), and its Ack runs the `/df-ack` session command through the
+// shipped `remote.commands` namespace. A third-party bundle CANNOT add its own
+// namespace to the web client's `ctx.remote` face: that aggregate is compiled
+// from fixed imports (measured: `remote.dfObserver` never resolves, and a deep
+// inject path that cannot resolve aborts the whole client module row).

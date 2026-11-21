@@ -68,4 +68,3 @@
         filter_briefing_max_tokens: 260
         filter_timeout_ms: 120000
         wake_enabled: true
-        panel_poll_ms: 5000
