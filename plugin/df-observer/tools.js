@@ -246,16 +246,29 @@ function statusBody(state, scope, config) {
     return { text: lines.join('\n'), digest }
   }
   if (scope === 'boxes') {
-    return { boxes: state.boxes, digEvents: (state.digEvents ?? []).slice(0, 20), digest }
+    const lines = (state.boxes ?? []).map((b) => `elev${b.elev} x${b.box[0]}-${b.box[2]} y${b.box[1]}-${b.box[3]}: to_dig ${b.to_dig ?? 'NO DATA'} dug ${b.dug ?? 'NO DATA'} pending ${b.pending ?? 'NO DATA'}`)
+    const ev = (state.digEvents ?? []).slice(-8).map((e) => `  @tick ${e.tick} ${e.kind}: ${short(e.title ?? e.text ?? '', 100)}`)
+    return { boxes: state.boxes, digEvents: (state.digEvents ?? []).slice(0, 20), digest,
+      text: [lines.length ? lines.join('\n') : 'no box survey data this tick (NO DATA, not a fact)', ...ev].join('\n') }
   }
   if (scope === 'piles') {
-    return { piles: state.piles, digest }
+    const piles = state.piles ?? []
+    const lines = piles.map((pl) => pl.found === 1
+      ? `pile ${pl.id} x${pl.x0}-${pl.x1} y${pl.y0}-${pl.y1} elev${pl.elev}: accepts ${pl.accepts || '(nothing)'} | items ${pl.total ?? 0} | wheelbarrows ${pl.wheelbarrows ?? '?'} barrels ${pl.barrels ?? '?'} bins ${pl.bins ?? '?'}`
+      : `pile id ${pl.id}: NOT FOUND in the game (renumbered after a reload? update Config.pile_ids)`)
+    return { piles, digest, text: lines.length ? lines.join('\n') : `no pile probe rows yet (deep tick pending; Config.pile_ids ${JSON.stringify(config.pile_ids)})` }
   }
   if (scope === 'shafts') {
-    return { shafts: state.shafts, warnings: state.warnings, digest }
+    const shafts = state.shafts ?? []
+    const lines = shafts.map((s) => `shaft x${s.x} y${s.y}: aquifer ${s.aquifer_elevs?.length ? s.aquifer_elevs.join(',') : 'none'} | water ${s.water_elevs?.length ? s.water_elevs.join(',') : 'none'} | magma ${s.magma_elevs?.length ? s.magma_elevs.join(',') : 'none'}`)
+    const w = state.warnings ? `warnings: designated ${state.warnings.designated_tiles} damp ${state.warnings.damp_tiles} hot ${state.warnings.hot_tiles}` : 'warnings: NO DATA this tick'
+    return { shafts, warnings: state.warnings, digest, text: [lines.length ? lines.join('\n') : `no shaft rows this tick (Config.shafts ${JSON.stringify(config.shafts)})`, w].join('\n') }
   }
   if (scope === 'ladder') {
-    return { rungs: state.rungs, next: state.next, digest }
+    const rungs = state.rungs ?? []
+    const lines = rungs.map((r) => `${r.done ? '[x]' : '[ ]'} ${r.id}: ${short(r.title, 90)} | why: ${short(r.why ?? '', 90)} | keys: ${short(r.keys ?? '', 90)}`)
+    const nx = state.next ? `NEXT: ${state.next.id}${state.next.box ? ` at ${state.next.box}` : ''} (${short(state.next.why ?? '', 90)})` : 'NEXT: no suggestion this tick (ladder read pending)'
+    return { rungs, next: state.next, digest, text: [lines.length ? lines.join('\n') : 'no ladder read this tick (deep tick pending)', nx].join('\n') }
   }
   if (scope === 'health') {
     const lines = [
