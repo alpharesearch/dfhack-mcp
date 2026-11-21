@@ -775,3 +775,29 @@ joins the wake whitelist** - a noteworthy report (caravan arrived, fight, flood,
 "Your fortress is out of food!", a dwarf withdrawing from work) steers the play
 agent at its next step, once per report alert. Default list now
 `[water, dig_complete, dig_stalled, tile_state_lost, game_says, game_crashed, game_offline]`.
+
+## 26. The backlog loop closed: scan -> name -> watch -> verify (0.1.57 + the route)
+
+`deploy.sh server` restarted the DFHack MCP server with the designation route
+(channels verified: poll 200, read 200, MCP endpoint answering). The scan answers
+in the live game state:
+
+```
+elev22/23/24: x43-44 y121-122 4 tiles each   <- exactly the 12 DAMP designations A1 quotes
+elev38/39/40: x43-44 y121-122 4 tiles each
+elev41:       x38-48 y113-122 83 tiles
+total designated: 107
+```
+
+The filter put it in a headline - "107 designated tiles, 83 of them at elev41
+x38-48 y113-122 - outside every watched box, so progress there is unmonitored" -
+and the fix is the plugin's own machinery: to-do **#165** registered with that box
+(`tiles_progress elev41 min_dug 83`), which adds it to the survey list, so its
+`to_dig/dug/pending` become proven, and completion/stall/tile-state rules apply
+to it like any face.
+
+Three bugs in the first scan implementation, each found by measurement on a
+scratch server (:8006) before touching the live one: memo key missing `z` (same
+cluster on every elevation), block coordinates multiplied by 16 (`map_x` is
+already a tile origin), and an inverted adjacency test that split a 4-tile face
+into four 1-tile clusters.
