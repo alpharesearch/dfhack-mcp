@@ -15,7 +15,7 @@ import time
 import urllib.request
 
 BASE = "http://127.0.0.1:8000"
-Z_OFFSET = 128
+Z_OFFSET = 129   # in-game Elevation = z - 129
 
 
 def lua(expr, timeout=90):

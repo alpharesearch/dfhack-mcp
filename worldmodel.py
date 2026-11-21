@@ -38,12 +38,13 @@ import asyncio
 import re
 from collections import Counter, defaultdict, deque
 
-GAME_Z_OFFSET = 128
-# The player's map panel prints "Elevation N". Measured against the player's own report:
-# the long dig line at RPC z=162 (our elev 34) shows "Elevation 33" in-game. So the
-# player-facing number is z - 129 - ONE LESS than our elevation. Every projection must
-# print both, or agent and player talk past each other about coordinates.
-UI_Z_OFFSET = 129
+# ONE ELEVATION UNIT: the number in the player's map panel.
+# Measured on this save: RPC z=162 shows as "Elevation 33", z=167 as "Elevation 38", so
+# in-game Elevation = z - 129. Everything the layer publishes - parameters, band rows,
+# hazards, depths, dig boxes, script arguments - uses that number. The conversion lives
+# here and nowhere else:   z = elev + GAME_Z_OFFSET   (elev is always the in-game number)
+GAME_Z_OFFSET = 129
+UI_Z_OFFSET = GAME_Z_OFFSET          # alias so older call sites read correctly
 
 
 def dec_name(b, it):
@@ -52,8 +53,10 @@ def dec_name(b, it):
 
 
 def ui_elev(z: int) -> int:
-    """The elevation number the player sees in the map panel for an RPC z."""
-    return int(z) - UI_Z_OFFSET          # rpc_z = elevation + GAME_Z_OFFSET on this save
+    """The in-game Elevation for an RPC z - the same number the layer takes as input."""
+    return int(z) - UI_Z_OFFSET
+
+
 MAX_Z_WINDOW = 12            # reply-size guard: 12 z-levels of full map is ~8.6 MB
 CACHE_TTL_S = 20.0           # seconds a fetched z-chunk is trusted
 CHARS_PER_TOKEN = 4          # rough local-tokenizer estimate
@@ -845,15 +848,16 @@ def zone_lines(levels: list[LevelModel], b: Budget) -> list[str]:
     # `ui` is the number in the player's map panel ("Elevation N"), measured from the
     # player's own report: RPC z=162 shows as Elevation 33. Print it so agent and player
     # never talk past each other about which level they mean.
-    lines = [f"{'z':>4} {'elev':>4} {'ui':>3} {'blk':>3} | {'wall':>5} {'floor':>5} {'open':>5} {'tree':>4} {'water':>5} {'magma':>5} "
+    # elev below IS the in-game Elevation panel number (z - 129): one unit, no translation.
+    lines = [f"{'z':>4} {'elev':>4} {'blk':>3} | {'wall':>5} {'floor':>5} {'open':>5} {'tree':>4} {'water':>5} {'magma':>5} "
              f"| {'dig':>4} {'bld':>3} {'item':>5} | regions"]
-    lines.append("-" * 100)
+    lines.append("-" * 96)
     for lv in levels:
         c = lv.census
         wall = c["wall"] + c["smooth_wall"] + c["fortification"] + c["pillar"] + c["boulder"]
         floor = c["floor"] + c["smooth_floor"] + c["constructed"] + c["soil"] + c["grass"] + c["pebbles"] + c["track"]
         open_ = c["open"]
-        row = (f"{lv.z:4d} {lv.elev:4d} {ui_elev(lv.z):3d} {lv.block_count:3d} | {wall:5d} {floor:5d} {open_:5d} "
+        row = (f"{lv.z:4d} {lv.elev:4d} {lv.block_count:3d} | {wall:5d} {floor:5d} {open_:5d} "
                f"{c['tree_cap'] + c['tree_trunk'] + c['tree_branch']:4d} {lv.water_tiles:5d} {lv.magma_tiles:5d} "
                f"| {len(lv.designations):4d} {len(lv.buildings):3d} {sum(lv.item_rollup.values()):5d} "
                f"| {len(lv.regions)}")
@@ -1554,7 +1558,7 @@ class WorldModel:
                            "designation is accepted and queues; re-check depth after the reveal")
             else:
                 verdict = f"probe here: solid, depth {d}"
-            out.append({"elev": e, "ui_elev": ui_elev(e + GAME_Z_OFFSET), "glyph": g,
+            out.append({"elev": e, "in_game_elev": ui_elev(e + GAME_Z_OFFSET), "glyph": g,
                         "depth": d, "verdict": verdict})
         return out
 
@@ -1703,7 +1707,7 @@ class WorldModel:
                 cells.append("?" if gv is None else gv)
             rows.append(f"{e:>3} |" + "".join(cells))
         ruler = "    |" + "".join(str((a % 10)) for a in range(a0, a1 + 1))
-        head = f"section axis={axis} at={at} span {a0}-{a1} elev {e0}-{e1} (add 1 for the in-game Elevation panel number)\n{ruler}"
+        head = f"section axis={axis} at={at} span {a0}-{a1} in-game elev {e0}-{e1}\n{ruler}"
         return {"head": head, "rows": rows}
 
     async def tile_at(self, x: int, y: int, elev: int, force: bool = False) -> dict:

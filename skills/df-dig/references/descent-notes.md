@@ -18,16 +18,16 @@ proceeded. Expect a stone stockpile and a mason, not a quarry designation.
 
 ## 11. Reading strata from the dig (geology you can trust)
 - Wall/floor **names are the stratum**: `StoneWall`/`StoneFloor*` = common stone, `MineralWall`/
-  `MineralStairUD` = **mineral vein band** (our shaft passed into minerals at elev 36 - that
+  `MineralStairUD` = **mineral vein band** (our shaft passed into minerals at in-game 35 - that
   is your future smelting feed), `SoilFloor*`/`GrassDryFloor*` = soil/grass (farm plots),
   `MFloor*`/`MineralFloor*` = mineral floor.
 - Material counts after digging tell you the yield; `BOULDER/SANDSTONE`-type rollups in
   `world-objects` are the boulder ledger.
-- The **aquifer band** is a stratum fact (elev 33-34 here), the **surface elevation** is a
+- The **aquifer band** is a stratum fact (in-game 32-34 here), the **surface elevation** is a
   per-column fact (`surface_map`), and the two together decide where a legal tunnel level is.
 
 ## 12. Water work (the flood you must plan around)
-- Rivers/lakes appear as standing `water` at the surface (this map: elev 35-36, x54-186 -
+- Rivers/lakes appear as standing `water` at the surface (this map: in-game 34-36, x54-186 -
   **east of** our fort; tunnelling west is safe, tunnelling east into it is not).
 - `hazards` counts a tile DAMP when its column carries aquifer or water at/above the dig
   level; that is the game's designation-time warning, tile by tile.
@@ -60,7 +60,7 @@ the new box, because the dig revealed ground you can now plan on.
 
 ## 15. Learnings from the 9-level descent (measured this run)
 - **Data absence is not open air.** My own layer read `band.get(...).get(e, " ")`, so a tile
-  with no cached data reported as a void: the descent stopped at elev 31 announcing a cavern
+  with no cached data reported as a void: the descent stopped at in-game 30 announcing a cavern
   that did not exist (the dwarves had dug `MineralStairUD` there). Rule: **unknown is its own
   state**; any default that turns "no data" into a positive fact is a bug that invents world
   features. Same class as the earlier traps (count 0 = dug, zero walls = tunnel).
@@ -69,15 +69,15 @@ the new box, because the dig revealed ground you can now plan on.
 - **Up-down stairs advance the shaft by one level per designation:** digging an
   `UP_DOWN_STAIR_DIG` at level L yields the stair at L **and** the corresponding stair tile on
   L-1, so the level below often shows stairs before you order it. Tile truth per level:
-  `StoneStairUD` / `MineralStairUD` (the vein band at elev 36 gave mineral stairs).
-- **Crossing the aquifer (elev 33-34 here) has been dry so far** - water 0 at every stair tile
+  `StoneStairUD` / `MineralStairUD` (the vein band at in-game 35 gave mineral stairs).
+- **Crossing the aquifer (in-game 32-34 here) has been dry so far** - water 0 at every stair tile
   after the breach. That is not a promise: `column_water()` checks the shaft column before and
   after each level and **exit 4 = WET, stop** (the player's rule: *just stop when wet*). Log
   the damp *flags*, stop on *water*.
 - Descent rates: 2 stair tiles per level, ~15-30 s per level with the crew on it - 9 levels in
   a few minutes. Stairwells are cheap; rooms are the expensive part.
 
-## Mining output is a logistics problem, not a bonus (measured at elev 36, in-game 35)
+## Mining output is a logistics problem, not a bonus (measured at in-game 35, in-game 35)
 A 110-room dig produced, in place on the dig site:
 `BOULDER/GYPSUM 15, MAGNETITE 7, LIMESTONE 6, SANDSTONE 5, GALENA 3, BORAX 2, COAL 1,
 ROUGH/PINK TOURMALINE 5, ROUGH/SARD 3` and ladder `stone 91`. Consequences:
@@ -90,7 +90,7 @@ ROUGH/PINK TOURMALINE 5, ROUGH/SARD 3` and ladder `stone 91`. Consequences:
    stone stockpile accepts it.
 3. **Vein names are the economy, read from the tile/item names**: `MAGNETITE` = iron ore,
    `COAL_BITUMINOUS` = fuel, `GALENA` = lead, `BORAX`, `GYPSUM` = flux, gem `ROUGH/*` =
-   jewelry/cutting. Our shaft passed into the mineral band at elev 36 (`MineralStairUD`) and
+   jewelry/cutting. Our shaft passed into the mineral band at in-game 35 (`MineralStairUD`) and
    that band is what produced these - the smelter chain (furnace + fuel + flux) becomes
    reachable from here.
 4. **Gem rough is loose and gets lost in miasma/hauling** - a gem stockpile is cheap insurance.
@@ -100,7 +100,7 @@ ROUGH/PINK TOURMALINE 5, ROUGH/SARD 3` and ladder `stone 91`. Consequences:
    crew can finish, and do not panic at a large pending count: it is a queue, not a failure.
 
 ## Order space, not tiles: subtract what is already dug (measured)
-My "110 room grid" at elev 36 (in-game 35) overlapped **the room and tunnel I had already
+My "110 room grid" at in-game 35 (in-game 35) overlapped **the room and tunnel I had already
 dug on that same level**: of 2,240 grid tiles, **51 were already floor/stair** and 2,189 were
 rock. Ordering a grid blindly therefore queued 51 useless dig designations (cleared after the
 fact with NO_DIG) and inflated the room count.
@@ -152,9 +152,9 @@ elevation. Rules:
 
 ## 8. Geometry rules of thumb (measured on this world)
 - Surface steps down as a slope: read `cross-section` - at y=120 the surface is elev 43 at
-  x40, 41 at x52, 40 at x56, **39 at x61**, 38 at x65, 37 at x69. Digging elev 39 near x61
+  x40, 41 at x52, 40 at x56, **39 at x61**, 38 at x65, 37 at x69. Digging in-game 38 near x61
   is a surface cut; the same elev at x44 has 4 levels of rock over it.
-- Aquifer band: elev 33-34 (12,703 tiles at 34). Digging **above** it is fine, **into** it floods.
+- Aquifer band: in-game 32-34 (12,703 tiles at 34). Digging **above** it is fine, **into** it floods.
 - Wagon footprint blocks tunnelling: the wagon occupies `x45-49, y118-122`, and the elev-39
   corridor runs through it. Plan the entrance around the wagon, not through it.
 - Reachability is ours to compute (`reach-map`, `dig_reachable`): `getWalkableGroup` is
@@ -165,12 +165,12 @@ elevation. Rules:
 |---|---|---|
 | 36 | 37 | soil/grass layer, depth 2-3 under surface 39-40 -> **farm level** (5x5 soil room) |
 | 35 | 36 | dry stone above the aquifer, mineral vein band -> **bedrooms/dining/offices** (the grid) |
-| 34-33 | 35-34 | **aquifer band - NO-DIG.** This is the barrier: 12,703 aquifer tiles at elev 34, water bodies east. Rooms here flood. |
+| 34-33 | 35-34 | **aquifer band - NO-DIG.** This is the barrier: 12,703 aquifer tiles at in-game 33, water bodies east. Rooms here flood. |
 | 31-27 | 32-28 | below the band, dry (damp *flags* only, no water) -> **industry stack**: storage, smelter (magnetite+coal are in the veins), workshops |
 | 25 | 26 | deep, and the shaft column reads **aquifer at 25** - keep small, plan drainage |
 
 ```
-x53-60 surface 41 | x61-67 surface 39 | x68-72 surface 38 | x73-191 surface 37 (plain -> edge)
+x53-60 surface 40 | x61-67 surface 38 | x68-72 surface 37 | x73-191 surface 36 (plain -> edge)
 ```
 
 Measured on this fort, the payoff: the wagon road from the depot (in-game 38) needs **no
@@ -183,7 +183,7 @@ A construction I queued on an already-walkable floor was removed as wasted labou
 Method, in order:
 1. **Read the surface along the intended line** (`surface_map` per row) - elevations, per column.
 2. **The route runs at the surface elevation.** Flat runs at the same elevation need digging
-   **only where the tile is rock at that elevation** - here x50-67 at elev 39 needed **0 tiles**.
+   **only where the tile is rock at that elevation** - here x50-67 at in-game 38 needed **0 tiles**.
 3. **Every 1-level step in the profile is one 3-wide ramp cut** at the lower elevation: x68
    (39->38) and x73 (38->37) = `RAMP_DIG` 3 tiles each, 6 tiles total for the whole road.
 4. A 2-level cliff (x61: 41->39) is not on the route - ignore it; the route travels *at* 39.
@@ -194,10 +194,10 @@ designate over stuff.
 ## A ramp occupies two levels (measured on the wagon road)
 Per-tile profile east of the depot, three rows y119/120/121:
 ```
- elev 39 (in-game 38):  .........^^^     x58-66 floors, x67-69 RampTop
- elev 38 (in-game 37):  .........^^^     same columns read as floors + RampTop
- elev 37 (in-game 36):  #########///^^^  walls x58-66, ramp faces x67-69, floors x70-72, ramp x73
- elev 36 (in-game 35):  ##############/.......  walls to x71, ramp x72, plain from x73
+ in-game 38 (in-game 38):  .........^^^     x58-66 floors, x67-69 RampTop
+ in-game 37 (in-game 37):  .........^^^     same columns read as floors + RampTop
+ in-game 36 (in-game 36):  #########///^^^  walls x58-66, ramp faces x67-69, floors x70-72, ramp x73
+ in-game 35 (in-game 35):  ##############/.......  walls to x71, ramp x72, plain from x73
 ```
 The identical rows at 39 and 38 are not a bug: a ramp is a **two-level structure** - `^`
 (RampTop) on the upper level and `/` (ramp face) on the lower. So when you plan a route, the

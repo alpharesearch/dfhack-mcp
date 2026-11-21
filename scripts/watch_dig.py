@@ -10,7 +10,7 @@ completion notice when it exits.
 
 Usage:
   ./scripts/watch_dig.py                      # whole fort band, exits when nothing pending
-  ./scripts/watch_dig.py --elev 39 --box 84,158,96,160 --every 15 --timeout 1800
+  ./scripts/watch_dig.py --elev 38 --box 84,158,96,160 --every 15 --timeout 1800   # in-game Elevation
   ./scripts/watch_dig.py --markers            # also watch for DSH announcement markers in reports
 
 Exit codes: 0 done, 2 timed out, 1 connection/HTTP failure.

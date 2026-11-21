@@ -40,7 +40,7 @@ def test_unnamed_building_is_rejected_before_any_lua():
 
 
 def test_elevation_is_converted_to_rpc_z_internally():
-    """The model speaks elevations; Lua needs z = elev + 128. Templates must convert."""
+    """The model speaks in-game Elevations; Lua needs z = elev + GAME_Z_OFFSET (=129). Templates must convert."""
     import inspect
     src = inspect.getsource(LO.place_building)
     assert "GAME_Z_OFFSET" in src and "z = int(elev) + GAME_Z_OFFSET" in src
@@ -71,9 +71,9 @@ def test_place_template_carries_the_resolved_ids_and_coords():
     finally:
         LO._lua = real
     e = captured["expr"]
-    assert "type=0" in e and "x=113" in e and "y=31" in e and "z=165" in e
+    assert "type=0" in e and "x=113" in e and "y=31" in e and "z=166" in e   # in-game 37 + 129
     assert "constructBuilding" in e and "completeBuild" in e
-    assert "findAtTile(113, 31, 165)" in e                      # verification is inlined
+    assert "findAtTile(113, 31, 166)" in e   # in-game 37 + 129                      # verification is inlined
     assert res["game_type"] == "building_chainst" and res["building_id"] == 1234
     assert res["at"] == [113, 31, 37]                            # elevation echoed back
 

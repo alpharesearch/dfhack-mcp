@@ -23,7 +23,7 @@ import time
 import urllib.request
 
 BASE = "http://127.0.0.1:8000"
-Z_OFF = 128
+Z_OFF = 129   # in-game Elevation = z - 129 (the map panel number)
 
 
 def get(path, params=None, timeout=120):

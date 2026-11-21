@@ -9,7 +9,7 @@ elevation and reports each step, so it can be a background job whose completion 
 notification.
 
 Usage:
-  ./scripts/sink_shaft.py --x 50 --y 123 --from 39 --to 36 [--width 2] [--every 15] [--per-level 1200]
+  ./scripts/sink_shaft.py --x 50 --y 123 --from 38 --to 25 [--width 2] [--every 15] [--per-level 1200]
 Exit: 0 target reached, 2 a level timed out, 3 a level was refused (damp/fog/open), 1 read failure.
 """
 import argparse
@@ -19,7 +19,7 @@ import time
 import urllib.request
 
 BASE = "http://127.0.0.1:8000"
-Z_OFF = 128
+Z_OFF = 129   # in-game Elevation = z - 129 (the map panel number)
 
 
 def get(path, params=None, timeout=120):

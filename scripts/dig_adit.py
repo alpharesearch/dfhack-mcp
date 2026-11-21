@@ -24,7 +24,7 @@ import time
 import urllib.request
 
 BASE = "http://127.0.0.1:8000"
-Z_OFF = 128
+Z_OFF = 129   # in-game Elevation = z - 129 (the map panel number)
 STEP = {"w": (-1, 0), "e": (1, 0), "n": (0, -1), "s": (0, 1)}
 
 

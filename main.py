@@ -183,7 +183,7 @@ for i in range(10):
 DIG_DESIGNATIONS = {v.name: v.number for v in
     DigCommand.DESCRIPTOR.fields_by_name['designation'].enum_type.values}
 
-GAME_Z_OFFSET = 128  # game elevation = rpc_z - GAME_Z_OFFSET (this save)
+GAME_Z_OFFSET = WM.GAME_Z_OFFSET   # 129: in-game Elevation = z - 129 (one unit, one source)
 
 # The preprocessing layer (see worldmodel.py). One instance per process: it owns the
 # decode tables (tiletype/item/material/building/profession names), the z-chunk block
@@ -627,14 +627,14 @@ async def look(e0: int = Query(-999, description="start game elevation; omit for
     return await world.look(max_tokens=max_tokens, with_legend=with_legend, e0=e0, e1=e1)
 
 @app.get("/world-zone", operation_id="world_zone")
-async def world_zone(e0: int = Query(..., description="start game elevation"),
+async def world_zone(e0: int = Query(..., description="start in-game Elevation"),
                      e1: int = Query(..., description="end game elevation (max 12 levels apart)"),
                      max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS)):
     """One compact line per elevation: block count, wall/floor/open/tree/water/magma tile counts, pending dig count, building count, item count, region count. ~60 tokens per elevation. Use to pick where to look closer."""
     return await world.zone(e0, e1, max_tokens=max_tokens)
 
 @app.get("/world-map", operation_id="world_map")
-async def world_map(e: int = Query(..., description="game elevation"),
+async def world_map(e: int = Query(..., description="in-game Elevation"),
                     x0: int = Query(...), x1: int = Query(...),
                     y0: int = Query(...), y1: int = Query(...),
                     rle: bool = Query(True, description="run-length encode flat rows"),
@@ -645,8 +645,8 @@ async def world_map(e: int = Query(..., description="game elevation"),
                             with_legend=with_legend)
 
 @app.get("/world-objects", operation_id="world_objects")
-async def world_objects(e0: int = Query(..., description="start game elevation"),
-                        e1: int = Query(..., description="end game elevation"),
+async def world_objects(e0: int = Query(..., description="start in-game Elevation"),
+                        e1: int = Query(..., description="end in-game Elevation"),
                         max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS)):
     """Everything actionable and nothing else: dig designations clustered into rectangles with kinds, buildings with names and footprints, item wealth rolled up by type/material, and named walkable regions. This is the planning view - the whole active fort band fits in ~1,000 tokens."""
     return await world.objects(e0, e1, max_tokens=max_tokens)
@@ -781,7 +781,7 @@ async def remove_building(request: Request):
 
 @app.get("/tile-at", operation_id="tile_at")
 async def tile_at(x: int = Query(...), y: int = Query(...),
-                  elev: int = Query(..., description="game elevation")):
+                  elev: int = Query(..., description="in-game Elevation (the map panel number)")):
     """Everything that matters about ONE tile, read from the block cache: tiletype + decoded name + glyph class, water/magma, hidden, dig designation, construction material, items on it, and any building whose footprint covers it. Use it to validate a placement site before spending a build call (water and walls reject buildings)."""
     res = await world.tile_at(x, y, elev)
     # RFR is not a reliable source for freshly created buildings (measured), so the
@@ -794,7 +794,7 @@ async def tile_at(x: int = Query(...), y: int = Query(...),
 
 @app.get("/building-at", operation_id="building_at")
 async def building_at(x: int = Query(...), y: int = Query(...),
-                      elev: int = Query(..., description="game elevation")):
+                      elev: int = Query(..., description="in-game Elevation (the map panel number)")):
     """What building (if any) is on one tile, read straight from game state via findAtTile - use this to confirm a placement, not the map tools."""
     try:
         return await LO.building_at(x, y, elev)
@@ -876,7 +876,7 @@ async def warnings(e0: int = Query(None), e1: int = Query(None),
     for bx in w["hot_boxes"]:
         lines.append(f"  HOT x{bx['x0']}-{bx['x1']} y{bx['y0']}-{bx['y1']} elev{bx['elev0']}-{bx['elev1']} ({bx['tiles']} tiles) - magma below")
     for x, y, e, aq, wa in w["samples"]:
-        lines.append(f"    x{x},y{y},elev{e} (ui {e-1}) aquifer{aq} water{wa}")
+        lines.append(f"    x{x},y{y},elev{e}  aquifer{aq} water{wa}")
     if not w["damp_tiles"] and not w["hot_tiles"]:
         lines.append("  no damp/hot designations - the current dig is safe")
     for l in lines:
@@ -892,7 +892,7 @@ async def wagon_path(x: int = Query(...), y: int = Query(...), elev: int = Query
 async def dig_reachable(x: int = Query(...), y: int = Query(...), elev: int = Query(...),
                         from_x: int = Query(..., description="a dwarf-occupied tile, e.g. the wagon"),
                         from_y: int = Query(...),
-                        from_elev: int = Query(..., description="GAME elevation (in-game panel number + 1)")):
+                        from_elev: int = Query(..., description="an in-game Elevation, e.g. the wagon's")):
     """Can a dwarf actually work this tile? There is NO connectivity oracle on this RPC surface (measured: getWalkableGroup is uncallable, canWalkBetween throws for adjacent stair tiles), so the layer computes a 3D walk graph over explored tiles with stair/ramp z-links. A designation with no walkable neighbour in the dwarves' component is CANCELLED SILENTLY by the game - run this before ordering a dig, and order a band middle-first so each dug tile becomes the access point for the next."""
     return await world.dig_reachable(x, y, elev, from_x, from_y, from_elev)
 
@@ -924,9 +924,9 @@ async def probe_plan(x: int = Query(...), y: int = Query(...),
     rows = await world.probe_plan(x, y, elev0, elev1, min_depth=min_depth)
     b = WM.Budget(1500)
     lines = [f"probe plan at x{x},y{y}, elevations {elev1} down to {elev0} "
-             f"(ui = in-game Elevation panel number)"]
+             f"(all elevations are in-game panel numbers)"]
     for r in rows:
-        lines.append(f"  elev{r['elev']} (ui {r['ui_elev']}) [{r['glyph']}] depth={r['depth']} - {r['verdict']}")
+        lines.append(f"  elev{r['elev']}  [{r['glyph']}] depth={r['depth']} - {r['verdict']}")
     for l in lines:
         b.spend(len(l) + 1)
     return WM.finish(lines, b)
@@ -934,13 +934,13 @@ async def probe_plan(x: int = Query(...), y: int = Query(...),
 @app.get("/hazards", operation_id="hazards")
 async def hazards(x0: int = Query(...), y0: int = Query(...),
                   x1: int = Query(...), y1: int = Query(...),
-                  elev: int = Query(..., description="the elevation you plan to dig at"),
+                  elev: int = Query(..., description="in-game Elevation you plan to dig at"),
                   max_tokens: int = Query(2000)):
     """DAMP and HOT for a rectangle at a dig elevation, the way the game warns a player. damp = aquifer at/below the dig level in that column, or standing water; hot = magma within range below. Digging into an aquifer floods the fort; digging into the magma crust brings lava. Reports counts, the worst tiles, and the aquifer/magma elevations so you can route around, under, or over it."""
     z0, z1 = await world.fort_band()
     hz = await world.hazard_map(z0 - WM.GAME_Z_OFFSET, z1 - WM.GAME_Z_OFFSET)
     b = WM.Budget(max_tokens)
-    lines = [f"hazards at elev {elev} (in-game Elevation {elev - 1}), x{x0}-{x1} y{y0}-{y1}"]
+    lines = [f"hazards at elev {elev} x{x0}-{x1} y{y0}-{y1}"]
     damp = hot = wet = clean = 0
     worst = []
     for y in range(y0, y1 + 1):
@@ -978,7 +978,7 @@ async def survey(elev: int = Query(...), x0: int = Query(...), y0: int = Query(.
     return await world.survey(elev, x0, y0, x1, y1)
 
 @app.get("/depth-profile", operation_id="depth_profile")
-async def depth_profile(elev: int = Query(..., description="the elevation you plan to dig at"),
+async def depth_profile(elev: int = Query(..., description="in-game Elevation you plan to dig at"),
                         x0: int = Query(...), x1: int = Query(...),
                         y0: int = Query(...), y1: int = Query(...),
                         min_tokens: int = Query(0), max_tokens: int = Query(2000)):
@@ -1000,7 +1000,7 @@ async def depth_profile(elev: int = Query(..., description="the elevation you pl
                 shallow += 1
             else:
                 deep += 1
-    lines = [f"depth under surface at elev {elev} (in-game Elevation {elev - 1}), "
+    lines = [f"depth under surface at elev {elev} "
              f"x{x0}-{x1} y{y0}-{y1}",
              f"  tiles: deep(>=2)={deep} shallow(<2)={shallow} unexplored={unknown}"]
     xstep = max(1, (x1 - x0 + 1) // 6)

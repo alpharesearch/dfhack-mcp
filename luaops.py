@@ -39,7 +39,7 @@ from dfhack_client_python.dfhack import RunCommand
 from dfhack_client_python.dfhack_remote import DFHackError, DFHackTransportError, drain_replies
 from dfhack_client_python.py_export.CoreProtocol_pb2 import CoreRunCommandRequest
 
-GAME_Z_OFFSET = 128
+from worldmodel import GAME_Z_OFFSET   # 129: in-game Elevation = z - 129 (one unit, one source)
 
 # Friendly names -> DFHack building_type ids, cross-checked against RFR's def list.
 # A name not in RFR defs is rejected before any Lua is composed.

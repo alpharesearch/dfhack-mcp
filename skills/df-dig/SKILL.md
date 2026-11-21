@@ -12,16 +12,17 @@ metadata:
 A tunnel is defined by **what is above it**. Dig where there is no rock over you and you
 have cut a trench on the hillside, not a tunnel. Everything below is measured, not folklore.
 
-## 0. Speak the player's elevation
-RPC `z`, our `elev = z - 128`, and the in-game panel number **`ui = z - 129`** differ by one.
-`elev 36` is **in-game Elevation 35**. Every tool prints both; when talking to a human, use
-the in-game number.
+## 0. One elevation unit: the number in your map panel
+The in-game **Elevation** panel number is the unit for everything - tool parameters, band
+tables, hazards, depths, dig boxes, script arguments. Internally the layer converts once:
+`z = elev + 129` (measured on this save: z167 shows as "Elevation 38"). Never report a second
+kind of elevation number; if you see "elev" in this repo it means the panel number.
 
 ## 1. The three gates before any designation
 | Gate | Tool | Rule |
 |---|---|---|
 | **Mountain on top** | `depth-profile` / `overburden` | every tile `depth >= 2` under its **local** surface. Depth 0 = trench, 1 = shallow |
-| **Damp** | `hazards` | no aquifer or standing water in the column **at/above** the dig level. Aquifers flood the works; this world's band is elev 33-34 |
+| **Damp** | `hazards` | no aquifer or standing water in the column **at/above** the dig level. Aquifers flood the works; this world's band is in-game 32-34 |
 | **Hot** | `hazards` + `magma-depth` | magma below. Worldgen first: `getGlobalInitFeature` volcano flags (this map: none). Tile scans see **explored tiles only** - "no magma found" in fog proves nothing, so `magma-depth` reports `scanned_to` |
 
 Roof rule: **fog above is normal** inside a mountain (the player's own room has fog over it).
@@ -72,7 +73,7 @@ ladder rung is literally *"Stairs connecting the levels"*. So:
 - **Dig it down to the level you intend to work on, and finish it, BEFORE ordering the room
   complex on that level.** Access first is not only about a 3-wide band's flanks (§5) - it is
   the order of the whole plan. I got this backwards: I designated a 975-tile, 50-room complex
-  at elev 36 and only then *started* sinking the shaft to it, and the complex had to be
+  at in-game 35 and only then *started* sinking the shaft to it, and the complex had to be
   cleared. A plan whose access is unfinished is not a plan.
 - One level at a time when the map is fog (designate, dig, the level below is revealed,
   designate, ...). `scripts/sink_shaft.py` runs exactly that loop and stops with a reason if
@@ -80,9 +81,9 @@ ladder rung is literally *"Stairs connecting the levels"*. So:
   elevation**; killing it mid-shaft leaves a stairwell that ends in the middle of the
   mountain, which is worse than no stairwell.
 - Each stair designation is per-level: `UP_DOWN_STAIR_DIG` for the middle levels. Sending
-  stairs for one level only (2 tiles at elev 36) buys nothing until the levels below it are
+  stairs for one level only (2 tiles at in-game 35) buys nothing until the levels below it are
   dug too.
-- Water rule when the shaft crosses the aquifer band (elev 33-34 here): water follows the
+- Water rule when the shaft crosses the aquifer band (in-game 32-34 here): water follows the
   shaft down. Plan the drain (cistern/channel above the working level, sealed stairwell,
   pumps) **before** the shaft is opened through the band - this is the flood the game's
   "damp" warning is telling you about.
@@ -140,9 +141,8 @@ My first plans used 1-tile walls - the player's verdict was right: **not enough 
 - **2 tiles of wall minimum** between a room and a hall, and between adjacent rooms. 1-tile
   walls are weak (they read as thin as a doorframe), give no privacy, no support, and no space
   for a door + frame.
-- **Wall rows between room rows: use the pitch.** Rooms 4 tall + **2+ wall rows** = pitch >= 6.
-  My bedroom grid went from pitch 5 (1 wall row, 1020 tiles) to pitch 10 - 1,020 designated
-  tiles were simply given back to the mountain and the level reads better for it.
+- **Wall rows between room rows: pitch >= 6** (4 tall rooms + 2+ wall rows). My bedroom grid
+  went from pitch 5 to pitch 10, giving 1,020 tiles back to the mountain.
 - **Wall columns between bands**: 2 columns, not 1 (bands at x36-39 and x42-45, hall at y123;
   x40-41 stay wall).
 - **Openings stay 1 tile and must reach the hall through the whole wall** - a passage that stops
@@ -160,11 +160,11 @@ My first plans used 1-tile walls - the player's verdict was right: **not enough 
 
 ## 18. A wagon road follows the surface - the hill *is* the road
 Wagons refuse stairs, so a depot needs a 3-wide ramped route to the map edge. My first plan
-tunnelled a corridor down through elev 38/37 - the player's verdict: *not how DF works; a few
+tunnelled a corridor down through in-game 37/37 - the player's verdict: *not how DF works; a few
 ramps outside and the hill connects to the plain that connects to the map edge.* The measured
-surface profile east of the depot (elev 39 = in-game 38, y=120) says why:
+surface profile east of the depot (in-game 38, y=120) says why:
 
-Measured profile (see references): x53-60=41, x61-67=39, x68-72=38, x73-191=37.
+Measured profile: the hill steps 38 -> 37 -> 36 east of the depot (references has it).
 
 
 Method and the measured profile: [references/descent-notes.md](references/descent-notes.md).
