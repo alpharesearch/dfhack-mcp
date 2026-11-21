@@ -984,6 +984,26 @@ def observe_pile_lua(pile_ids: list[int]) -> str:
     return OBSERVE_PILE_LUA_TEMPLATE.replace("__IDS__", ids).strip()
 
 
+OBSERVE_PICKS_LUA = """
+local n = 0
+for _, it in ipairs(df.global.world.items.other.IN_PLAY) do
+  local ok, nm = pcall(function() return it:name() end)
+  if ok and nm and string.find(string.lower(nm), "pick") then n = n + 1 end
+end
+print("PICKS " .. n)
+"""
+
+
+def observe_parse_picks(out: str):
+    for line in out.splitlines():
+        if line.strip().startswith("PICKS "):
+            try:
+                return int(line.split()[1])
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
 def observe_parse_piles(out: str) -> dict:
     """`PILE 12 id=12 found=1 x0=.. k=v ...` lines -> {id: {k: v}} (ints where numeric)."""
     piles: dict = {}
@@ -1216,6 +1236,16 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
     else:
         out["shafts"] = []
         notes.append("no shafts requested: monitored columns not checked")
+
+    picks = None
+    if req.get("picks", True):
+        try:
+            picks = observe_parse_picks(await LO._lua(OBSERVE_PICKS_LUA, settle=OBSERVE_LUA_SETTLE))
+        except LO.LuaOpError as e:
+            notes.append(f"picks probe unavailable: {e}")
+    out["picks"] = picks
+    if picks is None:
+        notes.append("picks probe produced no number: pick count UNKNOWN (not 0)")
 
     pile_ids = [int(i) for i in req.get("pile_ids", [])[:16]]
     if pile_ids:

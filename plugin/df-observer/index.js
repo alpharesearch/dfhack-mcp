@@ -103,7 +103,7 @@ export const Config = z.object({
 
   /** Overload signalling thresholds (plan §9.2). */
   overload_alerts: z.number().int().min(1).default(6),
-  overload_todos: z.number().int().min(1).default(12),
+  overload_todos: z.number().int().min(1).default(20),
   /** Stall: designations drained with no dug change for N consecutive ticks. */
   stall_ticks: z.number().int().min(2).default(4),
   /** A pile this full on a small area is reported as full. */

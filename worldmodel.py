@@ -2168,22 +2168,54 @@ class FortFacts:
         return self.count_built(*keywords) > 0
 
 
+def fort_center(facts: FortFacts) -> tuple[int, int, int] | None:
+    """The modal citizen tile (x, y, elev): the fort is where the dwarves STAND.
+    Anchoring placement here is the rule PLAN-TOOLS.md forced on us - the first
+    depot failed because it sat in a huge region no dwarf could reach.
+    """
+    from collections import Counter
+    c = Counter((u["x"] // 8, u["y"] // 8, u["elev"]) for u in facts.units
+               if not u["hostile"] and not u.get("caged"))
+    if not c:
+        return None
+    (bx, by, elev) = c.most_common(1)[0][0]
+    return bx * 8 + 4, by * 8 + 4, elev
+
+
 def suggest_room(facts: FortFacts, w: int, h: int, prefer_elev: int | None = None) -> dict | None:
-    """A concrete rectangle inside the biggest walkable region, so the next step names
-    coordinates instead of making the model guess them."""
+    """A concrete rectangle for the next step, anchored at the FORT CENTRE and
+    centred inside the walkable region that contains it - not at the region's
+    origin corner, which for a giant region can be 90 tiles from any dwarf.
+    """
     cand = [(e, r) for e, r in facts.regions if r["n"] >= max(4, w * h // 2)]
     if not cand:
         return None
+    center = fort_center(facts)
+    if center:
+        inside = [(e, r) for (e, r) in cand
+                  if r["x0"] <= center[0] <= r["x1"] and r["y0"] <= center[1] <= r["y1"]
+                  and abs(e - center[2]) <= 2]
+        if inside:
+            cand = inside
     if prefer_elev is not None:
         near = [c for c in cand if abs(c[0] - prefer_elev) <= 2]
         if near:
             cand = near
-    cand.sort(key=lambda er: -er[1]["n"])
+    if center:
+        cand.sort(key=lambda er: (abs(er[0] - center[2]), -er[1]["n"]))
+    else:
+        cand.sort(key=lambda er: -er[1]["n"])
     elev, r = cand[0]
-    x0 = r["x0"]; y0 = r["y0"]
+    if center:
+        cx, cy = center[0], center[1]
+        x0 = min(max(cx - w // 2, r["x0"]), r["x1"] - w + 1)
+        y0 = min(max(cy - h // 2, r["y0"]), r["y1"] - h + 1)
+    else:
+        x0, y0 = r["x0"], r["y0"]
     return {"elev": elev, "x0": x0, "y0": y0,
             "x1": min(x0 + w - 1, r["x1"]), "y1": min(y0 + h - 1, r["y1"]),
-            "region": r.get("id", "?"), "region_tiles": r["n"]}
+            "region": r.get("id", "?"), "region_tiles": r["n"],
+            "anchored": "fort_center" if center else "region_origin"}
 
 
 # (id, rung, done-predicate, keys, why)

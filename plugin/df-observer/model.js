@@ -487,7 +487,8 @@ export class FortModel {
 
     // ---- crew: picks vs designated miners, food/drink zero ----
     const facts = this.facts ?? {}
-    if (num(facts.picks) >= 0 && num(facts.miners) > num(facts.picks) && num(facts.pending_dig) > 0) {
+    if (facts.picks !== null && facts.picks !== undefined
+      && num(facts.miners) > num(facts.picks) && num(facts.pending_dig) > 0) {
       raise('crew', 'crew-picks', `picks ${facts.picks} < designated miners ${facts.miners} with pending dig ${facts.pending_dig} -> the extra miners starve at the face (df-dig §9)`, '')
     }
     if (num(facts.pop) > 0 && num(facts.food) === 0) {
@@ -637,7 +638,8 @@ export class FortModel {
       paused: this.paused, pauseSource: this.pauseSource, pauseAtTick: this.pauseAtTick,
       generation: this.generation,
       facts: this.facts ? {
-        pop: num(this.facts.pop), miners: num(this.facts.miners), picks: num(this.facts.picks),
+        pop: num(this.facts.pop), miners: num(this.facts.miners),
+        picks: this.facts.picks === null || this.facts.picks === undefined ? null : num(this.facts.picks),
         food: num(this.facts.food), drink: num(this.facts.drink), wood: num(this.facts.wood),
         stone: num(this.facts.stone), metal: num(this.facts.metal), barrels: num(this.facts.barrels),
         pending_dig: num(this.facts.pending_dig), underground_floors: num(this.facts.underground_floors),

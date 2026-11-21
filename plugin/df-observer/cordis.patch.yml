@@ -56,7 +56,7 @@
         pause_on: [water, overload]
         auto_resume: false
         overload_alerts: 6
-        overload_todos: 12
+        overload_todos: 20
         stall_ticks: 4
         pile_full_items: 150
         agents: []

@@ -26,10 +26,14 @@ export function estimateTokens(text) {
   return Math.ceil(text.length / 4)
 }
 
+function picksText(f) {
+  return f.picks === null || f.picks === undefined ? '? (probe has no data)' : `${num(f.picks)}`
+}
+
 function factsLine(payload) {
   const f = payload.facts
   if (!f) return 'FORT BRIEFING | facts: NO DATA this tick (labelled, not a fact)'
-  const parts = [`pop ${num(f.pop)}`, `miners ${num(f.miners)} of ${num(f.picks)} picks`,
+  const parts = [`pop ${num(f.pop)}`, `miners ${num(f.miners)} of ${picksText(f)} picks`,
     `food ${num(f.food)}`, `drink ${num(f.drink)}`, `wood ${num(f.wood)}`, `stone ${num(f.stone)}`,
     `metal ${num(f.metal)}`, `pending dig ${num(f.pending_dig)}`]
   const state = payload.online === false ? 'GAME OFFLINE' : (payload.paused ? 'PAUSED' : 'running')
@@ -141,6 +145,13 @@ const SHRINK_LEVELS = [
   (p) => ({ ...p, shafts: undefined, warnings: undefined, pauseEvents: undefined }),
   (p) => ({ ...p, digEvents: undefined, notes: undefined,
     rungs: (p.rungs ?? []).map((r) => ({ id: r.id, done: r.done })) }),
+  (p) => ({ ...p, buildings: undefined, facts: p.facts, piles: (p.piles ?? []).slice(0, 8),
+    boxes: (p.boxes ?? []).slice(0, 6),
+    rungs: (p.rungs ?? []).map((r) => ({ id: r.id, done: r.done })),
+    next: p.next ? { id: p.next.id, title: p.next.title,
+      at: p.next.at ? { elev: p.next.at.elev, x0: p.next.at.x0, x1: p.next.at.x1, y0: p.next.at.y0, y1: p.next.at.y1 } : undefined } : null,
+    todos: (p.todos ?? []).slice(0, 20).map(shrinkCompactTodo),
+    alerts: (p.alerts ?? []).slice(0, 8).map(shrinkCompactAlert) }),
   (p) => ({ ...p, facts: p.facts ? { pop: p.facts.pop, miners: p.facts.miners, picks: p.facts.picks,
     pending_dig: p.facts.pending_dig } : null, piles: (p.piles ?? []).slice(0, 4),
     boxes: (p.boxes ?? []).slice(0, 6),
@@ -155,12 +166,12 @@ const SHRINK_LEVELS = [
     alerts: (p.alerts ?? []).slice(0, 10).map(shrinkCompactAlert),
     digEvents: (p.digEvents ?? []).slice(0, 6) }),
   (p) => ({ tick: p.tick, online: p.online, paused: p.paused,
-    todos: (p.todos ?? []).slice(0, 8).map((t) => ({ id: t.id, state: t.state, evidence: String(t.evidence ?? '').slice(0, 60) })),
-    alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked })),
-    digEvents: (p.digEvents ?? []).slice(0, 4) }),
+    todos: (p.todos ?? []).slice(0, 24).map((t) => ({ id: t.id, state: t.state, evidence: String(t.evidence ?? '').slice(0, 60) })),
+    alerts: (p.alerts ?? []).slice(0, 8).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked })),
+    digEvents: (p.digEvents ?? []).slice(0, 6) }),
   (p) => ({ tick: p.tick, online: p.online, paused: p.paused,
-    todos: (p.todos ?? []).slice(0, 10).map((t) => ({ id: t.id, state: t.state })),
-    alerts: (p.alerts ?? []).slice(0, 3).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked })) }),
+    todos: (p.todos ?? []).slice(0, 30).map((t) => ({ id: t.id, state: t.state })),
+    alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked })) }),
 ]
 
 export const SHRINK_MAX = SHRINK_LEVELS.length - 1
@@ -180,46 +191,41 @@ function shrinkPayload(payload, cap) {
 }
 
 export function buildBriefing(payload, { maxTokens, form = 'briefing' }) {
-  // Prefer the richest payload the budget allows (the log must stay
-  // reconstructable); trim the human body only when no payload level fits.
-  for (let body = 7; body >= 0; body -= 1) {
-    const caps = {
-      ladderOpen: Math.max(0, 5 - body),
-      todos: Math.max(1, 12 - 2 * body),
-      alerts: Math.max(0, 8 - 2 * body),
-      health: Math.max(0, 6 - body),
-      evidence: Math.max(40, 160 - 15 * body),
-    }
-    const lines = [
-      factsLine(payload),
-      ...ladderLines(payload, caps.ladderOpen + 3),
-      ...boxLines(payload),
-      ...todoLines(payload, caps.todos, caps.evidence),
-      ...alertLines(payload, caps.alerts, caps.evidence),
-      ...healthLines(payload, caps.health),
-      'Rules: progress = positive tile state, never absence; every number names its box/elev; NO DATA is labelled; each to-do carries its acceptance test; know-how: skills df-dig / df-stockpile.',
-    ]
-    const text = lines.join('\n')
-    for (let level = 0; level <= SHRINK_MAX; level += 1) {
-      const data = shrinkPayloadLevel(payload, level)
-      const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form, tick: payload.tick, data })}`
+  // Order of preference: richest PAYLOAD first (the log must stay
+  // reconstructable), richest body within that; first candidate that fits wins.
+  const bodyOf = (caps) => [
+    factsLine(payload),
+    ...ladderLines(payload, caps.ladderOpen + 3),
+    ...boxLines(payload),
+    ...todoLines(payload, caps.todos, caps.evidence),
+    ...alertLines(payload, caps.alerts, caps.evidence),
+    ...healthLines(payload, caps.health),
+    'Rules: progress = positive tile state, never absence; every number names its box/elev; NO DATA is labelled; each to-do carries its acceptance test; know-how: skills df-dig / df-stockpile.',
+  ].join('\n')
+  for (let level = 0; level <= SHRINK_MAX; level += 1) {
+    const data = shrinkPayloadLevel(payload, level)
+    const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form, tick: payload.tick, data })}`
+    const payloadTokens = estimateTokens(stateLine)
+    if (payloadTokens > maxTokens - 40 && level < SHRINK_MAX) continue
+    for (let body = 7; body >= 0; body -= 1) {
+      const caps = {
+        ladderOpen: Math.max(0, 5 - body),
+        todos: Math.max(1, 12 - 2 * body),
+        alerts: Math.max(0, 8 - 2 * body),
+        health: Math.max(0, 6 - body),
+        evidence: Math.max(40, 160 - 15 * body),
+      }
+      const text = bodyOf(caps)
       const out = `${text}\n${stateLine}`
       const tokens = estimateTokens(out)
-      if (tokens <= maxTokens) return { text: out, tokens }
-      if (body === 0 && level === SHRINK_MAX) {
-        // Nothing fits: keep the leanest payload and trim the body hard.
-        const hardLines = lines.slice(0, 3)
-        const hard = `${hardLines.join('\n')}\n${stateLine}`
-        if (estimateTokens(hard) <= maxTokens) return { text: hard, tokens: estimateTokens(hard) }
-        return { text: hard, tokens: estimateTokens(hard), overBudget: true }
-      }
+      if (tokens <= maxTokens) return { text: out, tokens, payloadLevel: level }
     }
   }
-  // Last resort: header + state line only (labelled as budget-trimmed).
-  const data = shrinkPayload(payload, maxTokens - 120)
+  // Last resort: leanest payload, header-only body (labelled as budget-trimmed).
+  const data = shrinkPayloadLevel(payload, SHRINK_MAX)
   const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form, tick: payload.tick, data })}`
   const out = `FORT BRIEFING (budget-trimmed) tick ${payload.tick}\n${stateLine}`
-  return { text: out, tokens: estimateTokens(out) }
+  return { text: out, tokens: estimateTokens(out), payloadLevel: SHRINK_MAX, overBudget: estimateTokens(out) > maxTokens }
 }
 
 function boxLines(payload) {

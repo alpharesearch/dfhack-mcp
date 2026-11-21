@@ -78,6 +78,7 @@ test('config defaults and ranges', () => {
   assert.equal(baseCfg.pause_authority, 'off')
   assert.equal(baseCfg.auto_resume, false)
   assert.deepEqual(baseCfg.alert_wakes, ['water', 'dig_complete', 'game_crashed', 'game_offline'])
+  assert.equal(baseCfg.overload_todos, 20, 'a normal embark ledger is not an overload')
   assert.throws(() => Config.parse({ poll_running_ms: 16000 }))
   assert.throws(() => Config.parse({ pause_authority: 'manual_suggestion' }))
   return 'pause_authority default off; running interval bounded 5-15 s'
@@ -300,6 +301,15 @@ test('briefing stays inside briefing_max_tokens and carries the state line', () 
   model.evaluate({})
   const full = buildBriefing(model.payload(), { maxTokens: 1200 })
   assert.ok(full.tokens <= 1200, `tokens ${full.tokens}`)
+  const foldOf = (briefText) => JSON.parse(briefText.split('\n').find((l) => l.startsWith('[df-observer] ')).slice('[df-observer] '.length))
+  const foldedFull = foldOf(full.text)
+  const live = model.payload()
+  // The log contract: the folded payload must reproduce the LEDGER (ids, states,
+  // evidence) and the tick; decoration sections may shrink with the budget.
+  assert.equal(foldedFull.tick, live.tick)
+  assert.deepEqual(foldedFull.data.todos.map((t) => `${t.id}:${t.state}`),
+    live.todos.map((t) => `${t.id}:${t.state}`), 'ledger ids+states reconstruct from the log line')
+  assert.ok(foldedFull.data.todos.every((t) => t.evidence), 'ledger evidence survives')
   assert.match(full.text, /\[df-observer\] \{/)
   assert.match(full.text, /FORT BRIEFING \(in-game elevations\)/)
   assert.match(full.text, /to_dig 51 \| dug 39 \| pending 6/)
@@ -308,6 +318,9 @@ test('briefing stays inside briefing_max_tokens and carries the state line', () 
   assert.match(full.text, /complete = to_dig 0 && dug >0/)
   const mid = buildBriefing(model.payload(), { maxTokens: 700 })
   assert.ok(mid.tokens <= 700, `tokens ${mid.tokens}`)
+  const foldedMid = foldOf(mid.text)
+  assert.deepEqual(foldedMid.data.todos.map((t) => `${t.id}:${t.state}`),
+    live.todos.map((t) => `${t.id}:${t.state}`), 'ledger reconstructs at the Config budget')
   const brief = buildBriefing(model.payload(), { maxTokens: 300 })
   assert.ok(brief.tokens <= 300, `tokens ${brief.tokens}`)
   const line = brief.text.split('\n').find((l) => l.startsWith('[df-observer] '))
