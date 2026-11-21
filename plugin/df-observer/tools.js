@@ -22,6 +22,26 @@ function sessionOf(exec) {
   return exec?.agent?.session
 }
 
+/** Lossless-JSON guard: undefined -> null, non-finite numbers -> null (labelled
+ * by key), functions dropped. The Host rejects non-lossless tool output. */
+export function jsonSafe(value, depth = 0) {
+  if (depth > 8) return null
+  if (value === undefined) return null
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'bigint') return null
+  if (typeof value === 'function' || typeof value === 'symbol') return undefined
+  if (Array.isArray(value)) return value.map((item) => jsonSafe(item, depth + 1))
+  if (value && typeof value === 'object') {
+    const out = {}
+    for (const key of Object.keys(value)) {
+      const safe = jsonSafe(value[key], depth + 1)
+      if (safe !== undefined) out[key] = safe
+    }
+    return out
+  }
+  return value
+}
+
 export function toolDefinitions({ model, projection, config, sessionFilter }) {
   // The tools answer from the LIVE model (the observer's MCP-read memory - a
   // derived cache, per practices.md; the log it derives from is the briefings).
@@ -65,7 +85,7 @@ export function toolDefinitions({ model, projection, config, sessionFilter }) {
       const scope = args.scope ?? 'summary'
       const body = statusBody(state, scope, config)
       const foldLine = logTick == null ? '' : `\n[session log folded at tick ${logTick}${logTick < state.tick ? ` - older than this read (tick ${state.tick}): the live model above is authoritative for a live game; the log keeps what this session was told]` : ''}`
-      return { scope, tick: state.tick, logTick, ...body, text: `${body.text ?? ''}${foldLine}` }
+      return jsonSafe({ scope, tick: state.tick, logTick, ...body, text: `${body.text ?? ''}${foldLine}` })
     },
   }
 
@@ -192,7 +212,12 @@ export function toolDefinitions({ model, projection, config, sessionFilter }) {
     },
   }
 
-  return [status, todo, alerts]
+  // Every tool result passes the lossless-JSON guard at the boundary - the
+  // Host rejects non-lossless output (measured: df_status scope=health).
+  return [status, todo, alerts].map((def) => ({
+    ...def,
+    async execute(args, exec) { return jsonSafe(await def.execute(args, exec)) },
+  }))
 }
 
 function short(text, max = 180) {
