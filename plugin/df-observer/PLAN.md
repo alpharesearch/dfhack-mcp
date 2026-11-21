@@ -738,3 +738,33 @@ surface costs less than a third of one percent of the header it joins. The
 plugin's *transient* cost is one briefing: 250-290 tokens filtered, 456-538 in
 rule mode, injected on meaningful changes (measured ~8 s cadence running, 60 s
 paused).
+
+## 25. Play probe in a fresh agent: what worked, and the MCP-binding boundary
+
+A read-only play probe (`play-probe`, fresh context) ran the §1-§6 pass. Verified
+from its report:
+
+- **The observer's content is actionable**: it quoted the ladder NEXT verbatim
+  (`refuse`, keys `p -> outside the entrance, at least 5x5`, box elev36
+  x65-71 y113-119 in walkable region A), the box table, the shaft aquifer
+  elevations per column (`x44,y121 [23,24,25]`), the ledger specs, and the
+  alert evidence - and it *used* them: it refused A4's "queue the elev25 face"
+  advice because the observer's own shaft data puts elev25 inside the aquifer,
+  and ordered `clear elev22-24 with NO_DIG first` (df-dig §1). That is the
+  design goal: the alert's advice is safe *because* the data behind it is present.
+- **Rock-only verification is cheap**: `survey({elev:25,x0:43,y0:121,x1:44,y1:122})`
+  returned 4/4 `FLSTONE` walls, `safe_to_designate: true`, matching the observer's
+  `to_dig 4, dug 0, pending 0, hidden 0` exactly.
+- **Boundary found**: in that child agent, `mcp__dfhack__*` calls failed with
+  `-32600 Session not found` after the MCP server restart (the server log shows
+  the restart), while the plugin's poller kept succeeding over HTTP (`GET
+  /observe` ~8 s). The MCP proxy binds per session; a fresh agent inherits no
+  binding until it (re)connects. The plugin's own tools read the in-memory model
+  and do not go through that proxy - the probe is re-testing to attribute the
+  failures precisely (its first run attributed `df_*` failures to the transport;
+  the same tools answer in the parent session at tick 48).
+
+Action for the plugin (worth keeping): when the game channel is degraded, say so
+in the answer - `df_status` already labels `NO DATA` per field; add the
+staleness stamp (`tick`, seconds since the last successful read) so an agent
+reading a snapshot knows its age.
