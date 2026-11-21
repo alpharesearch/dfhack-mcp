@@ -942,7 +942,7 @@ export class FortModel {
         // "last check: none" - the acceptance runs, the payload dropped it.
         lastCheck: t.lastCheck ? {
           tick: t.lastCheck.tick, ok: t.lastCheck.ok, noData: t.lastCheck.noData === true,
-          evidence: String(t.lastCheck.evidence ?? '').slice(0, 90),
+          evidence: String(t.lastCheck.evidence ?? '').slice(0, 170),
         } : null,
       })),
       digEvents: this.digEvents.slice(0, 24),
