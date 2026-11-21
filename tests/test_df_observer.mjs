@@ -91,7 +91,7 @@ test('config defaults and ranges', () => {
 
 test('service module exports the service-class form', () => {
   assert.equal(typeof DFObserver, 'function')
-  assert.deepEqual(DFObserver.inject, ['tools', 'agents', 'systemPrompt', 'sessionProjections', 'timer', 'commands'])
+  assert.deepEqual(DFObserver.inject, ['tools', 'agents', 'systemPrompt', 'sessionProjections', 'timer', 'commands', 'storageDomain'])
   assert.equal(DFObserver.Config, Config)
   assert.equal(typeof DFObserver.prototype.panel, 'function')
   assert.equal(typeof DFObserver.prototype.ackAlert, 'function')
@@ -432,6 +432,31 @@ test('tools: bounded outputs, add/done/ack embed foldable payloads', async () =>
   const done = await defs[1].execute({ action: 'done', id: added.id, evidence: 'survey read: to_dig 0 dug 96' }, exec)
   assert.match(done.text, /closed/)
   return `df_status/df_todo/df_alerts verified (${defs.length} tools)`
+})
+
+// ---------------------------------------------------------------------------
+// ledger durability + box watching
+test('ledger: watchBox joins the survey list; restore re-applies stored records', () => {
+  const model = freshModel()
+  const key = model.watchBox([10, 20, 12, 22, 36])
+  assert.equal(model.extraBoxes.length, 1, 'watched box enters the survey list')
+  assert.deepEqual(model.extraBoxes[0], [10, 20, 12, 22, 36])
+  model.watchBox([10, 20, 12, 22, 36])
+  assert.equal(model.extraBoxes.length, 1, 'watching twice does not duplicate')
+  model.restoreBoxes([[5, 5, 9, 9, 40], [10, 20, 12, 22, 36]])
+  assert.equal(model.extraBoxes.length, 2, 'restore skips duplicates')
+  const written = []
+  model.onLedgerWrite = (t) => written.push(t.id)
+  const todo = model.addTodo({ title: 'wing dig', accept: { kind: 'manual' } })
+  assert.deepEqual(written, [todo.id], 'add notifies the persistence hook')
+  model.restoreTodos([{ id: 77, title: 'from storage', state: 'done', accept: { kind: 'manual' }, evidence: 'proved earlier' },
+    { id: 1, title: 'stored override', state: 'open', accept: { kind: 'manual' }, evidence: 'x' }])
+  const t77 = model.todos.find((t) => t.id === 77)
+  assert.ok(t77 && t77.state === 'done', 'stored record re-applies after a reload')
+  assert.equal(model.todos.find((t) => t.id === 1).title, 'stored override', 'stored records win over seeds')
+  model.closeTodo(77, 'already closed')
+  assert.equal(model.todos.find((t) => t.id === 77).state, 'done')
+  return 'watchBox -> survey list, dedupe, restore, write hook verified'
 })
 
 // ---------------------------------------------------------------------------

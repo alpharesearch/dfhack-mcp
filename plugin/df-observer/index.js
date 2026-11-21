@@ -181,7 +181,7 @@ function markRemotePrototype(Class, method, options) {
  * the per-agent briefing/wake state, the tools, and the panel Remote methods.
  */
 export default class DFObserver extends TypertRemoteService {
-  static inject = ['tools', 'agents', 'systemPrompt', 'sessionProjections', 'timer', 'commands']
+  static inject = ['tools', 'agents', 'systemPrompt', 'sessionProjections', 'timer', 'commands', 'storageDomain']
   static Config = Config
 
   constructor(ctx, config = Config.parse({})) {
@@ -270,6 +270,11 @@ export default class DFObserver extends TypertRemoteService {
       this.disposers.clear()
       this.agents.clear()
     }, 'df-observer: agent disposers')
+
+    // ---- durable ledger: the to-do list survives plugin reloads ----
+    // (measured gap: a reinstall wiped a user-added to-do; plugin memory is a
+    // derived cache, so anything the user registered must be stored.)
+    ctx.effect(() => this.openLedger(), 'df-observer: ledger storage')
 
     // ---- the panel's Ack, and the human's words, as a session command ----
     // (practices.md/user-actions.md: one Host operation, called by the UI through
@@ -375,8 +380,17 @@ export default class DFObserver extends TypertRemoteService {
   async cycle(index) {
     const cfg = this.config
     const isDeep = index % cfg.deep_every === 0
+    const seen = new Set()
+    const boxes = [...cfg.monitored_boxes, ...(this.model?.extraBoxes ?? [])]
+      .filter((b) => {
+        const k = b.join(',')
+        if (seen.has(k)) return false
+        seen.add(k)
+        return true
+      })
+      .slice(0, 16)
     const request = {
-      boxes: cfg.monitored_boxes,
+      boxes,
       shafts: cfg.shafts,
       warnings: true, facts: true, rungs: false,
       reports: 0, crashlog_files: 0, pause: true, survey: true,
@@ -435,6 +449,40 @@ export default class DFObserver extends TypertRemoteService {
   // ---------------------------------------------------------------------
   // Briefing (inject, delta-gated, bounded) and wakes (followup, whitelisted)
   // ---------------------------------------------------------------------
+
+  async openLedger() {
+    const domain = await this.ctx.storageDomain.open({
+      name: 'dfObserver',
+      version: 1,
+      layout: 'per-record',
+      tables: {
+        todos: { valueSchema: z.json() },
+        boxes: { valueSchema: z.json() },
+      },
+    })
+    this.ledger = domain
+    // Load what was stored, then let the model's seeds fill the gaps.
+    try {
+      const stored = [...domain.table('todos').entries()].map(([, v]) => v)
+      if (stored.length) this.model.restoreTodos(stored)
+      const boxes = [...domain.table('boxes').entries()].map(([, v]) => v)
+      if (boxes.length) this.model.restoreBoxes(boxes)
+      this.note(`ledger restored: ${stored.length} to-dos, ${boxes.length} watched boxes`)
+    } catch (error) {
+      this.note(`ledger load failed (starting fresh, labelled): ${error?.message ?? error}`)
+    }
+    // Every ledger mutation lands durably (writes are queued by the domain).
+    this.model.onLedgerWrite = (todo) => {
+      void domain.table('todos').put(String(todo.id), JSON.parse(JSON.stringify(todo)))
+        .catch((e) => this.note(`ledger write failed: ${e?.message ?? e}`))
+    }
+    this.model.onBoxWatch = (box) => {
+      const key = `${box[4]}:${box[0]},${box[1]},${box[2]},${box[3]}`
+      void domain.table('boxes').put(key, JSON.parse(JSON.stringify(box)))
+        .catch((e) => this.note(`box write failed: ${e?.message ?? e}`))
+    }
+    return () => { void domain.close() }
+  }
 
   filterEnabled() {
     return this.config.filter_enabled === true

@@ -307,6 +307,11 @@ export class FortModel {
     this.seeded = false
     this.lastDeepTick = -Infinity
     this.statusFacts = {}
+    /** Boxes the user registered via to-dos; they join every survey request. */
+    this.extraBoxes = []
+    /** Set by the plugin: called on every ledger mutation so the record persists. */
+    this.onLedgerWrite = null
+    this.onBoxWatch = null
     this.lastDwarves = 0
     this.lastDwarvesTick = null
     this.dwarvesKnown = false
@@ -593,6 +598,7 @@ export class FortModel {
         todo.state = nextState
         todo.statusTick = this.tick
         todo.evidence = evidence
+        this.onLedgerWrite?.(todo)
         if (nextState === 'done') {
           this.digEvents.push({ tick: this.tick, kind: 'todo_done', todo: todo.id, title: todo.title, evidence })
           this.trim('digEvents', 40)
@@ -619,6 +625,26 @@ export class FortModel {
     if (this[field].length > max) this[field] = this[field].slice(0, max)
   }
 
+  /** Re-apply stored records after a reload; seeds fill the gaps. */
+  restoreTodos(stored) {
+    const known = new Map(this.todos.map((t) => [t.id, t]))
+    for (const rec of stored ?? []) {
+      if (!rec || typeof rec.id !== 'number') continue
+      known.set(rec.id, { ...rec })
+    }
+    this.todos = [...known.values()].sort((a, b) => a.id - b.id)
+    this.trim('todos', 80)
+  }
+
+  restoreBoxes(stored) {
+    for (const box of stored ?? []) {
+      if (!Array.isArray(box) || box.length < 5) continue
+      const has = this.extraBoxes.some((b) => b[0] === box[0] && b[1] === box[1]
+        && b[2] === box[2] && b[3] === box[3] && b[4] === box[4])
+      if (!has) this.extraBoxes.push([...box])
+    }
+  }
+
   addTodo({ title, accept, box }) {
     const id = this.todos.length ? Math.max(...this.todos.map((t) => t.id)) + 1 : 1
     const todo = { id, title, origin: 'model', state: 'open', accept: accept ?? { kind: 'manual' }, evidence: 'not checked yet', statusTick: this.tick }
@@ -626,6 +652,7 @@ export class FortModel {
     if (accept?.kind === 'tiles_progress' && box) todo.box = box
     this.todos.push(todo)
     this.trim('todos', 80)
+    this.onLedgerWrite?.(todo)
     return todo
   }
 
@@ -634,6 +661,7 @@ export class FortModel {
     if (!todo) return null
     todo.state = 'done'
     todo.statusTick = this.tick
+    this.onLedgerWrite?.(todo)
     todo.evidence = evidence ?? 'closed by the model (manual acceptance)'
     todo.accept = { kind: 'manual' }
     return todo
@@ -651,9 +679,16 @@ export class FortModel {
   watchBox(box) {
     const [x0, y0, x1, y1, elev] = box.map(Number)
     const key = boxKey({ elev, x0, y0, x1, y1 })
+    // Watching must enter the SURVEY list, not just the display: a box that is
+    // never requested stays NO DATA forever (measured).
+    if (!this.extraBoxes.some((b) => b[0] === x0 && b[1] === y0 && b[2] === x1 && b[3] === y1 && b[4] === elev)) {
+      this.extraBoxes.push([x0, y0, x1, y1, elev])
+      this.extraBoxes = this.extraBoxes.slice(-20)
+      this.onBoxWatch?.([x0, y0, x1, y1, elev])
+    }
     if (!this.boxes.some((b) => boxKey(b) === key)) {
       this.boxes.push({ elev, box: [x0, y0, x1, y1], to_dig: null, dug: null, pending: null, notes: 'awaiting first survey' })
-      this.boxes = this.boxes.slice(-12)
+      this.boxes = this.boxes.slice(-16)
     }
     return key
   }
