@@ -884,3 +884,33 @@ alerts, silently.
 Parse hardening (measured): the command result is not guaranteed to be
 `{result:{text}}` - the payload text can arrive directly - so the client extracts
 the JSON object from whatever string it gets (`indexOf('{') .. lastIndexOf('}')`).
+
+## 30. Budget arithmetic for a panel that reads (0.1.66 - 0.1.77)
+
+The player asked for the GUI in the right Sidebar, then said the to-do rows were
+"very cryptic". Both were data-availability problems, measured in that order:
+
+| measurement | number |
+|---|---|
+| Panel section fill (boxes/piles/rungs/notes/scan) at the lean wire level | **+622 tokens** (348 -> 970 at the 1200 test) |
+| To-do titles (8-12 open rows at 24 chars) | **+50 tokens** |
+| Designation summary on the wire | **+35 tokens** |
+| Filtered briefing at cap 340 | 0/7 open rows titled - the cap could not pay |
+| Filtered briefing at cap 350 | 7/7 titled (350 tokens total) -> profile `filter_briefing_max_tokens: 360` |
+| The filtered briefing's floor (prose + leanest wire) | **275 tokens**, i.e. my prose, not the payload - so the prose ladder shrank (changes 6->4->2->0, notes, DIG, the Detail line, header+headline last) |
+
+Priorities the ladders now encode:
+
+1. **The ledger never shrinks below ids+states** (the log must reconstruct).
+2. **Panel readability (titles) outranks filter commentary** - prose is re-derivable
+   with `df_status`, the panel's words are not.
+3. Sugar strips in reader order: **titles last, the scan earlier**.
+4. `panel_full_briefing` (Config) is the player's dial for +622 tokens/briefing in
+   exchange for Ladder/Boxes/Piles in the panel; `panel_full_briefing: true` is set
+   in this profile.
+
+Also measured: `remote.commands.execute()` appends the command row to the session
+but its **promise never settles** for the client half, so `/df-panel` cannot drive
+the panel; the page says `panel data: wire only - ... no promise resolution in 15s`
+instead of pretending to be pending. The `/df-panel` command stays registered:
+agents can call it (it serves `panelPayload`), the client cannot await it.
