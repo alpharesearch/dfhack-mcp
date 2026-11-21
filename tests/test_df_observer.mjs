@@ -504,14 +504,25 @@ test('seed dedupe: restored to-dos are not re-created by the ladder read', () =>
   assert.equal(labors.length, 1, `the labors rung exists exactly once, saw ${labors.map((t) => t.id).join(',')}`)
   assert.equal(model.todos.filter((t) => t.accept?.kind === 'pile_general').length, 1, 'pile_general not duplicated by seeds')
   assert.ok(model.todos.some((t) => t.accept?.kind === 'rung' && t.accept?.rung === 'meeting'), 'new rungs still seed')
-  // Extra acceptance fields (the pile excludes) must not defeat the signature.
+  // The live case: an auto pile_general restored, then a ladder read - the seed
+  // must not add a second one (measured live: ids 71 and 84 were the same task).
   const model2 = new FortModel(baseCfg)
-  model2.restoreTodos([{ id: 84, title: 'General pile', origin: 'auto', state: 'done',
-    accept: { kind: 'pile_general', excludes: ['stone', 'wood'] }, evidence: 'pile 20 ...' }])
+  const seedGeneral = seedTodos([{ id: 'stockpile', title: 'General stockpile', done: true, keys: 'z', why: 'sorting' }], baseCfg)
+    .find((t) => t.accept?.kind === 'pile_general')
+  assert.ok(seedGeneral, 'the auto set contains a pile_general task')
+  model2.restoreTodos([{ ...seedGeneral, id: 84, evidence: 'pile 20 ...' }])
   model2.ingestDeep({ rungs: [{ id: 'stockpile', title: 'General stockpile', done: true, keys: 'z', why: 'sorting' }],
     next: null, piles: [], reports: [], crashlog: null, notes: [] })
   const generals2 = model2.todos.filter((t) => t.accept?.kind === 'pile_general')
-  assert.equal(generals2.length, 1, `pile_general with an excludes list stays single, saw ${generals2.map((t) => t.id).join(',')}`)
+  assert.equal(generals2.length, 1, `the restored pile_general stays single, saw ${generals2.map((t) => t.id).join(',')}`)
+  // A DIFFERENT acceptance (extra excludes) is a different proof, so it stays two.
+  const model3 = new FortModel(baseCfg)
+  model3.restoreTodos([{ id: 90, title: 'Stricter general', origin: 'model', state: 'open',
+    accept: { kind: 'pile_general', excludes: ['stone', 'wood'] }, evidence: 'manual check' }])
+  model3.ingestDeep({ rungs: [{ id: 'stockpile', title: 'General stockpile', done: true, keys: 'z', why: 'sorting' }],
+    next: null, piles: [], reports: [], crashlog: null, notes: [] })
+  assert.equal(model3.todos.filter((t) => t.accept?.kind === 'pile_general').length, 2,
+    'a stricter acceptance is a separate task, by design')
   return 'seed dedupe by acceptance signature verified (canonical, all fields)'
 })
 
@@ -534,6 +545,34 @@ test('wake advice follows the acceptance kind (pile to-do is not a dug box)', as
   assert.ok(done, 'pile to-do raised dig_complete')
   assert.match(done.suggested, /pile acceptance verified/, `advice fits the proof: ${done.suggested}`)
   return 'advice per acceptance family; pile flip no longer says "box is dug"'
+})
+
+// ---------------------------------------------------------------------------
+// the game's own hints reach the briefing
+test('GAME SAYS: the game reports are quoted in the briefing', () => {
+  const model = freshModel()
+  model.ingestDeep({ rungs: [], next: null, piles: [], crashlog: null, notes: [],
+    reports: [{ year: 101, text: 'Urdim Rerrasbomrek, expedition leader cancels Eat: Item inaccessible.', z: 37 },
+      { year: 101, text: 'A caravan from Ral Al has arrived.  Overall trade sentiments are lukewarm.', z: 42 }] })
+  const brief = buildBriefing(model.payload(), { maxTokens: 700 })
+  assert.match(brief.text, /GAME SAYS \[Y101\]: /, `the game's hint is quoted: ${brief.text.slice(-300)}`)
+  // at a generous budget both hint lines survive; the leanest payload keeps one
+  assert.match(buildBriefing(model.payload(), { maxTokens: 2000 }).text, /cancels Eat: Item inaccessible/)
+  assert.match(brief.text, /has arrived\.|cancels Eat/, 'a report line is present at 700 too')
+  // an empty report read prints no GAME SAYS line at all
+  const quiet2 = freshModel()
+  quiet2.ingestDeep({ rungs: [], next: null, piles: [], crashlog: null, notes: [], reports: [] })
+  assert.ok(!buildBriefing(quiet2.payload(), { maxTokens: 700 }).text.includes('GAME SAYS'), 'no label when there is nothing to quote')
+  const raised = model.evaluate(model.cfg)
+  const hint = raised.find((a) => a.key === 'game-says-supply')
+  assert.ok(hint, 'the game\'s "cancels Eat" raises a crew alert with its own words')
+  assert.match(hint.evidence, /cancels Eat: Item inaccessible/)
+  assert.match(hint.coord, /elev37/)
+  // a quiet report set raises nothing
+  const quiet = freshModel()
+  quiet.ingestDeep({ rungs: [], next: null, piles: [], crashlog: null, notes: [], reports: [{ year: 101, text: 'The forge is operating.' }] })
+  assert.ok(!quiet.evaluate(quiet.cfg).some((a) => a.key === 'game-says-supply'), 'no false supply alert')
+  return 'reports quoted; the game\'s supply hint becomes an alert with coordinates'
 })
 
 // ---------------------------------------------------------------------------

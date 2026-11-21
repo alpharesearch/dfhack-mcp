@@ -49,6 +49,7 @@ export const FILTER_SYSTEM_PROMPT = [
   '- significance=high only when the play agent should act now (water entering a monitored shaft, a dig completed, designations drained with no dug change, crew/pick exhaustion, crash/offline).',
   '- wake[] entries carry the alert kind (water, dig_complete, dig_stalled, crew, game_offline, game_crashed, damp_hot, pile_full, save_reloaded, todo_reopened, overload) and the evidence sentence with its numbers.',
   '- The headline is <= 25 words; changes <= 6 bullets of <= 15 words each; carry the evidence numbers, not adjectives.',
+  '- The payload `reports` holds the game\'s OWN announcements and hints ("cancels Eat: Item inaccessible", caravan arrivals, "Out of food!"). Quote them verbatim in `changes` when they matter and attribute them to the game; a hint about supplies outranks your derived math.',
   '- You are READ-ONLY: never propose designations, builds, labours, commands, unpausing; you only report and rank.',
   '- If nothing meaningful changed, answer significance=noise with a one-line headline; do not pad.',
 ].join('\n')

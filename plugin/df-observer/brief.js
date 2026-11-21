@@ -55,6 +55,20 @@ function factsLine(payload) {
   return `FORT BRIEFING (in-game elevations) | ${state}${payload.paused ? who : ''} | ${parts.join(' | ')}`
 }
 
+/** The game's own announcements - its hints ("cancels Eat: Item inaccessible",
+ * "Out of food!", caravan arrivals) - quoted, not paraphrased. */
+export function gameSaysLines(payload, max = 4) {
+  const reports = payload.reports ?? []
+  // No line at all when the read is empty: the game's hints are worth tokens,
+  // an empty label is not (measured: it pushed the shaft/alert lines out of the
+  // trimmed body).
+  if (!reports.length || max <= 0) return []
+  return reports.slice(-max).map((r) => {
+    const when = r.year != null ? `Y${r.year}` : ''
+    return `GAME SAYS [${when}]: ${truncate(String(r.text ?? ''), 110)}`
+  })
+}
+
 function ladderLines(payload, max = 8) {
   const rungs = payload.rungs ?? []
   if (!rungs.length) return ['LADDER: NO DATA this tick (deep read pending)']
@@ -155,7 +169,9 @@ const shrinkCompactAlert = (a) => ({ id: a.id, kind: a.kind, coord: a.coord, cou
 /** The payload shrink ladder: decoration first, detail last. Level 0 is complete. */
 const SHRINK_LEVELS = [
   (p) => p,
-  (p) => ({ ...p, buildings: undefined, reports: undefined, crashlog: undefined }),
+  // The game's own hints stay in the payload at every level: they are the
+  // player's channel, and 4 short strings is the cheapest thing we carry.
+  (p) => ({ ...p, buildings: undefined, reports: (p.reports ?? []).slice(-4), crashlog: undefined }),
   (p) => ({ ...p, shafts: undefined, warnings: undefined, pauseEvents: undefined }),
   (p) => ({ ...p, digEvents: undefined, notes: undefined,
     rungs: (p.rungs ?? []).map((r) => ({ id: r.id, done: r.done })) }),
@@ -177,17 +193,17 @@ const SHRINK_LEVELS = [
     alerts: (p.alerts ?? []).slice(0, 8).map(shrinkCompactAlert) }),
   (p) => ({ tick: p.tick, online: p.online, paused: p.paused, pauseSource: p.pauseSource,
     generation: p.generation, poll: p.poll, pauseAuthority: p.pauseAuthority, filter: p.filter,
-    facts: p.facts, overload: p.overload,
+    facts: p.facts, overload: p.overload, reports: (p.reports ?? []).slice(-3),
     boxes: (p.boxes ?? []).slice(0, 6),
     todos: (p.todos ?? []).slice(0, 14).map(shrinkCompactTodo),
     alerts: (p.alerts ?? []).slice(0, 10).map(shrinkCompactAlert),
     digEvents: (p.digEvents ?? []).slice(0, 6) }),
-  (p) => ({ tick: p.tick, online: p.online, paused: p.paused,
+  (p) => ({ tick: p.tick, online: p.online, paused: p.paused, reports: (p.reports ?? []).slice(-2),
     todos: (p.todos ?? []).slice(0, 24).map((t) => ({ id: t.id, state: t.state, evidence: String(t.evidence ?? '').slice(0, 60) })),
     alerts: (p.alerts ?? []).slice(0, 8).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked })),
     digEvents: (p.digEvents ?? []).slice(0, 6) }),
   (p) => ({ tick: p.tick, online: p.online, paused: p.paused, poll: p.poll,
-    pauseAuthority: p.pauseAuthority,
+    pauseAuthority: p.pauseAuthority, reports: (p.reports ?? []).slice(-1),
     todos: (p.todos ?? []).slice(0, 30).map((t) => ({ id: t.id, state: t.state })),
     alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked })) }),
 ]
@@ -217,6 +233,10 @@ export function buildBriefing(payload, { maxTokens, form = 'briefing' }) {
     ...boxLines(payload),
     ...todoLines(payload, caps.todos, caps.evidence),
     ...alertLines(payload, caps.alerts, caps.evidence),
+    // The game's hints are never trimmed away: 4 short quoted lines, added after
+    // the trimmable body so budgets cut OUR prose first (measured: at 700 tokens
+    // the section vanished entirely when it was part of the trimmed body).
+    ...gameSaysLines(payload, 4),
     ...healthLines(payload, caps.health),
     'Rules: progress = positive tile state, never absence; every number names its box/elev; NO DATA is labelled; each to-do carries its acceptance test; know-how: skills df-dig / df-stockpile.',
   ].join('\n')
@@ -231,6 +251,7 @@ export function buildBriefing(payload, { maxTokens, form = 'briefing' }) {
         todos: Math.max(1, 12 - 2 * body),
         alerts: Math.max(0, 8 - 2 * body),
         health: Math.max(0, 6 - body),
+        reports: Math.max(0, 4 - body),
         evidence: Math.max(40, 160 - 15 * body),
       }
       const text = bodyOf(caps)

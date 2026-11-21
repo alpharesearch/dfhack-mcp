@@ -630,6 +630,17 @@ export class FortModel {
       raise('crew', 'crew-drink-early', `drink 0 (no barrels yet): the still rung stays open`, '')
     }
 
+    // ---- the game's own hints: quote them, do not paraphrase ----
+    // "Urdim ... cancels Eat: Item inaccessible" is the game saying dwarves
+    // cannot eat; that outranks any of our derived supply math.
+    const eatHints = (this.reports ?? []).filter((r) => /cancels Eat|Out of food|no food|Out of drink|get drunk/i.test(String(r.text ?? '')))
+    if (eatHints.length) {
+      const last = eatHints.at(-1)
+      raise('crew', 'game-says-supply',
+        `the game's own reports (${eatHints.length} of the last ${this.reports.length} reads): "${String(last.text).slice(0, 110)}"`,
+        last.z != null ? `elev${last.z}` : '')
+    }
+
     // ---- crash log: NAME/SIZE only (contents are out of scope) ----
     const crashFiles = this.crashlog?.files ?? []
     if (this.crashlog && this.crashlog.dir) {
@@ -839,6 +850,11 @@ export class FortModel {
       digEvents: this.digEvents.slice(0, 24),
       pauseEvents: this.pauseEvents.slice(0, 12),
       overload: this.overload,
+      // The game's own announcements (its hints: "cancels Eat: Item inaccessible")
+      // - measured gap: payload() never carried them, so no briefing, panel row or
+      // projection fold could show them.
+      reports: this.reports.slice(-6),
+      crashlog: this.crashlog ?? null,
       notes: [...this.notes.slice(0, 12), ...this.pluginNotes()].slice(0, 16),
     }
   }
