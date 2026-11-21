@@ -101,6 +101,28 @@ verify() {
   say "server + poll counters"
   curl -s --max-time 10 "http://127.0.0.1:8000/get-status" | head -c 200; echo
   curl -s --max-time 10 "http://127.0.0.1:8000/observe-stats" | head -c 160; echo
+  say "live cost knobs (from the profile row)"
+  PROFILE_FILE="$HOME/.dsh/profiles/web/cordis.patch.yml" python3 - <<'PY'
+import os, re
+lines = open(os.environ["PROFILE_FILE"]).read().split("\n")
+start = next((i for i, l in enumerate(lines) if l.strip() == "- id: df-observer"), None)
+if start is None:
+    print("  no df-observer row in the profile")
+else:
+    keys = ("briefing_max_tokens", "filter_briefing_max_tokens", "filter_enabled",
+            "panel_full_briefing", "tool_docs", "rules_mode", "poll_running_ms", "poll_paused_ms")
+    body = lines[start:start + 60]
+    found = {}
+    for l in body:
+        m = re.match(r"^\s+([a-z_]+):\s*(.*)$", l)
+        if m and m.group(1) in keys:
+            found[m.group(1)] = m.group(2)
+    for k in keys:
+        print(f"  {k}: {found.get(k, '(Config default)')}")
+    print("  measured: 340 -> ids-only rows, 480 -> titles + scan on the filtered wire;")
+    print("            panel_full_briefing adds ~622 tokens/briefing for the panel sections")
+PY
+
   say "storage domain (durable ledger)"
   ls -la "$HOME/.dsh/storages/" 2>/dev/null | grep -i "observer" || echo "  no df_observer storage file yet (created on the first ledger write)"
   say "NOTE: for a linked bundle, a Host restart (the running 'dsh web') is the dependable way to load new code"
