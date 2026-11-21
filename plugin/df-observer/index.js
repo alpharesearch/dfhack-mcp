@@ -116,6 +116,11 @@ export const Config = z.object({
   /** A designation cluster this big, outside every watched box, gets named: work
    * nobody is measuring. 0 disables the alert. */
   unwatched_min_tiles: z.number().int().min(0).default(20),
+  /** Ship briefings with the compact panel sections (boxes/piles/rungs/notes/scan)
+   * even when the ledger leaves no room: costs ~400 extra tokens per briefing, and
+   * is the only way the right-Sidebar panel sees those sections (measured: the
+   * `/df-panel` promise never settles for the client half). */
+  panel_full_briefing: z.boolean().default(false),
   /** A pile this full on a small area is reported as full. */
   pile_full_items: z.number().int().min(10).default(150),
 
@@ -157,6 +162,8 @@ export const Config = z.object({
 
 
 const BRIEF_SECTION_ORDER = 55
+/** Measured: the compact panel fill costs ~400 tokens at the lean levels. */
+const PANEL_FILL_ALLOWANCE = 420
 
 
 
@@ -567,7 +574,11 @@ export default class DFObserver extends TypertRemoteService {
         if (this.filterEnabled() && !timedOut) continue   // verdict pending; do not pre-empt it
         if (!changed.length && !overdue) continue
         if (!spaced && !overdue) continue
-        brief = buildBriefing(payload, { maxTokens: this.config.briefing_max_tokens })
+        brief = buildBriefing(payload, {
+          // The panel's sections ride the wire only if the budget pays for them, so
+          // the Config knob widens the budget when the player asks for the full panel.
+          maxTokens: this.config.briefing_max_tokens + (this.config.panel_full_briefing ? PANEL_FILL_ALLOWANCE : 0),
+        })
         if (timedOut && !this.filterFallback) {
           this.filterFallback = true
           this.model.notes = ['filter silent past Config.filter_timeout_ms: rule-gate briefing resumed',

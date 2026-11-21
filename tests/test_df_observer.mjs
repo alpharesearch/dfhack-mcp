@@ -678,6 +678,15 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
   return 'designation summary survives every lean level, under 260 chars'
 })
 
+test('config declares each key exactly once (duplicate zod keys are a silent last-wins)', () => {
+  const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  const keys = [...index.matchAll(/^  ([a-z_]+): z\./gm)].map((m) => m[1])
+  const dupes = [...new Set(keys.filter((k, i) => keys.indexOf(k) !== keys.lastIndexOf(k)))]
+  assert.deepEqual(dupes, [], `duplicate Config keys: ${dupes.join(', ')}`)
+  assert.ok(keys.includes('panel_full_briefing'), 'the panel knob is declared once')
+  return `${keys.length} Config keys, no duplicates`
+})
+
 test('the page states which data path it is showing (pull vs wire)', () => {
   const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
   assert.match(client, /panel data: \/df-panel pull #/, 'a successful pull is named with its count')
