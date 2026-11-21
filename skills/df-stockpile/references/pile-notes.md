@@ -26,3 +26,29 @@ even if the pile's filters disallow them. My general pile (id 15) started with 5
 5 of its 30 tiles; because stone is denied, only a stone pile (id 20) can take them away.
 So: create the stone pile early, next to the dig face, or the general pile quietly loses
 tile capacity.
+
+## Flags alone are not a stockpile: the UI walks material arrays (this is the crash)
+Player report: clicking the **Custom** button on my general pile crashed the game. Crash logs
+(23:48:06, 23:56:23, identical): `SIGSEGV (SEGV_MAPERR) at address 0xa`, `render_things` ->
+`overlay.plug.so+0xf9fb`, "no Lua involvement".
+
+Diff against a UI-made pile (stockpile **number** 6 - the UI numbers piles by
+`stockpile_number`, not building id) shows the mechanism:
+
+```
+UI pile 6 : ammo{mats=319, other_mats=2, quality_core=7, quality_total=7, type=10}
+            animals{enabled=1327}  armor{body=20, color=136, head=16, legs=17, mats=319, ...}
+            food{meat=14476, glob=2420, egg=307, seeds=157, ...}  weapons{weapon_type=45, ...}
+my pile 15 (before): every array = 0  <- flags true, vectors never allocated
+```
+
+The UI **allocates the arrays for the categories you enable** (319 for the inorganic
+families, 892 for leather/parchment, 1327 animals.enabled, 14476 food.meat...). Writing
+`settings.flags.wood = true` on a pile whose `wood.mats` is size 0 is a landmine: the custom
+UI enumerates `mats[material]` and dereferences an empty vector.
+
+Rule for tools: after setting flags, **allocate every array field the UI walks** for each
+enabled category, with the game's own sizes (`/repair-stockpile-settings`), and the
+acceptance test is **the custom button opening**, not a flag read-back. My earlier
+"fresh `df.new(df.stockpile_settings)` also has mats=0" test misled me: a fresh object has
+no categories enabled - the arrays are sized *when a category is switched on*.

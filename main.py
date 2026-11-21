@@ -992,6 +992,16 @@ async def resize_building(body: dict):
         return {"success": False, "error": str(e)}
 
 
+@app.post("/repair-stockpile-settings", operation_id="repair_stockpile_settings")
+async def repair_stockpile_settings(body: dict):
+    """Allocate the per-category material arrays the game's stockpile custom-settings UI walks. Writing only settings.flags leaves them size 0 while the category flag is true, and the UI then dereferences an empty vector - that is the crash (SIGSEGV at 0xa in render_things with overlay on the stack) the player hit by clicking Custom on a Lua-configured pile. Call this after configure-stockpile; the acceptance test is the custom button opening."""
+    try:
+        dec = await world._dec(await world._gen())
+        return await LO.repair_stockpile_settings(dec, int(body["building_id"]))
+    except LO.LuaOpError as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/configure-stockpile", operation_id="configure_stockpile")
 async def configure_stockpile(body: dict):
     """Set a stockpile's accepted categories, container limits and wheelbarrows.

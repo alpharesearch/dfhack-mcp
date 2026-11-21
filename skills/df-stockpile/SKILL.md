@@ -51,8 +51,13 @@ A pile must be **big enough to receive** (each tile = one drop point). Two measu
 furniture, gems, leather, refuse, sheet, stone, weapons, wood`. Writing `flags.misc`
 **throws** and aborts the loop (`stockpile_group_set` has no `misc` - it is a `mats`
 struct). Semantics measured here: all flags true = takes everything; one flag = that
-preset; no flags = the wiki's "None" pile. `/configure-stockpile` writes these and
-**prints the flags back** - read them, don't trust success.
+preset; no flags = the wiki's "None" pile. `/configure-stockpile` writes them and prints them
+back - read the read-back. **Flags alone are not a stockpile**: the game's custom-settings UI
+walks per-category material arrays that the UI allocates when a category is switched on (319 for
+the inorganic families, 892 leather, 1327 animals, 14476 food.meat). `flags.wood = true` with
+`wood.mats` size 0 crashes the game when the player clicks Custom (`SIGSEGV at 0xa` in
+`render_things`, overlay on the stack). So after flags, run `/repair-stockpile-settings`; the
+acceptance test is **the Custom button opening**, not a flag read-back.
 
 ## 4. Containers and wheelbarrows
 Limits live in `b.storage.max_barrels / max_bins / max_wheelbarrows` - not on the
