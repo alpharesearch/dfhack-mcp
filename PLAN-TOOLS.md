@@ -336,3 +336,35 @@ Three mechanisms, in increasing order of "how the game means it":
 
 Rule for the plan: **the agent must not busy-poll.** Polling in the conversation costs turns
 and tokens; the watcher (1) and announcements (2) move waiting out of the model.
+
+## Corrections forced by the play test (read these before building the P0 tools)
+
+1. **`canWalkBetween` is not a reachability oracle.** Measured: it answers **false** for
+   pairs that are plainly connected - two grass tiles 15 apart on the same level, and my
+   depot tile vs my stockpile tile. It reads the game's **pathfinder cost groups**, which are
+   computed lazily and per unit body, so uncomputed areas read as unreachable.
+   -> `walkable_between` stays as a *hint*, documented as such. Reachability for planning
+   must be computed by us: a 3D flood fill over the walk grid through stairs/ramps (the
+   per-level `find_regions` fill does not connect z), plus the `maps.getWalkableGroup`
+   signal. This also means my earlier wagon-path claims that leaned on it must be re-derived.
+
+2. **Designation count going to 0 is NOT proof of digging.** Designations vanish when the
+   game fulfils them **and** when they are invalid/cancelled. My `watch_dig.py` announced
+   "DIG COMPLETE" on the count alone. Proof is **tile state**: `#` wall -> stone floor
+   (verified this time: x84-93,y160,elev39 is now MineralFloor3/StoneFloor4 x9 - the dig was
+   real). `watch_dig.py` must verify by tile change, not by absence.
+
+3. **Anchor to the dwarves, not to the biggest floor.** The fort is where the citizens stand:
+   six of seven at **x65-69, y116-118, elev 39**, next to the wagon (`building_wagonst`).
+   Elev 37 (22,105 floor tiles) is open plain ~90 tiles away and NOT connected to them -
+   which is why my stockpile (102,10,e37) and depot (104,24,e37) sit where no dwarf can
+   reach them, and why the player saw no result.
+   -> Plan: a `fort_center` op (modal position of citizens + wagon + their region) and
+   every placement/`suggest_room` call must be scored by **reachability from `fort_center`**,
+   not by region size. `path_report` (wagon rule) and `alerts` severity both depend on this.
+
+4. **Placement site rules the game enforces** (observed as `construct: nil` /
+   `constructWithItems` argument failures): a building needs its footprint on explored,
+   free, non-water tiles, a legally valid site for that type, and non-empty matching
+   materials. So the plan's `survey` op must answer, for a requested rectangle: accepted
+   count, rejected count and **why**, before any designation or placement is issued.
