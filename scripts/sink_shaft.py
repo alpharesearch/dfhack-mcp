@@ -42,6 +42,17 @@ def pending_at(elev):
     return sum(int(l.split()[1]) for l in t.splitlines() if l.strip().startswith("dig"))
 
 
+def column_water(x, y, e_from, e_to):
+    """Water tiles in the shaft column between two elevations (inclusive)."""
+    wet = []
+    for e in range(e_to, e_from + 1):
+        for xx in (x, x + 1):
+            ti = get("/tile-at", {"x": xx, "y": y, "elev": e}, timeout=90)
+            if ti.get("water", 0):
+                wet.append((xx, e, ti["water"]))
+    return wet
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--x", type=int, required=True)
@@ -67,6 +78,14 @@ def main():
             print(f"  refused at elev {elev}: fog or invalid site - stop, probe a neighbour", flush=True)
             return 3
         get("/world-cache-reset")
+        # The player's rule: JUST STOP WHEN WET. A damp *flag* is a warning we log;
+        # actual water in the shaft column is the stop condition - water follows a shaft
+        # down, so the moment it appears, the descent ends and the drain becomes the job.
+        wet = column_water(a.x, a.y, a.to_e, elev)
+        if wet:
+            print(f"  WET at elev {elev}: {wet} - STOPPING the stairwell here as instructed",
+                  flush=True)
+            return 4
         t0 = time.time()
         while pending_at(elev) > 0:
             if time.time() - t0 > a.per_level:
@@ -75,6 +94,11 @@ def main():
             time.sleep(a.every)
             get("/world-cache-reset")
         # The dig revealed the level below. Ask the model what that tile is before ordering it.
+        wet = column_water(a.x, a.y, a.to_e, elev)
+        if wet:
+            print(f"  WET after digging elev {elev}: {wet} - STOP, do not open the band "
+                  f"further; plan drainage before building below", flush=True)
+            return 4
         if elev > a.to_e:
             rows = get("/probe-plan", {"x": a.x, "y": a.y, "elev0": elev - 1, "elev1": elev - 1})["text"]
             line = [l for l in rows.splitlines() if "elev" in l][-1].strip()
