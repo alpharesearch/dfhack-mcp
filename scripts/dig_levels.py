@@ -28,24 +28,20 @@ def get(path, params=None, timeout=120):
 
 
 def state(elev, x0, x1, y0, y1):
-    t = get("/world-map", {"e": elev, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
-                           "rle": "false", "max_tokens": 2600})["text"]
-    wall = fog = floor = 0
-    for l in t.splitlines():
-        if "|" not in l:
-            continue
-        y, row = l.split("|", 1)
-        try:
-            y = int(y.strip())
-        except ValueError:
-            continue
-        if y0 <= y <= y1:
-            cells = row[: (x1 - x0 + 1)]
-            wall += cells.count("#"); fog += cells.count("?")
-            floor += cells.count(".") + cells.count("=") + cells.count("/ ")
+    """(to_dig, dug, pending) per level - from SURVEY categories, not painted map glyphs.
+
+    world_map paints overlays (region letters, 'd' designation, 'B' building) over the
+    terrain, so counting '#', '?' and '.' in its text measures the paint: a fogged box has
+    no walls in it, which is how a glyph-based watcher declared completion with every
+    designation still pending. Completion is positive tile state.
+    """
+    sv = get("/survey", {"elev": elev, "x0": x0, "y0": y0, "x1": x1, "y1": y1}, timeout=200)
+    c = sv.get("counts", {})
+    to_dig = c.get("rock", 0) + c.get("hidden", 0)
+    dug = c.get("floor", 0) + c.get("stairs", 0) + c.get("ramp", 0)
     t2 = get("/world-objects", {"e0": elev, "e1": elev, "max_tokens": 700})["text"]
     pend = sum(int(l.split()[1]) for l in t2.splitlines() if l.strip().startswith("dig "))
-    return wall, fog, floor, pend
+    return to_dig, dug, pend
 
 
 def main():
@@ -65,11 +61,11 @@ def main():
         for s in specs:
             st = state(*s)
             last[s] = st
-            if st[0] == 0 and st[1] == 0:
+            if st[0] == 0 and st[1] > 0:
                 done += 1
         stamp = int(time.time() - t0)
         print(f"[{stamp}s] " + " | ".join(
-            f"e{s[0]} walls{st[0]} fog{st[1]} floor{st[2]} pend{st[3]}" for s, st in
+            f"e{s[0]} to-dig{st[0]} dug{st[1]} pend{st[2]}" for s, st in
             ((s, last[s]) for s in specs)), flush=True)
         if done == len(specs):
             print(f"ALL LEVELS DUG after {stamp}s ({done}/{len(specs)})", flush=True)
