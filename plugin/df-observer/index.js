@@ -119,6 +119,9 @@ export const Config = z.object({
   /** Rules section budget (measured: the full text costs ~316 tokens on EVERY
    * assembly): full | compact (default: only what a briefing line cannot say) | off. */
   rules_mode: z.enum(['full', 'compact', 'off']).default('compact'),
+  /** Alert when the population falls by this many dwarves between reads. The
+   * observer's own rule: absence of reports is not absence of a cause. */
+  pop_drop_min: z.number().int().min(1).default(5),
   /** Filter subagent (plan §11): a plugin-owned analyst session that reads the
    * full observation payload in ITS context and answers with one compact
    * verdict; play sessions get the filtered briefing. Default OFF - measure,

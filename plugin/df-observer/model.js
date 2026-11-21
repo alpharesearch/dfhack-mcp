@@ -298,6 +298,10 @@ export class FortModel {
     this.crashSeen = new Set()
     this.seeded = false
     this.lastDeepTick = -Infinity
+    this.lastDwarves = 0
+    this.lastDwarvesTick = null
+    this.dwarvesKnown = false
+    this.popKnown = false
   }
 
   /** Fast tick: facts, boxes, warnings, pause, generation (the 5-60 s cadence). */
@@ -392,11 +396,13 @@ export class FortModel {
         active.lastTick = this.tick
         active.count += 1
         active.evidence = evidence
+        if (changed) raised.push(active)
         return changed ? active : null
       }
       const alert = makeAlert({ kind, key, evidence, coord, suggested: SUGGESTIONS[kind], nowMs })
       alert.firstTick = this.tick
       alert.lastTick = this.tick
+      raised.push(alert)
       this.alerts.unshift(alert)
       this.trim('alerts', 60)
       this.alertHistory.push({ id: alert.id, kind, key, evidence, coord, tick: this.tick })
@@ -494,6 +500,23 @@ export class FortModel {
     if (num(facts.pop) > 0 && num(facts.food) === 0) {
       raise('crew', 'crew-food', `food 0 with pop ${facts.pop}`, '')
     }
+    // ---- dwarf deaths: `pop` counts pets/livestock too, so the alert reads the
+    // dwarf number (measured: a 96->81 unit drop with the fort at 21 dwarves is
+    // vermin churn, not a massacre). Unknown dwarves = no alert, never a guess.
+    const dwarves = facts.dwarves == null ? null : num(facts.dwarves)
+    if (dwarves != null && dwarves > 0) {
+      if (this.dwarvesKnown && this.lastDwarves - dwarves >= cfg.pop_drop_min) {
+        const lost = this.lastDwarves - dwarves
+        raise('pop_drop', 'dwarf-pop-drop',
+          `dwarves ${this.lastDwarves} -> ${dwarves} (-${lost}) between tick ${this.lastDwarvesTick} and ${this.tick}`
+          + `; drink ${num(facts.drink)} food ${num(facts.food)}`,
+          'find the cause: df_alerts, then the game reports - an empty report list is not evidence of none')
+      }
+      if (!this.dwarvesKnown) this.lastDwarvesTick = this.tick
+      this.lastDwarves = dwarves
+      this.dwarvesKnown = true
+    }
+    void this.popKnown
     if (num(facts.pop) > 0 && num(facts.drink) === 0 && num(facts.barrels) === 0) {
       // drink zero is the normal early state; only alert once per session for it
       raise('crew', 'crew-drink-early', `drink 0 (no barrels yet): the still rung stays open`, '')
@@ -641,7 +664,8 @@ export class FortModel {
       pauseAuthority: this.cfg.pause_authority,
       filter: this.filterState ?? null,
       facts: this.facts ? {
-        pop: num(this.facts.pop), miners: num(this.facts.miners),
+        pop: num(this.facts.pop), dwarves: this.facts.dwarves == null ? null : num(this.facts.dwarves),
+        miners: num(this.facts.miners),
         picks: this.facts.picks === null || this.facts.picks === undefined ? null : num(this.facts.picks),
         food: num(this.facts.food), drink: num(this.facts.drink), wood: num(this.facts.wood),
         stone: num(this.facts.stone), metal: num(this.facts.metal), barrels: num(this.facts.barrels),

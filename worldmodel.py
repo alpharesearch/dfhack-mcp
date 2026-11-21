@@ -2147,6 +2147,9 @@ class FortFacts:
             for r in lv.regions:
                 self.regions.append((lv.elev, r))
         self.pop = len([u for u in units if not u["hostile"]])
+        # "pop" counts pets and livestock too (a fort of 21 dwarves reads 96).
+        # The dwarf number is the one a death event moves.
+        self.dwarves = sum(1 for u in units if u["race"] == "dwarf" and not u["hostile"])
         self.soldiers = sum(1 for u in units if u["soldier"])
         # The labor name is MINE (not MINING) and hunting is HUNTING - verified against
         # ListEnums.unit_labor. Matching the wrong string made `miners 0` a false alarm.

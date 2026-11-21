@@ -33,7 +33,8 @@ function picksText(f) {
 function factsLine(payload) {
   const f = payload.facts
   if (!f) return 'FORT BRIEFING | facts: NO DATA this tick (labelled, not a fact)'
-  const parts = [`pop ${num(f.pop)}`, `miners ${num(f.miners)} of ${picksText(f)} picks`,
+  const popText = f.dwarves == null ? `pop ${num(f.pop)} (dwarves ?)` : `dwarves ${num(f.dwarves)} (units ${num(f.pop)})`
+  const parts = [popText, `miners ${num(f.miners)} of ${picksText(f)} picks`,
     `food ${num(f.food)}`, `drink ${num(f.drink)}`, `wood ${num(f.wood)}`, `stone ${num(f.stone)}`,
     `metal ${num(f.metal)}`, `pending dig ${num(f.pending_dig)}`]
   const state = payload.online === false ? 'GAME OFFLINE' : (payload.paused ? 'PAUSED' : 'running')
@@ -152,7 +153,7 @@ const SHRINK_LEVELS = [
       at: p.next.at ? { elev: p.next.at.elev, x0: p.next.at.x0, x1: p.next.at.x1, y0: p.next.at.y0, y1: p.next.at.y1 } : undefined } : null,
     todos: (p.todos ?? []).slice(0, 20).map(shrinkCompactTodo),
     alerts: (p.alerts ?? []).slice(0, 8).map(shrinkCompactAlert) }),
-  (p) => ({ ...p, facts: p.facts ? { pop: p.facts.pop, miners: p.facts.miners, picks: p.facts.picks,
+  (p) => ({ ...p, facts: p.facts ? { pop: p.facts.pop, dwarves: p.facts.dwarves, miners: p.facts.miners, picks: p.facts.picks,
     pending_dig: p.facts.pending_dig } : null, piles: (p.piles ?? []).slice(0, 4),
     boxes: (p.boxes ?? []).slice(0, 6),
     next: p.next ? { id: p.next.id, title: p.next.title,

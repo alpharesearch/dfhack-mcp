@@ -38,7 +38,7 @@ const baseCfg = Config.parse({
 
 const fastData = (over = {}) => ({
   schema: 'df-observer/v1', generation: 1, paused: false,
-  facts: { pop: 7, miners: 2, picks: 3, food: 10, drink: 0, wood: 0, stone: 5, metal: 0,
+  facts: { pop: 7, dwarves: 7, miners: 2, picks: 3, food: 10, drink: 0, wood: 0, stone: 5, metal: 0,
     barrels: 0, pending_dig: 96, underground_floors: 4, water_tiles: 0, magma_tiles: 0 },
   buildings: [{ name: 'Stockpile', count: 2 }],
   boxes: [
@@ -416,7 +416,7 @@ test('tools: bounded outputs, add/done/ack embed foldable payloads', async () =>
   }
   const exec = { agent: { id: 'a', session: {} } }
   const status = await defs[0].execute({ scope: 'summary' }, exec)
-  assert.match(status.text, /pop 7 miners 2\/3 picks/)
+  assert.match(status.text, /dwarves 7 \(units 7\) miners 2\/3 picks/)
   assert.ok(status.text.split('\n').length <= 30)
   const added = await defs[1].execute({ action: 'add', title: 'dig room wings', accept: { kind: 'tiles_progress', elev: 36, x0: 27, y0: 121, x1: 42, y1: 126, min_dug: 1 }, box: [27, 121, 42, 126, 36] }, exec)
   assert.match(added.payload, /^\[df-observer\] \{"form":"tool"/)
@@ -432,6 +432,30 @@ test('tools: bounded outputs, add/done/ack embed foldable payloads', async () =>
   const done = await defs[1].execute({ action: 'done', id: added.id, evidence: 'survey read: to_dig 0 dug 96' }, exec)
   assert.match(done.text, /closed/)
   return `df_status/df_todo/df_alerts verified (${defs.length} tools)`
+})
+
+// ---------------------------------------------------------------------------
+// population drop alert
+test('pop_drop: fires with the numbers, baseline-first never fires', () => {
+  const model = freshModel()
+  const mk = (dwarves, pop) => ({
+    paused: false, generation: 1,
+    facts: { pop, dwarves, miners: 2, picks: 3, food: 10, drink: 0, wood: 0, stone: 5, metal: 0, barrels: 0,
+      pending_dig: 0, underground_floors: 4, water_tiles: 0, magma_tiles: 0 },
+    buildings: [], boxes: [], shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [],
+  })
+  // Vermin churn must NOT alert: units 96 -> 81 with the dwarf number steady.
+  model.ingestFast(mk(21, 96)); model.ingestDeep({ rungs: [], next: null, piles: [], reports: [], crashlog: null, notes: [] })
+  assert.equal(model.evaluate({}).filter((a) => a.kind === 'pop_drop').length, 0, 'first read is a baseline')
+  model.ingestFast(mk(21, 81)); model.ingestDeep({ rungs: [], next: null, piles: [], reports: [], crashlog: null, notes: [] })
+  assert.equal(model.evaluate({}).filter((a) => a.kind === 'pop_drop').length, 0, 'unit churn with dwarves steady is silent')
+  model.ingestFast(mk(19, 80)); model.ingestDeep({ rungs: [], next: null, piles: [], reports: [], crashlog: null, notes: [] })
+  assert.equal(model.evaluate({}).filter((a) => a.kind === 'pop_drop').length, 0, 'a 2-dwarf drop is under Config.pop_drop_min')
+  model.ingestFast(mk(8, 60)); model.ingestDeep({ rungs: [], next: null, piles: [], reports: [], crashlog: null, notes: [] })
+  const drop = model.evaluate({}).find((a) => a.kind === 'pop_drop')
+  assert.ok(drop, 'a 11-dwarf drop fires the alert')
+  assert.match(drop.evidence, /dwarves 19 -> 8 \(-11\)/, `evidence carries the dwarf numbers: ${drop.evidence}`)
+  return 'dwarf drop 19->8 alerts with numbers; unit churn + 2-drop silent; baseline-first honoured'
 })
 
 // ---------------------------------------------------------------------------

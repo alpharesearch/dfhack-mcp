@@ -1170,7 +1170,7 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
             notes.append(f"facts unavailable: {e}")
     if facts is not None:
         out["facts"] = {
-            "pop": facts.pop, "soldiers": facts.soldiers, "hostile": facts.hostile,
+            "pop": facts.pop, "dwarves": facts.dwarves, "soldiers": facts.soldiers, "hostile": facts.hostile,
             "miners": facts.miners, "hunters": facts.hunters,
             "food": facts.food, "drink": facts.drink, "wood": facts.wood,
             "stone": facts.stone, "metal": facts.metal, "barrels": facts.barrels,
