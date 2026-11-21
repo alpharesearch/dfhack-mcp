@@ -246,7 +246,8 @@ function statusBody(state, scope, config) {
   }
   if (scope === 'summary') {
     const lines = [
-      `tick ${state.tick} | ${state.online === false ? 'GAME OFFLINE' : state.paused ? 'paused' : 'running'}${state.pauseSource ? ` (last pause: ${state.pauseSource})` : ''} | gen ${state.generation ?? '?'}`,
+      `tick ${state.tick} | ${state.online === false ? 'GAME OFFLINE' : state.paused ? 'paused' : 'running'}${state.pauseSource ? ` (last pause: ${state.pauseSource})` : ''} | gen ${state.generation ?? '?'}`
+      + ` | data ${state.age_s == null ? 'NO READ YET' : `${state.age_s}s old`}`,
       `filter: ${state.filter?.enabled ? (state.filter.live ? `live (verdict tick ${state.filter.verdictTick ?? '?'})` : 'enabled, no verdict yet') : 'off'} | rules_mode ${state.filter?.rules_mode ?? config.rules_mode}`,
       facts ? `${facts.dwarves == null ? `pop ${num(facts.pop)} (dwarves ?)` : `dwarves ${num(facts.dwarves)} (units ${num(facts.pop)})`} miners ${num(facts.miners)}/${facts.picks == null ? '? (deep probe has no data)' : num(facts.picks)} picks | food ${num(facts.food)} drink ${num(facts.drink)} (ON WATCHED PILES, not the game's fort-wide Food/Drink bars) wood ${num(facts.wood)} stone ${num(facts.stone)} | pending dig ${num(facts.pending_dig)}`
         : 'facts: NO DATA this tick',
@@ -286,7 +287,11 @@ function statusBody(state, scope, config) {
   if (scope === 'health') {
     const lines = [
       `tick ${state.tick} | ${state.online === false ? 'GAME OFFLINE' : state.paused ? 'PAUSED' : 'running'}`
-      + ` | gen ${state.generation ?? '?'}${state.pauseSource ? ` | last pause: ${state.pauseSource}${state.pauseAtTick != null ? ` @tick ${state.pauseAtTick}` : ''}` : ''}`,
+      + ` | gen ${state.generation ?? '?'}`
+      // The age of the newest successful game read, so a plan is never built on
+      // undated numbers (the play probe asked for exactly this).
+      + ` | data ${state.age_s == null ? 'NO READ YET' : `${state.age_s}s old`}`
+      + `${state.pauseSource ? ` | last pause: ${state.pauseSource}${state.pauseAtTick != null ? ` @tick ${state.pauseAtTick}` : ''}` : ''}`,
       ...(state.pauseEvents ?? []).slice(0, 8).map((e) => `  pause event @tick ${e.tick}: ${e.paused ? 'paused' : 'resumed'} (${e.source ?? 'unknown'})`),
       ...((state.notes ?? []).slice(0, 8).map((n) => `NOTE: ${short(String(n), 160)}`)),
       ...(state.crashlog?.dir ? (state.crashlog.files ?? []).slice(0, 5).map((f) => `crashlog ${String(f.name)} ${f.bytes}B`) : ['crash log dir: not configured (Config.game_dir)']),

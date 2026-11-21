@@ -897,6 +897,10 @@ export class FortModel {
     }))
     return {
       tick: this.tick, t: Date.now(), online: this.online !== false,
+      // How old the newest successful game read is: an agent must know the age of
+      // the numbers it is planning with (the probe asked for exactly this).
+      observedAt: this.observedAt ?? null,
+      age_s: this.observedAt ? Math.round((Date.now() - this.observedAt) / 1000) : null,
       paused: this.paused, pauseSource: this.pauseSource, pauseAtTick: this.pauseAtTick,
       generation: this.generation,
       poll: this.pollMs ?? null,

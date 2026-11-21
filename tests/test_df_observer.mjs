@@ -613,6 +613,23 @@ test('GAME SAYS: the game reports are quoted in the briefing', () => {
 
 // ---------------------------------------------------------------------------
 // wake boundary: steer reaches a busy agent at its next step
+test('tool answers stamp the age of the newest game read', async () => {
+  const model = freshModel()
+  const payload = model.payload()
+  assert.ok('age_s' in payload && 'observedAt' in payload, 'payload carries the read age')
+  assert.equal(typeof payload.age_s, 'number', 'age_s is a number after a read')
+  const defs = toolDefinitions({ model, projection: null, config: model.cfg, sessionFilter: () => true })
+  const status = defs.find((d) => d.name === 'df_status')
+  const res = await status.execute({ scope: 'health' }, { agent: { id: 'play-1' } })
+  assert.match(res.text, /data \d+s old/, `the header line stamps the age: ${String(res.text).split('\n')[0]}`)
+  // no read yet -> labelled, not silent
+  const bare = new FortModel(model.cfg)
+  const defs2 = toolDefinitions({ model: bare, projection: null, config: bare.cfg, sessionFilter: () => true })
+  const res2 = await defs2.find((d) => d.name === 'df_status').execute({ scope: 'health' }, { agent: { id: 'play-1' } })
+  assert.match(res2.text, /data NO READ YET/, 'a model without reads says so')
+  return 'read age stamped in the header line'
+})
+
 test('game_says: a noteworthy report raises an alert with the verbatim quote, once', () => {
   const model = freshModel()
   const ingest = (reports) => model.ingestDeep({ rungs: [], next: null, notes: [], piles: [], reports })
