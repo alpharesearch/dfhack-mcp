@@ -549,6 +549,19 @@ test('wake advice follows the acceptance kind (pile to-do is not a dug box)', as
 
 // ---------------------------------------------------------------------------
 // the game's own hints reach the briefing
+test('lean payloads keep generation/poll/pauseSource/facts for the panel', () => {
+  const model = freshModel()
+  const brief = buildBriefing(model.payload(), { maxTokens: 700 })
+  const line = brief.text.slice(brief.text.lastIndexOf(PAYLOAD_PREFIX))
+  const folded = JSON.parse(line.slice(PAYLOAD_PREFIX.length)).data
+  assert.ok(folded.generation !== undefined, `generation survives shrink level ${brief.payloadLevel}`)
+  assert.ok(folded.poll !== undefined, 'poll survives the leanest payload')
+  assert.ok(folded.pauseSource !== undefined, 'pauseSource survives (the chip must not read ?)')
+  assert.ok(folded.facts, `facts survive level ${brief.payloadLevel} (compactFacts)`)
+  assert.ok('dwarves' in folded.facts, 'the dwarf number is in the compact facts')
+  return `level ${brief.payloadLevel}: chips + facts folded in (${brief.tokens} tokens)`
+})
+
 test('GAME SAYS: the game reports are quoted in the briefing', () => {
   const model = freshModel()
   model.ingestDeep({ rungs: [], next: null, piles: [], crashlog: null, notes: [],

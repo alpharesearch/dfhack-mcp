@@ -150,6 +150,17 @@ function healthLines(payload, max = 6) {
   return lines
 }
 
+/** The facts a panel header cannot do without, in the fewest keys. */
+function compactFacts(f) {
+  if (!f) return null
+  const out = {}
+  for (const k of ['pop', 'dwarves', 'miners', 'picks', 'food', 'drink', 'alcohol', 'meals', 'raw_food',
+    'seeds', 'pending_dig', 'water_tiles', 'magma_tiles', 'date']) {
+    if (f[k] !== undefined && f[k] !== null) out[k] = f[k]
+  }
+  return out
+}
+
 function truncate(text, max) {
   const s = String(text ?? '')
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`
@@ -198,12 +209,15 @@ const SHRINK_LEVELS = [
     todos: (p.todos ?? []).slice(0, 14).map(shrinkCompactTodo),
     alerts: (p.alerts ?? []).slice(0, 10).map(shrinkCompactAlert),
     digEvents: (p.digEvents ?? []).slice(0, 6) }),
-  (p) => ({ tick: p.tick, online: p.online, paused: p.paused, reports: (p.reports ?? []).slice(-2),
+  (p) => ({ tick: p.tick, online: p.online, paused: p.paused, generation: p.generation ?? null,
+    poll: p.poll ?? null, pauseSource: p.pauseSource ?? null, pauseAuthority: p.pauseAuthority ?? null,
+    facts: compactFacts(p.facts), reports: (p.reports ?? []).slice(-2),
     todos: (p.todos ?? []).slice(0, 24).map((t) => ({ id: t.id, state: t.state, evidence: String(t.evidence ?? '').slice(0, 60) })),
     alerts: (p.alerts ?? []).slice(0, 8).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked })),
     digEvents: (p.digEvents ?? []).slice(0, 6) }),
   (p) => ({ tick: p.tick, online: p.online, paused: p.paused, poll: p.poll,
-    pauseAuthority: p.pauseAuthority, reports: (p.reports ?? []).slice(-1),
+    generation: p.generation ?? null, pauseSource: p.pauseSource ?? null,
+    pauseAuthority: p.pauseAuthority, facts: compactFacts(p.facts), reports: (p.reports ?? []).slice(-1),
     todos: (p.todos ?? []).slice(0, 30).map((t) => ({ id: t.id, state: t.state })),
     alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked })) }),
 ]
