@@ -716,6 +716,24 @@ test('title coverage is partial, never all-or-nothing', () => {
   return sawPartial ? 'partial coverage observed on the way down' : 'titles held at every cap tested'
 })
 
+test('the dock height cap is Config-driven and reaches the client', () => {
+  const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  assert.match(index, /dock_max_height: z\.number\(\)\.int\(\)\.min\(0\)\.max\(4000\)\.default\(340\)/, 'knob declared')
+  const model = freshModel()
+  const payload = model.payload()
+  assert.equal(payload.dockMaxHeight, 340, 'the payload carries the cap')
+  assert.equal(viewOf({ ...payload, _view: undefined }).dockMaxHeight, 340, 'the client-visible view carries it (4-place sync)')
+  const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
+  assert.match(client, /dockBody\(snap\.dockMaxHeight\)/, 'the dock uses the projected value')
+  assert.match(client, /maxHeight: cap > 0 \? cap : 'none'/, '0 means no cap (no scrollbar)')
+  const lines = client.split('\n')
+  const helperLine = lines.findIndex((l) => l.includes('const dockBody = (max)'))
+  const panelLine = lines.findIndex((l) => l.startsWith('function Panel('))
+  assert.ok(helperLine > panelLine, `dockBody is defined inside Panel's scope (${helperLine} > ${panelLine})`)
+  assert.ok(!/^function dockBody/m.test(client), 'no module-level dockBody (S is not in that scope)')
+  return 'dock cap travels Config -> payload -> view -> client'
+})
+
 test('the Sidebar page fills the pane height (no half-height scroll)', () => {
   const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
   const asPage = client.slice(client.indexOf('const shell = asPage'), client.indexOf('return h(\'div\', { style: shell }'))

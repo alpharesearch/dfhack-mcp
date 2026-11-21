@@ -153,6 +153,12 @@ window.__ModuleLoader__.load({
     // `asPage` = rendered inside a right-Sidebar tab: no collapse toggle, the
     // sections are the page. The dock copy keeps the chip + expand behaviour.
     function Panel(ctx, asPage = false) {
+  // Dock body height follows Config (`dock_max_height`; 0 = no cap). Defined here so
+  // it closes over the theme-token styles - a module-level helper could not see S.
+  const dockBody = (max) => {
+    const cap = Number.isFinite(max) ? max : 340
+    return { ...S.body, maxHeight: cap > 0 ? cap : 'none', overflow: cap > 0 ? 'auto' : 'visible' }
+  }
       return function DfObserverPanel(props) {
         const sessionId = props.sessionId
         // The Host computes this from the session log (projection `wire.view`);
@@ -259,7 +265,10 @@ window.__ModuleLoader__.load({
             pull.ok
               ? `panel data: /df-panel pull #${pull.ok}${pull.tick != null ? ` (model tick ${pull.tick})` : ''}`
               : `panel data: wire only${pull.fail ? ` - /df-panel pull failed (${pull.note ?? 'no JSON in result'})` : ' - first pull pending'}`) : null,
-          open ? h('div', { style: S.body },
+          // The dock cap is Config-driven (`dock_max_height`; 0 = no cap): the Sidebar
+          // page fills its pane (measured scrollHeight == clientHeight), the dock is the
+          // one surface that scrolls a long ledger.
+          open ? h('div', { style: dockBody(snap.dockMaxHeight) },
             snap.next ? h('div', { style: S.sec },
               h('div', { style: S.secTitle }, t('ladder.next')),
               h('div', { style: S.line }, h('span', null, `${snap.next.id ?? ''} ${snap.next.title ?? ''}`)),

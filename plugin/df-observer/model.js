@@ -31,7 +31,7 @@ export const PAYLOAD_PREFIX = '[df-observer] '
 /** The state field set shared by the live model and the session projection. */
 export const STATE_FIELDS = [
   'tick', 'online', 'observedAt', 'paused', 'pauseSource', 'pauseAtTick', 'pluginPauseTick',
-  'generation', 'poll', 'pauseAuthority', 'filter',
+  'generation', 'poll', 'pauseAuthority', 'filter', 'dockMaxHeight',
   'facts', 'buildings', 'boxes', 'shafts', 'piles', 'warnings', 'rungs', 'next', 'designations',
   'reports', 'crashlog', 'notes', 'alerts', 'alertHistory', 'todos', 'digEvents', 'pauseEvents',
   'overload', 'briefings',
@@ -1013,6 +1013,7 @@ export class FortModel {
       generation: this.generation,
       poll: this.pollMs ?? null,
       pauseAuthority: this.cfg.pause_authority,
+      dockMaxHeight: this.cfg.dock_max_height,
       filter: this.filterState ?? null,
       facts: this.facts ? {
         pop: num(this.facts.pop), dwarves: this.facts.dwarves == null ? null : num(this.facts.dwarves),
@@ -1111,6 +1112,7 @@ export function viewOf(state) {
       tick: state.tick, online: state.online, observedAt: state.observedAt,
       poll: state.poll ?? null, pauseAuthority: state.pauseAuthority ?? null,
       filter: state.filter ?? null,
+      dockMaxHeight: state.dockMaxHeight ?? null,
       paused: state.paused, pauseSource: state.pauseSource, pauseAtTick: state.pauseAtTick,
       pluginPauseTick: state.pluginPauseTick ?? null,
       generation: state.generation, facts: state.facts, buildings: state.buildings,
@@ -1162,6 +1164,7 @@ export const dfObserverProjection = (z) => ({
     poll: z.number().nullable().default(null),
     pauseAuthority: z.string().nullable().default(null),
     filter: z.any().default(null),
+    dockMaxHeight: z.number().nullable().default(null),
     pluginPauseTick: z.number().nullable().default(null),
     facts: z.any().default(null),
     buildings: z.array(z.any()).default([]),
@@ -1186,7 +1189,7 @@ export const dfObserverProjection = (z) => ({
   init: () => ({
     tick: 0, online: null, observedAt: null, paused: null, pauseSource: null, pauseAtTick: null,
     pluginPauseTick: null,
-    generation: null, poll: null, pauseAuthority: null, filter: null,
+    generation: null, poll: null, pauseAuthority: null, filter: null, dockMaxHeight: null,
     facts: null, buildings: [], boxes: [], shafts: [], piles: [], warnings: null,
     rungs: [], next: null, designations: null, reports: [], crashlog: null, notes: [], alerts: [], alertHistory: [],
     todos: [], digEvents: [], pauseEvents: [], overload: null, briefings: 0,

@@ -126,6 +126,10 @@ export const Config = z.object({
    * cost ~5 tokens per row at 24 chars, ~10 at 44 (measured). */
   panel_title_rows: z.number().int().min(0).max(30).default(10),
   panel_title_chars: z.number().int().min(8).max(80).default(44),
+  /** Max height (px) of the composer dock's expanded body; 0 = no cap (measured:
+   * the Sidebar page fills its pane with no scroll, the dock is the one capped
+   * surface - 340 px scrolls a 14-row ledger at 495 px). */
+  dock_max_height: z.number().int().min(0).max(4000).default(340),
   /** A pile this full on a small area is reported as full. */
   pile_full_items: z.number().int().min(10).default(150),
 
