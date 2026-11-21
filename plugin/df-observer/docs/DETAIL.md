@@ -103,6 +103,12 @@ config object, so copy the keys you change.
   log-folded ledger entries for the current session.
 
 
+- **Ledger is durable** (`storageDomain` unit `df_observer`, per-record:
+  `~/.dsh/storages/df_observer/todos/<id>.json`), restored at activation with
+  ids that never collide with the seeds.
+- `food-on-piles` / `drink-on-piles` label what the numbers are (item counts on
+  the watched piles). The game's own Food/Drink bars are fort-wide meal supply -
+  `Food None` on the bar and `food-on-piles 3` are both true.
 - **Header = the game's status bar, as far as this build allows**: dwarf count
   (`dwarves 21 (units 79)` - the unit count includes pets and livestock), date
   (`Y100 Win M9 d18`), seeds, picks. The site's *name* needs the language module

@@ -392,3 +392,33 @@ must not be paid every 8 s. The probed fields live in `model.statusFacts` and
 are re-attached on every fast tick, because `ingestFast` replaces `facts` with
 the server's object (measured: the header lost date/seeds on the tick after the
 probe).
+
+
+## 14. Durable ledger (measured, proven 2026-11-21)
+
+To-dos are plugin-owned state, so they must survive reloads (measured gap: a
+reinstall wiped a registered to-do, twice). Route: `ctx.storageDomain` with the
+unit name `df_observer` (`UNIT_NAME_RE = ^[a-z][a-z0-9_]*$` - camelCase is
+rejected), `layout: 'per-record'`, tables `todos` + `boxes`.
+
+Four measured failures on the way, all now fixed:
+
+1. `ctx.effect(() => this.openLedger())` - an async body is not a disposer; the
+   open promise was dropped and the domain never opened.
+2. Unit name `dfObserver` rejected → `ledger open failed (labelled)`.
+3. `ctx.effect(ledgerDispose)` - the callback IS the constructor, so passing the
+   disposer ran it at activation → `domain 'df_observer' is closed` on every
+   write.
+4. The name fix itself did not land (a replace pattern missed a re-indented
+   line) and looked like module staleness; `grep` the changed string to prove an
+   edit.
+
+Proof (live): `~/.dsh/storages/df_observer/todos/19.json` holds the full record;
+after a remove+install the briefing shows `#19 Durability probe 5: tunnel dug to
+>=66 x27-42 y121-126 elev36` with `accept: to_dig==0 && dug>=66 in box`, and the
+seeded ledger re-keyed to ids 20+ so nothing collides.
+
+Also proven live: an acceptance flip raises the whitelisted `dig_complete` alert
+(`A1` in the panel/briefing, with the evidence quoted), and `df_status
+scope=health` now renders notes - including the plugin's own diagnostics, which
+is how every failure above became visible.
