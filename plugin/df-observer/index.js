@@ -109,6 +109,9 @@ export const Config = z.object({
   stall_ticks: z.number().int().min(2).default(4),
   /** Tile growth that counts as flooding: the aquifer breach measured 1030 -> 1091. */
   water_growth_min: z.number().int().min(1).default(25),
+  /** A designation cluster this big, outside every watched box, gets named: work
+   * nobody is measuring. 0 disables the alert. */
+  unwatched_min_tiles: z.number().int().min(0).default(20),
   /** A pile this full on a small area is reported as full. */
   pile_full_items: z.number().int().min(10).default(150),
 

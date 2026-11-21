@@ -584,6 +584,39 @@ export class FortModel {
       }
     }
 
+    // ---- designations nobody is watching (measured: 103 queued jobs, watched 0) ----
+    // A cluster of designated tiles outside every monitored box is work whose
+    // progress no rule sees: no completion, no stall, no tile-state loss. Name it.
+    const minUnwatched = cfg.unwatched_min_tiles ?? 20
+    const liveKeys = new Set()
+    if (minUnwatched > 0 && this.designations?.by_elev?.length) {
+      const watched = this.boxes.map((b) => ({ x0: b.box[0], y0: b.box[1], x1: b.box[2], y1: b.box[3], elev: b.elev }))
+      for (const e of this.designations.by_elev) {
+        for (const c of e.clusters ?? []) {
+          const covered = watched.some((b) => b.elev === e.elev
+            && c.x0 <= b.x1 && c.x1 >= b.x0 && c.y0 <= b.y1 && c.y1 >= b.y0)
+          const key = `unwatched-${e.elev}-${c.x0}-${c.y0}-${c.x1}-${c.y1}`
+          if (covered || c.tiles < minUnwatched) {
+            const active = this.alerts.find((a) => a.key === key && !a.cleared)
+            if (active) { active.cleared = true; active.lastTick = this.tick }
+            continue
+          }
+          liveKeys.add(key)
+          raise('unwatched_designations', key,
+            `${c.tiles} designated tiles at x${c.x0}-${c.x1} y${c.y0}-${c.y1} elev${e.elev} are outside every monitored box - nothing measures this work`,
+            `x${c.x0}-${c.x1} y${c.y0}-${c.y1} elev${e.elev}`,
+            `watch it so progress is proven: df_todo({action:"add", title:"...", box:[${c.x0},${c.y0},${c.x1},${c.y1},${e.elev}], accept:{kind:"tiles_progress", elev:${e.elev}, x0:${c.x0}, y0:${c.y0}, x1:${c.x1}, y1:${c.y1}, min_dug:${c.tiles}}})`)
+        }
+      }
+    }
+    // A cluster drained/absorbed/watched since the last scan: its alert clears.
+    for (const a of this.alerts) {
+      if (a.kind === 'unwatched_designations' && !a.cleared && !liveKeys.has(a.key)) {
+        a.cleared = true
+        a.lastTick = this.tick
+      }
+    }
+
     // ---- water GROWING in the monitored band (an aquifer breach floods) ----
     // Measured: the designations at elev22-24 breached the aquifer and the band's
     // water tiles went 1030 -> 1091 (+61). Shaft columns can stay dry while the

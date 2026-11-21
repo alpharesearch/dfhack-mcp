@@ -632,6 +632,30 @@ test('tool answers stamp the age of the newest game read', async () => {
   return 'read age stamped in the header line'
 })
 
+test('unwatched_designations names a big designation cluster outside the monitored boxes', () => {
+  const model = freshModel()
+  const boxes = [{ elev: 36, box: [27, 121, 42, 126], to_dig: 0, dug: 96, pending: 0 }]
+  const ingest = (des) => model.ingestDeep({ rungs: [], notes: [], piles: [], designations: des })
+  model.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 23, drink: 0, wood: 0, stone: 140, metal: 0, barrels: 18, pending_dig: 103 },
+    buildings: [], boxes: [...boxes], shafts: [], warnings: { designated_tiles: 107, damp_tiles: 0, hot_tiles: 0 }, notes: [] })
+  ingest({ band: [22, 45], designated_total: 107, by_elev: [
+    { elev: 41, designated_tiles: 83, clusters: [{ x0: 38, x1: 48, y0: 113, y1: 122, tiles: 83 }] },
+    { elev: 36, designated_tiles: 30, clusters: [{ x0: 27, x1: 42, y0: 121, y1: 126, tiles: 30 }] }] })
+  const hit = model.evaluate(model.cfg).find((a) => a.kind === 'unwatched_designations')
+  assert.ok(hit, 'the unmonitored cluster raises an alert')
+  assert.match(hit.evidence, /83 designated tiles at x38-48 y113-122 elev41 are outside every monitored box/, hit.evidence)
+  assert.match(hit.suggested, /df_todo\(\{action:"add"/, 'the advice is runnable, with the box + acceptance inlined')
+  // the cluster covered by a monitored box raises nothing
+  const hit2 = model.evaluate(model.cfg).filter((a) => a.kind === 'unwatched_designations')
+  assert.equal(hit2.filter((a) => a.key.includes('-36-27-121')).length, 0, 'a watched cluster stays quiet')
+  // the scan clearing it (designations drained) clears the alert
+  ingest({ band: [22, 45], designated_total: 0, by_elev: [] })
+  model.evaluate(model.cfg)
+  assert.ok(!model.alerts.find((a) => a.kind === 'unwatched_designations' && !a.cleared), 'the alert clears with the designations')
+  return 'unwatched designations named with a runnable watch recipe'
+})
+
 test('ledger + box storage keys are path-safe', () => {
   const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
   // The todo key: String(id) - numeric, safe.
