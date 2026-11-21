@@ -577,6 +577,28 @@ test('GAME SAYS: the game reports are quoted in the briefing', () => {
 
 // ---------------------------------------------------------------------------
 // wake boundary: steer reaches a busy agent at its next step
+test('noData: an empty probe read never flips a to-do', () => {
+  const model = freshModel()
+  const pileTodo = model.addTodo({ title: 'wood reaches the wood pile', accept: { kind: 'pile_category', category: 'wood', min_items: 1 } })
+  model.ingestDeep({ rungs: [], next: null, notes: [], piles: { 18: { id: 18, found: 1, accepts: 'wood', total: 2, elev: 38, x0: 58, x1: 63, y0: 116, y1: 119 } } })
+  assert.equal(model.evaluate(model.cfg).find((a) => a.key === `todo-${pileTodo.id}`)?.kind, 'dig_complete', 'the real read completes it')
+  // the probe goes empty (pile ids renumbered / probe pending)
+  model.ingestDeep({ rungs: [], next: null, notes: [], piles: [] })
+  const raised = model.evaluate(model.cfg)
+  assert.ok(!raised.some((a) => a.kind === 'todo_reopened'), 'an empty read does NOT reopen')
+  assert.equal(model.todos.find((t) => t.id === pileTodo.id).state, 'done', 'state survives the flap')
+  assert.equal(model.todos.find((t) => t.id === pileTodo.id).lastCheck.ok, null, 'the check is labelled no-data')
+  // a real reading that fails DOES reopen (state changes only on facts)
+  model.ingestDeep({ rungs: [], next: null, notes: [], piles: { 18: { id: 18, found: 1, accepts: 'stone', total: 0, elev: 38, x0: 58, x1: 63, y0: 116, y1: 119 } } })
+  assert.ok(model.evaluate(model.cfg).some((a) => a.kind === 'todo_reopened'), 'a real reading can reopen')
+  // boxes and rungs behave the same
+  const boxTodo = model.addTodo({ title: 'a far box', accept: { kind: 'tiles_progress', elev: 40, x0: 1, x1: 2, y0: 1, y1: 2, min_dug: 1 } })
+  model.todos.find((t) => t.id === boxTodo.id).state = 'done'
+  model.evaluate(model.cfg)
+  assert.equal(model.todos.find((t) => t.id === boxTodo.id).state, 'done', 'an unmonitored box is NO DATA, not a reopening')
+  return 'noData suppresses flips on empty reads; real readings still flip'
+})
+
 test('delivery: alerts steer, briefings inject, followup only as fallback', async () => {
   const { deliveryOf } = await import(path.join(pluginDir, 'index.js'))
   assert.equal(deliveryOf('alert', { steer() {}, followup() {} }), 'steer', 'an alert to an agent with steer uses steer')

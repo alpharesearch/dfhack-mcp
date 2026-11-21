@@ -202,16 +202,18 @@ export function runAcceptance(todo, snapshot) {
         const c = coords(b)
         return c.x0 === accept.x0 && c.y0 === accept.y0 && c.x1 === accept.x1 && c.y1 === accept.y1
       })
-      if (!box) return { ok: false, evidence: `no survey read for box x${accept.x0}-${accept.x1} y${accept.y0}-${accept.y1} elev${accept.elev} (no data, not a fact)` }
+      if (!box) return { ok: false, noData: true, evidence: `no survey read for box x${accept.x0}-${accept.x1} y${accept.y0}-${accept.y1} elev${accept.elev} (no data, not a fact)` }
       if (box.to_dig == null || box.dug == null) {
-        return { ok: false, evidence: `box x${accept.x0}-${accept.x1} y${accept.y0}-${accept.y1} elev${accept.elev}: NO DATA yet (watched, awaiting its first survey read - not a fact)` }
+        return { ok: false, noData: true, evidence: `box x${accept.x0}-${accept.x1} y${accept.y0}-${accept.y1} elev${accept.elev}: NO DATA yet (watched, awaiting its first survey read - not a fact)` }
       }
       const ok = box.to_dig === 0 && box.dug >= num(accept.min_dug, 1)
       return { ok, evidence: `x${box.box[0]}-${box.box[2]} y${box.box[1]}-${box.box[3]} elev${box.elev}: to_dig ${box.to_dig}, dug ${box.dug}, pending ${box.pending} (accept: to_dig==0 && dug>0)` }
     }
     case 'pile_category': {
       const pile = piles.find((p) => p.found === 1 && String(p.accepts ?? '').split(',').includes(accept.category))
-      if (!pile) return { ok: false, evidence: `no pile accepts ${accept.category} (probe covered ids ${piles.map((p) => p.id).join(',') || 'none'})` }
+      if (!pile) return { ok: false, noData: !piles.length, evidence: piles.length
+        ? `no pile accepts ${accept.category} (probe covered ids ${piles.map((p) => p.id).join(',')})`
+        : `no pile probe rows this tick (probe pending): ${accept.category} UNKNOWN, not a fact` }
       const items = num(pile.total)
       const ok = items >= num(accept.min_items, 1)
       return { ok, evidence: `pile ${pile.id} x${pile.x0}-${pile.x1} y${pile.y0}-${pile.y1} elev${pile.elev} accepts ${pile.accepts}, ${items} items on it (accept: >= ${accept.min_items ?? 1})` }
@@ -219,7 +221,9 @@ export function runAcceptance(todo, snapshot) {
     case 'pile_categories': {
       const need = accept.categories ?? []
       const pile = piles.find((p) => p.found === 1 && need.every((c) => String(p.accepts ?? '').split(',').includes(c)))
-      if (!pile) return { ok: false, evidence: `no pile accepts all of ${need.join('+')}` }
+      if (!pile) return { ok: false, noData: !piles.length, evidence: piles.length
+        ? `no pile accepts all of ${need.join('+')}`
+        : `no pile probe rows this tick (probe pending): ${need.join('+')} UNKNOWN, not a fact` }
       const items = num(pile.total)
       const ok = items >= num(accept.min_items, 0)
       return { ok, evidence: `pile ${pile.id} elev${pile.elev} accepts ${pile.accepts}, ${items} items on it` }
@@ -230,12 +234,14 @@ export function runAcceptance(todo, snapshot) {
         const cats = String(p.accepts ?? '').split(',').filter(Boolean)
         return cats.length >= 8 && !cats.includes('stone') && !cats.includes('wood')
       })
-      if (!pile) return { ok: false, evidence: 'no pile taking >=8 categories while excluding stone+wood' }
+      if (!pile) return { ok: false, noData: !piles.length, evidence: piles.length
+        ? 'no pile taking >=8 categories while excluding stone+wood'
+        : 'no pile probe rows this tick (probe pending): general pile UNKNOWN, not a fact' }
       return { ok: true, evidence: `pile ${pile.id} elev${pile.elev} accepts ${pile.accepts} (excludes stone/wood)` }
     }
     case 'rung': {
       const rung = rungs.find((r) => r.id === accept.rung)
-      if (!rung) return { ok: false, evidence: `ladder rung ${accept.rung} not in the read (no data, not a fact)` }
+      if (!rung) return { ok: false, noData: true, evidence: `ladder rung ${accept.rung} not in the read (no data, not a fact)` }
       return { ok: !!rung.done, evidence: `rung ${rung.id} ${rung.done ? 'satisfied' : 'open'}: ${rung.title}` }
     }
     case 'buildings_kw': {
@@ -694,8 +700,12 @@ export class FortModel {
     const snapshot = { facts, piles: this.piles, buildings: this.buildings, boxes: this.boxes, rungs: this.rungs }
     for (const todo of this.todos) {
       if (todo.accept.kind === 'manual') continue
-      const { ok, evidence } = runAcceptance(todo, snapshot)
-      todo.lastCheck = { tick: this.tick, ok, evidence }
+      const { ok, evidence, noData = false } = runAcceptance(todo, snapshot)
+      todo.lastCheck = { tick: this.tick, ok: noData ? null : ok, evidence, noData }
+      // Absence is never a fact (player-measured flap A11-A14 -> A15-A22): an
+      // empty probe read must not reopen a completed to-do, and must not close
+      // an open one. Only a real reading moves the state.
+      if (noData) continue
       const wasDone = todo.state === 'done'
       const nextState = ok ? 'done' : (todo.state === 'done' ? 'open' : todo.state)
       if (nextState !== todo.state) {
