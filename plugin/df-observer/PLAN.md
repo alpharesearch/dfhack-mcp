@@ -136,7 +136,8 @@ health line (offline/crash/reload). Registered through `ctx.slots.inject` +
 
 ## 5. Boundaries
 
-- **Read-only towards the game, with exactly one agreed write:** pausing (see §5a). The plugin
+- **Read-only towards the game.** The one write the plan contemplates - pausing - is demoted to
+  **optional and default OFF** (§5a), because the game self-pauses. The plugin
   never designates, builds, sets labours, runs commands, sends keys, digs, blueprints, or writes
   game-dir files. All in-game action stays agent-driven, so the player's rules (no dig-now, no
   blueprints for play, designate-in-fog, stop-when-wet) stay enforceable by the model's choices
@@ -176,9 +177,9 @@ installed package needs a restart; new bundles can activate via HMR.
 | Phase | Deliverable | Acceptance test |
 |---|---|---|
 | **P0** | poller + projection + `agent.inject()` briefing + `df_status` + `Config`; **adaptive interval** (paused 60 s, running 5-15 s) | briefing appears in the next admitted step, bounded to `briefing_max_tokens`, numbers match a manual `/survey` read; poll rate visibly follows the pause state |
-| **P1** | to-do ledger (ladder seed + auto-created basics) with plugin-run acceptance tests, alerts + `agent.followup()` wakes, **pause authority** (§5a) + overload signalling | during a real dig the agent is woken by `dig_complete` and `water` without calling any tool; status flips quote evidence; a plugin pause names its cause and is never auto-resumed over a player pause |
+| **P1** | to-do ledger (ladder seed + auto-created basics) with plugin-run acceptance tests, alerts + `agent.followup()` wakes, **pause attribution** (§5a; plugin-initiated pausing default OFF) + overload signalling | during a real dig the agent is woken by `dig_complete` and `water` without calling any tool; status flips quote evidence; a plugin pause names its cause and is never auto-resumed over a player pause |
 | **P2** | slot panel (ladder/todos/alerts/health) + chat alert rows + `df_alerts(ack)` - **shipped in the first install** | human sees ladder/todos/alerts live; ack silences repeats; theme/light-dark consistent |
-| **P3** | game-health watcher (offline, **crash-log name/size only**, save-reload diff) + hauling/pick monitoring + pile health | after a crash the briefing reports the new crash log and the offline span; after a reload it lists what survived and re-issues lost designations as to-dos. Stack forensics live in a separate plugin, later |
+| **P3** | game-health watcher (offline, **crash-log name/size only**, pause-source attribution, save-reload diff) + hauling/pick monitoring + pile health | after a crash the briefing reports the new crash log and the offline span; after a reload it lists what survived and re-issues lost designations as to-dos. Stack forensics live in a separate plugin, later |
 | **P4** | tuning: delta gating measured, token cost per turn measured (first-turn prompt tokens before/after), Config examples | a 1-hour play session with briefing-only context stays inside the budget; tool calls drop |
 
 ## 8. Success criterion (the game test, not the plugin test)
@@ -193,9 +194,10 @@ zero false "complete" claims (the projection can only say complete from positive
 ## 9. Decisions (player, 2026-11-21)
 
 1. **Wake policy:** start with `water`, `dig_complete`, `crash` (game offline/crash log). More
-   wakes will be added only with evidence from play. **New capability agreed:** for some events
-   the plugin may **pause the game** (see §5a) - pausing is the player's own tool, and it is the
-   right answer to "too much is happening, stop and think".
+   wakes will be added only with evidence from play. **Plugin pausing is demoted to optional,
+   default OFF** (§5a): the game self-pauses on the events that matter, so the plugin's job is
+   pause **attribution** (game vs player vs plugin) plus the model-side cases the game will not
+   cover (overload, mid-plan completion, save-reload).
 2. **Interval: adaptive** - game **paused: 60 s**; game **running: 5-15 s** (Config range). If
    the alert/to-do backlog grows past `overload_*` thresholds, the plugin (a) tells the model to
    work the queue in order and (b) may pause the game so nothing changes underneath it while the
@@ -212,7 +214,25 @@ zero false "complete" claims (the projection can only say complete from positive
    crash log appeared" from file name/size signals; deep crash forensics (reading `crashlog/`
    stacks, correlating with game state) belongs to a **separate plugin later**.
 
-### 5a. Pause authority (the one write, tightly scoped)
+### 5a. Pause authority - **demoted to optional, default OFF** (the game self-pauses)
+
+The player's note: **Dwarf Fortress 53 auto-pauses on the events that matter** (built-in
+auto-pause settings; the DFHack `dwarfmonitor` plugin's alert layer is configured in
+`dfhack-config/dwarfmonitor.json`, currently defaults). So a plugin pause is largely
+redundant, and the game's own pause is the authority the player already knows.
+
+What remains for the plugin:
+- **Detect and attribute pauses.** Watch transitions of `GET /get-pause-state` and say who
+  paused it: the game (auto-pause fired), the player, or the plugin. Attribution matters
+  because the plugin must never auto-resume a pause it did not make.
+  Measured limitation: the auto-pause flags themselves are not readable from this Lua proxy
+  (`df.global.world.options` is not exposed), so transitions are observed, not predicted.
+- **Pause for the model's benefit only** - the cases the game will not pause for: alert/to-do
+  **overload** (so state stops changing while the model works the queue), a to-do flipping to
+  `dig_complete` mid-plan, and save-reload detection. Default `pause_authority = off`;
+  `events` is opt-in per event in `Config.pause_on`.
+- Keep the hard guard: never pause when `pending_designations == 0` and nothing is moving,
+  and `Config.auto_resume = false` (default) means the plugin pauses only and never unpauses.
 
 - Allowed write: `POST /set-pause-state` only. **No** designations, buildings, labours,
   `run-command`, `pass-keyboard-event`, `dig-now`, blueprints, game-dir writes.
