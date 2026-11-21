@@ -279,7 +279,10 @@ export default class DFObserver extends TypertRemoteService {
     // the domain - an async body is not a disposer, and the promise is dropped.
     // Await the open HERE, in activation, then register the returned close.)
     const ledgerDispose = await this.openLedger()
-    if (ledgerDispose) ctx.effect(ledgerDispose, 'df-observer: ledger storage')
+    // ctx.effect calls its callback as the CONSTRUCTOR and uses what it returns
+    // as the disposer. Passing the disposer itself runs it at activation - the
+    // domain closed immediately and every write failed ("domain is closed").
+    if (ledgerDispose) ctx.effect(() => ledgerDispose, 'df-observer: ledger storage')
 
     // ---- the panel's Ack, and the human's words, as a session command ----
     // (practices.md/user-actions.md: one Host operation, called by the UI through
