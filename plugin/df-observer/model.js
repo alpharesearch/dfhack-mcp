@@ -999,6 +999,11 @@ export const dfObserverProjection = (z) => ({
     pauseSource: z.string().nullable().default(null),
     pauseAtTick: z.number().nullable().default(null),
     generation: z.number().nullable().default(null),
+    // The panel chips read these; omitting them from the schema silently made
+    // them '?' in the UI (measured) and hid the filter state entirely.
+    poll: z.number().nullable().default(null),
+    pauseAuthority: z.string().nullable().default(null),
+    filter: z.any().default(null),
     facts: z.any().default(null),
     buildings: z.array(z.any()).default([]),
     boxes: z.array(z.any()).default([]),

@@ -18,6 +18,7 @@ const {
   PAYLOAD_PREFIX,
 } = await import(path.join(pluginDir, 'model.js'))
 const { buildBriefing, buildWake, estimateTokens, STANDING_RULES } = await import(path.join(pluginDir, 'brief.js'))
+const ConfigSchemaForTest = (await import(path.join(pluginDir, 'index.js'))).Config
 const { ObserverTransport, ObserverBug, GameOffline } = await import(path.join(pluginDir, 'observer.js'))
 const { toolDefinitions } = await import(path.join(pluginDir, 'tools.js'))
 const filterApi = await import(path.join(pluginDir, 'filter.js'))
@@ -549,6 +550,15 @@ test('wake advice follows the acceptance kind (pile to-do is not a dug box)', as
 
 // ---------------------------------------------------------------------------
 // the game's own hints reach the briefing
+test('projection schema keeps the panel fields (poll, pauseAuthority, filter)', () => {
+  const projection = dfObserverProjection(z)
+  const keys = Object.keys(projection.stateSchema.shape)
+  for (const key of ['poll', 'pauseAuthority', 'filter', 'generation', 'pauseSource', 'reports']) {
+    assert.ok(keys.includes(key), `stateSchema must declare ${key} (the panel chips read it)`)
+  }
+  return 'schema/payload fields in sync'
+})
+
 test('lean payloads keep generation/poll/pauseSource/facts for the panel', () => {
   const model = freshModel()
   const brief = buildBriefing(model.payload(), { maxTokens: 700 })
