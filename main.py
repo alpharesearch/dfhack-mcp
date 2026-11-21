@@ -751,7 +751,7 @@ async def game_lua(request: Request):
 
 @app.post("/place-building", operation_id="place_building")
 async def place_building(request: Request):
-    """CREATE A BUILDING at an exact tile - no menu, no mouse, no dwarf. building: friendly name (Stockpile, Zone, Trade Depot, Bed, Table, Chair, Door, Chest, Well, Farm Plot, Still, Mechanic, Carpenter, Stoneworker, Jeweler, Smelter, Forge, Kitchen, Butcher, Weapon Rack, Axle, Gear Assembly, Water Wheel, Lever, Trap, Cage, Trackstop...); x/y int, elev GAME ELEVATION; w/h optional (a Trade Depot is 5x5, a workshop 3x3); complete:true (default) finishes it via completeBuild; abstract:true for material-free buildings (auto for Stockpile/Zone - the game REQUIRES one of items/filters/abstract); items:[itemId,...] for furniture and doors. Returns the game type + building id verified by findAtTile, and the game's own rejection text (e.g. 'one of items, filters or abstract is required') when it refuses. Check a site with tile_at first: placing into water fails."""
+    """CREATE A BUILDING at an exact tile - no menu, no mouse, no dwarf. building: friendly name (Stockpile, Zone, Trade Depot, Bed, Table, Chair, Door, Chest, Well, Farm Plot, Still, Mechanic, Carpenter, Stoneworker, Jeweler, Smelter, Forge, Kitchen, Butcher, Weapon Rack, Axle, Gear Assembly, Water Wheel, Lever, Trap, Cage, Trackstop...); x/y int, elev GAME ELEVATION; w/h optional (a Trade Depot is 5x5, a workshop 3x3); complete:true (default) finishes it via completeBuild - pass false to queue it for a dwarf to build with real materials; material:"log"/"boulder"/"block" with count:N attaches REAL item objects found by description (measured: constructWithItems rejects an empty list, and RFR item ids do not resolve); abstract:true for material-free buildings (auto for Stockpile/Zone - the game REQUIRES one of items/filters/abstract); items:[itemId,...] for furniture and doors. Returns the game type + building id verified by findAtTile, and the game's own rejection text (e.g. 'one of items, filters or abstract is required') when it refuses. Check a site with tile_at first: placing into water fails."""
     body = await request.json()
     dec = await world._dec(await world._gen())
     try:
@@ -759,7 +759,9 @@ async def place_building(request: Request):
                                       int(body["elev"]), w=body.get("w"), h=body.get("h"),
                                       complete=bool(body.get("complete", True)),
                                       abstract=body.get("abstract"),
-                                      items=body.get("items"))
+                                      items=body.get("items"),
+                                      material=body.get("material"),
+                                      count=int(body.get("count", 3)))
     except LO.LuaOpError as e:
         return {"success": False, "error": str(e)}
     world.cache.reset()

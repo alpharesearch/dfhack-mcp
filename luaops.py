@@ -121,7 +121,8 @@ def resolve_building(dec, name: str):
 async def place_building(dec, name: str, x: int, y: int, elev: int,
                          w: int | None = None, h: int | None = None,
                          complete: bool = True, abstract: bool | None = None,
-                         items: list[int] | None = None) -> dict:
+                         items: list[int] | None = None, material: str | None = None,
+                         count: int = 3) -> dict:
     """Create a building at an exact tile through dfhack.buildings, then verify it."""
     bt, sub, cus, resolved = resolve_building(dec, name)
     z = int(elev) + GAME_Z_OFFSET
@@ -136,7 +137,10 @@ async def place_building(dec, name: str, x: int, y: int, elev: int,
     if abstract is None:
         abstract = resolved.lower() in ("stockpile", "zone")
     extra = ""
-    if abstract:
+    if material:
+        kind = str(material).lower().strip()
+        extra = f'items=resolve_material("{kind}", {int(count)}), '
+    elif abstract:
         extra = "abstract=true, "
     elif items:
         # Measured: passing raw ids fails in constructWithItems with
@@ -150,6 +154,23 @@ local function resolve_items(ids)
   for _, id in ipairs(ids) do
     local ok, it = pcall(function() return dfhack.items.findItem(id) end)
     if ok and it then out[#out + 1] = it end
+  end
+  return out
+end
+local function resolve_material(kind, want)
+  -- Measured: RFR Item.id does NOT resolve via dfhack.items.findItem, and DF53 map-block
+  -- items enumerate as numbers. So material items are found by scanning the in-play item
+  -- list for item OBJECTS whose description matches, which is what constructWithItems
+  -- needs (an empty list is exactly what its argument check rejects).
+  local out = {{}}
+  local all = df.global.world.items.other.IN_PLAY
+  for _, it in ipairs(all) do
+    if #out >= want then break end
+    local okd, d = pcall(function() return dfhack.items.getDescription(it, 0) end)
+    if okd and d and tostring(d):lower():find(kind, 1, true) then
+      local okr, free = pcall(function() return it.general_refs == nil or true end)
+      out[#out + 1] = it
+    end
   end
   return out
 end
