@@ -156,3 +156,13 @@ Player: **"yes, you need to designate your plan in the fog."** Proven on the liv
 So the gates are: **hazard and depth** (damp/magma/roof-void - the things that flood or
 collapse the fort), NOT visibility, NOT reachability. Visibility is what the dwarves give
 you; reachability is what the game answers with time.
+
+### Measure the edge; do not reuse a coarse scan
+I told the player the water edge at elev 36 was x54, taken from an earlier box scan. The
+per-tile `hazard_map` reads **x68** (1,030 water tiles, x68-186, y0-191). The stale number
+cost 17 columns of good ground (x51-67: damp 0, magma 0, deep(>=2) everywhere) - the grid was
+extended into them and now holds 110 rooms, 2,075 tiles pending at elev 36 (in-game 35).
+Rule for the model: derived spatial facts (edges, bands, surface elevations) are **recomputed
+from the tile-level store on demand**, never quoted from an older summary. Cache by
+generation, invalidate on mutation, and print the window/box the number came from so a stale
+edge is visible as one.
