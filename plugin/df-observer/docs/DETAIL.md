@@ -41,13 +41,16 @@ sessions instead of making the agent poll tools:
   default 260). The plugin keeps enforcing the wake whitelist, the evidence rules,
   and the read-only boundary over whatever the filter proposes; a silent filter
   falls back to the rule gate (recorded in the notes).
-- **Panel** - above the composer. It renders the session's *folded projection view*
-  (the same log-derived state the model reads, published by the projection's
-  `wire.view`); its **Ack** button runs the `/df-ack <id>` session command, the same
-  words a human can type in the composer: game/session health line, ladder bar, NEXT,
-  monitored boxes, to-dos with evidence, alert feed with Ack buttons, notes.
-  Theme tokens only, light/dark from the host. Alert wakes also render as chat
-  rows.
+- **Panel** - the full GUI lives in the **right Sidebar** as its own tab
+  (**Fort observer**), opened from the guide page or by the **⤢** button on the
+  compact composer chip (the chip keeps `health · gen · tick · poll · pauseAuthority`
+  and a `▸` quick expand). Sections: ladder bar + NEXT, monitored boxes, piles,
+  to-dos **with titles and evidence**, alert feed with **Ack** buttons (the
+  `/df-ack <id>` session command - the same words a human can type), the game's own
+  reports quoted verbatim, the designation scan, and notes. Theme tokens only;
+  light/dark come from the host. The page prints its **data provenance** -
+  `panel data: ...` - so an empty section is never a mystery. Alert wakes also
+  render as chat rows.
 
 Everything the model sees is reconstructable from the session log: briefings and
 alerts carry their complete post-change state as a payload line, and a session
@@ -72,7 +75,9 @@ Every tunable is in the plugin's Config (see the comments in the bundle's
 briefing budget and gating, alert wake whitelist, overload thresholds, stall
 threshold, quiet switches (`briefing_mode`, `wake_enabled`), agent targeting,
 `pause_authority` / `pause_on` / `auto_resume`, `game_dir` for the crash-log
-watch. Your patch layer survives upgrades; overriding the row replaces the whole
+watch, `tool_docs` / `rules_mode` (compact tool descriptions and rules save
+~225 tokens per request), `water_growth_min`, `unwatched_min_tiles` (0 disables),
+and the panel's cost dial `panel_full_briefing`. Your patch layer survives upgrades; overriding the row replaces the whole
 config object, so copy the keys you change.
 
 ## Boundaries and limitations (verified against this build)
@@ -154,6 +159,7 @@ config object, so copy the keys you change.
 | `crew` | supply by the player's ranking: alcohol 0 -> meals 0 -> raw food 0; or the game's own `cancels Eat/Drink`-style report | no |
 | `game_says` | a noteworthy game report (attack, flood, out of food, caravan, migrant...) - evidence is the **verbatim quote** + elevation | no |
 | `game_crashed` / `game_offline` | the crash log grows / the game stops answering | yes |
+| `unwatched_designations` | a designation cluster of `>= unwatched_min_tiles` tiles sits outside every monitored box - work nothing measures - with a runnable `df_todo` watch recipe | no |
 
 `alert_wakes` is Config; a wake fires once per alert lifetime (`wakeSent`) plus
 `wake_min_spacing_ms`, and briefings always `inject` (never steer).
@@ -171,3 +177,37 @@ inferred; an empty probe read cannot flip a to-do (`noData`).
 the measured dead session binding after a DFHack server restart (`-32600 Session
 not found` in tool calls), which does **not** affect the observer's `df_*` tools
 - they answer from the live model.
+
+## What the briefing costs (measured on the live fort, 18-row ledger)
+
+| knob / level | tokens | what the reader gets |
+|---|---|---|
+| `briefing_max_tokens: 700` (rule gate) | 674 | header, ladder, boxes, ledger with evidence, alerts + advice, GAME SAYS |
+| same, cap 300 | 282 | header, ledger ids+states, lean alerts (contract preserved) |
+| filtered wire cap 340/360 | 288 / 346 | **ids only** - titles (+50) do not fit; the filter's prose floor is ~275 |
+| filtered wire cap **420** | 407 | **titles on every open row** (this profile's value) |
+| filtered wire cap 460 | 437 | titles **and** the designation scan |
+| `panel_full_briefing: true` | +622 | Ladder/Boxes/Piles/Notes/scan ride the wire for the panel |
+
+Priorities the shrink ladders encode: the **ledger never drops below ids+states**
+(the session log must reconstruct), **panel readability (titles) outranks filter
+commentary**, sugar strips in reader order (scan first, titles last), and an
+over-budget result is labelled `overBudget` rather than passed off as success.
+
+## Verified platform facts (added by measurement, 0.1.66 - 0.1.77)
+
+- `ctx.sidebarRightTabs.register` + the keyed seats `sidebar.right.pane.tab` and
+  `sidebar.right.pane.tab.title` place a plugin page in the right Sidebar; optional
+  Context faces must be reached through the **lazy** `ctx.inject([...], fn)` - a
+  name in the static `inject` list that cannot resolve aborts the whole client row.
+- `remote.commands.execute(sessionId, '/cmd')` appends the command row to the
+  session, and **its promise does not settle for the client half**: plugin UI data
+  must come from the projection wire, not from awaiting a command.
+- The state field set lives in FOUR places (`stateSchema`, `init()`,
+  `STATE_FIELDS`, `viewOf`); a field missing from any one of them is invisible to
+  the panel. A test now walks all four for every field.
+- Storage keys must match `/^[a-zA-Z0-9_-]+$/` - the first box key used `:`/`,`,
+  so watched boxes never persisted (measured: `ledger restored: ... 0 watched
+  boxes`).
+- The ledger is ordered **open rows first**: a row-count slice on a done-first
+  ledger silently dropped exactly the rows the panel lists.
