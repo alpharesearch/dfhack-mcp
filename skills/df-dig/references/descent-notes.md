@@ -76,3 +76,25 @@ the new box, because the dig revealed ground you can now plan on.
   the damp *flags*, stop on *water*.
 - Descent rates: 2 stair tiles per level, ~15-30 s per level with the crew on it - 9 levels in
   a few minutes. Stairwells are cheap; rooms are the expensive part.
+
+## Mining output is a logistics problem, not a bonus (measured at elev 36, in-game 35)
+A 110-room dig produced, in place on the dig site:
+`BOULDER/GYPSUM 15, MAGNETITE 7, LIMESTONE 6, SANDSTONE 5, GALENA 3, BORAX 2, COAL 1,
+ROUGH/PINK TOURMALINE 5, ROUGH/SARD 3` and ladder `stone 91`. Consequences:
+1. **Boulders lie in the corridors** and must be cleared (mine them) or they block hauling.
+   There is no remove-boulder kind in this RPC enum - the fix is a typed op (`remove_boulder`
+   designation bit). Until then, treat boulder tiles as part of the dig plan, not scenery.
+2. **Stone accumulates where you dig.** A stone stockpile near the dig face (and later
+   wheelbarrows, Max wheelbarrows=3) is what keeps miners from hauling half the mountain by
+   hand. The general stockpile must EXCLUDE stone/corpses/refuse/wood/gems, and a dedicated
+   stone stockpile accepts it.
+3. **Vein names are the economy, read from the tile/item names**: `MAGNETITE` = iron ore,
+   `COAL_BITUMINOUS` = fuel, `GALENA` = lead, `BORAX`, `GYPSUM` = flux, gem `ROUGH/*` =
+   jewelry/cutting. Our shaft passed into the mineral band at elev 36 (`MineralStairUD`) and
+   that band is what produced these - the smelter chain (furnace + fuel + flux) becomes
+   reachable from here.
+4. **Gem rough is loose and gets lost in miasma/hauling** - a gem stockpile is cheap insurance.
+5. Digging a 2,075-tile plan with 6 pick-carrying miners is **hours of game time**, and the
+   box reads mostly fog until the miners get to it (`walls 29 | fog 944 | floors+stairs 52 |
+   pending 2075`). That is normal - the reveal lags the plan. Do not order more dig than the
+   crew can finish, and do not panic at a large pending count: it is a queue, not a failure.
