@@ -100,7 +100,13 @@ def main():
                 return 3
             time.sleep(10)
             get("/world-cache-reset")
-        tiles = [[x, y, a.elev + Z_OFF] for y in range(a.y0, a.y1 + 1)]
+        # ACCESS FIRST. A designation the dwarves cannot reach is cancelled silently, so
+        # order the band by proximity to the walkable side: dig the middle (the tile that
+        # touches the shaft/floor we came from) first, then the flanks - each dug tile
+        # becomes the access point for the next.
+        mid = (a.y0 + a.y1) // 2
+        y_order = sorted(range(a.y0, a.y1 + 1), key=lambda y: abs(y - mid))
+        tiles = [[x, y, a.elev + Z_OFF] for y in y_order]
         bad = None
         for tx, ty, _ in tiles:
             ti, ob = column_state(tx, ty, a.elev)

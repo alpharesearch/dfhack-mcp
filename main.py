@@ -883,6 +883,33 @@ async def warnings(e0: int = Query(None), e1: int = Query(None),
         b.spend(len(l) + 1)
     return WM.finish(lines, b)
 
+@app.get("/dig-reachable", operation_id="dig_reachable")
+async def dig_reachable(x: int = Query(...), y: int = Query(...), elev: int = Query(...),
+                        from_x: int = Query(..., description="a dwarf-occupied tile, e.g. the wagon"),
+                        from_y: int = Query(...),
+                        from_elev: int = Query(..., description="GAME elevation (in-game panel number + 1)")):
+    """Can a dwarf actually work this tile? There is NO connectivity oracle on this RPC surface (measured: getWalkableGroup is uncallable, canWalkBetween throws for adjacent stair tiles), so the layer computes a 3D walk graph over explored tiles with stair/ramp z-links. A designation with no walkable neighbour in the dwarves' component is CANCELLED SILENTLY by the game - run this before ordering a dig, and order a band middle-first so each dug tile becomes the access point for the next."""
+    return await world.dig_reachable(x, y, elev, from_x, from_y, from_elev)
+
+@app.get("/reach-map", operation_id="reach_map")
+async def reach_map(e0: int = Query(None), e1: int = Query(None),
+                    max_tokens: int = Query(900)):
+    """Summary of our computed 3D walk components: sizes and which elevations they touch. Use it to see which pockets of the fort are cut off - a stockpile in a component the dwarves cannot reach is decoration."""
+    r = await world.reach_map(e0, e1)
+    comp = r["components"]
+    sizes: dict = {}
+    for (x, y, z), c in comp.items():
+        sizes[c] = sizes.get(c, 0) + 1
+    b = WM.Budget(max_tokens)
+    lines = [f"walk components: {r['count']} over {len(comp)} explored walkable tiles, elev {r['elev_range'][0]}-{r['elev_range'][1]}"]
+    for c, n in sorted(sizes.items(), key=lambda kv: -kv[1])[:12]:
+        pts = [(x, y, z) for (x, y, z), cc in comp.items() if cc == c]
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]; zs = [p[2] for p in pts]
+        lines.append(f"  comp {c}: {n} tiles x{min(xs)}-{max(xs)} y{min(ys)}-{max(ys)} elev{min(zs)}-{max(zs)}")
+    for l in lines:
+        b.spend(len(l) + 1)
+    return WM.finish(lines, b)
+
 @app.get("/probe-plan", operation_id="probe_plan")
 async def probe_plan(x: int = Query(...), y: int = Query(...),
                      elev0: int = Query(..., description="lowest elevation to consider"),

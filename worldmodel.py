@@ -1153,6 +1153,109 @@ class WorldModel:
     # flowing water, an area that is HOT is near the magma crust. Digging into either
     # floods the fort with water or lava, so a plan must see the hazard BEFORE designating.
 
+    # ---- reachability: computed by us, because the RPC has no connectivity oracle -------
+    # Measured on 53.17-r1: dfhack.maps.getWalkableGroup is NOT callable from the lua RPC
+    # channel ("Cannot write field ... complex object"), dfcoord does not exist, and
+    # canWalkBetween THROWS for two adjacent stair tiles. So the layer builds its own
+    # 3D walk graph from tile semantics. This is what catches silently-cancelled
+    # designations: a designation on rock nobody can reach is not a plan, it is a no-op.
+
+    WALK = (".", "g", "s", "S", "=", "/")   # floors, grass, smooth, constructed, stairs, ramps
+
+    async def reach_map(self, e0: int | None = None, e1: int | None = None) -> dict:
+        """(x,y,z) -> component id over EXPLORED walkable tiles, with z-links.
+
+        Links: the 4-neighbourhood on the same level between walkable tiles; between levels
+        at the same column for stairs ('=' is walkable from both sides) and ramps ('/' links
+        z to z+1, which is how DF slopes work). Unexplored tiles are ABSENT from the map:
+        unknown, not blocked - the difference matters for planning.
+        """
+        if e0 is None or e1 is None:
+            z0, z1 = await self.fort_band()
+            e0, e1 = z0 - GAME_Z_OFFSET, z1 - GAME_Z_OFFSET
+        band, _ = await self._stack(e0, e1)
+        W = self.WALK
+        comp: dict = {}
+        cid = 0
+        seed_all = [(x, y, z) for (x, y), col in band.items()
+                    for z, g in col.items() if g in W]
+        seen = set(seed_all)
+        for s0 in seed_all:
+            if s0 in comp:
+                continue
+            cid += 1
+            stack = [s0]
+            comp[s0] = cid
+            while stack:
+                x, y, z = stack.pop()
+                g = band[(x, y)].get(z, " ")
+                neigh = []
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    neigh.append((x + dx, y + dy, z))
+                if g == "=":                 # up-down stair: the level above and below
+                    neigh.append((x, y, z + 1))
+                    neigh.append((x, y, z - 1))
+                if g == "/":                 # ramp: same column, one level up
+                    neigh.append((x, y, z + 1))
+                for nx, ny, nz in neigh:
+                    cell = band.get((nx, ny))
+                    if cell is None:
+                        continue
+                    ng = cell.get(nz)
+                    if ng in W and (nx, ny, nz) not in comp:
+                        comp[(nx, ny, nz)] = cid
+                        stack.append((nx, ny, nz))
+        return {"components": comp, "count": cid, "elev_range": [e0, e1]}
+
+    async def reachable(self, x: int, y: int, elev: int,
+                        from_x: int | None = None, from_y: int | None = None,
+                        from_elev: int | None = None) -> dict:
+        """Is (x,y,elev) on the same walk component as a dwarf-occupied tile?
+
+        Pass the fort/wagon tile as from_*; omit them to get the component id of the tile.
+        A designation outside the dwarves' component is cancelled by the game, so this is
+        the check that must run before ordering a dig.
+        """
+        r = await self.reach_map()
+        comp = r["components"]
+        me = comp.get((int(x), int(y), int(elev)))
+        if None in (from_x, from_y, from_elev):
+            return {"x": int(x), "y": int(y), "elev": int(elev), "component": me,
+                    "components_total": r["count"]}
+        ref = comp.get((int(from_x), int(from_y), int(from_elev)))
+        return {"x": int(x), "y": int(y), "elev": int(elev), "component": me,
+                "from_component": ref,
+                "reachable": (me is not None and me == ref),
+                "components_total": r["count"]}
+
+    async def dig_reachable(self, x: int, y: int, elev: int,
+                            from_x: int, from_y: int, from_elev: int) -> dict:
+        """Can a dwarf actually work this tile? A wall tile is not walkable, so the test is:
+        a 4-neighbour at the same level (or the stair link below/above) is walkable AND in
+        the dwarves' component. Designations that fail this are cancelled silently by the
+        game - the exact failure that ate my 3-wide adit designation.
+        """
+        r = await self.reach_map()
+        comp = r["components"]
+        ref = comp.get((int(from_x), int(from_y), int(from_elev)))
+        if ref is None:
+            return {"x": int(x), "y": int(y), "elev": int(elev),
+                    "reachable": False, "why": f"from-tile ({from_x},{from_y},{from_elev}) is not walkable"}
+        via = []
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            c = comp.get((int(x) + dx, int(y) + dy, int(elev)))
+            if c == ref:
+                via.append(f"({x+dx},{y+dy},{elev})")
+        for dz in (-1, 1):        # stair/ramp links into this tile
+            c = comp.get((int(x), int(y), int(elev) + dz))
+            if c == ref:
+                via.append(f"({x},{y},{elev+dz}) via stairs/ramp")
+        return {"x": int(x), "y": int(y), "elev": int(elev),
+                "reachable": bool(via), "from_component": ref,
+                "access_via": via[:4] or ["none"],
+                "note": "workable from a walkable neighbour in the dwarves' component"}
+
+
     async def hazard_map(self, e0: int | None = None, e1: int | None = None) -> dict:
         """(x,y) -> {aquifer:[elevs], water:{elev:level}, magma:[elevs], salt:[elevs]} from
         the cached block arrays. RFR gives per-tile aquifer/water/magma flags, so this costs
