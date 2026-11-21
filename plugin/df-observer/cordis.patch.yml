@@ -66,6 +66,6 @@
         # session read the full state and condense the briefing to ~260 tokens.
         filter_enabled: false
         filter_agent_preset: ''
-        filter_briefing_max_tokens: 260
+        filter_briefing_max_tokens: 340
         filter_timeout_ms: 120000
         wake_enabled: true

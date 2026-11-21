@@ -130,7 +130,7 @@ export const Config = z.object({
   filter_provider: z.string().default(''),
   filter_model: z.string().default(''),
   /** Cap on the filtered briefing injected into play sessions. */
-  filter_briefing_max_tokens: z.number().int().min(80).default(260),
+  filter_briefing_max_tokens: z.number().int().min(80).default(340),
   /** Fall back to the rule-gated briefing if no verdict arrives this long
    * after a filter wake (the filter session is not the game's gatekeeper). */
   filter_timeout_ms: z.number().int().min(10000).default(120000),

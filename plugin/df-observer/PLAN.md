@@ -299,7 +299,20 @@ default OFF) that:
 Boundaries stay plugin-enforced: `wake[].kind` outside `Config.alert_wakes` is
 demoted to briefing text; the filter has no game tools; verdict older than
 `filter_timeout_ms` -> the rule-gate briefing resumes (recorded in notes).
-Measured: rule briefing ~600-950 tokens/step; filtered target ~150-260.
+Measured A/B on the live fort (2026-11-21, `scratch/measure_brief_ab.mjs`, full
+payload 2.7k tokens):
+
+| path | tokens/injection | note |
+|---|---|---|
+| rule briefing @ `briefing_max_tokens=700` | **642** | payload folded at the leanest level |
+| filtered @ 260 | **174** | body squeezed to headline only - cap too tight |
+| filtered @ 340 (new default) | **315** | headline + changes + NEXT + DIG + fold line |
+| rules section (per assembly) | full 316 -> **compact 116** (`rules_mode`) |
+
+So the filter buys ~50% of the injected context at a cap that keeps its
+judgment legible; below ~300 the verdict text is what gets sacrificed, not the
+payload (the ledger fold is sacred). First-turn delta of the plugin, measured:
+~958 tokens (rules 316 + first briefing 642), ~758 with `rules_mode: compact`.
 
 
 ## 12. Client data path (measured 2026-11-21 - forced change to §5's panel wiring)
