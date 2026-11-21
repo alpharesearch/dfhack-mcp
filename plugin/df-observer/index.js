@@ -528,6 +528,48 @@ export default class DFObserver extends TypertRemoteService {
   // ---------------------------------------------------------------------
 
   /** Flip the mute and remember it (storage + notes + the panel wire). */
+  /** One message with everything the mute swallowed: the changes, then a full
+   * snapshot briefing. Nothing is replayed as N separate injections. */
+  deliverCatchUp(why = 'panel') {
+    const from = Number.isFinite(this.mutedFromTick) ? this.mutedFromTick : 0
+    const p = this.model.payload()
+    const facts0 = this.mutedFacts ?? {}
+    const lines = [`DF-OBSERVER CATCH-UP (injections were PAUSED from tick ${from}, by ${why}):`,
+      `  ${this.model.suppressed.briefings} briefings and ${this.model.suppressed.wakes} wakes were suppressed over ${Math.max(0, p.tick - from)} ticks.`]
+    const alerts = (this.model.alertHistory ?? []).filter((a) => (a.tick ?? 0) >= from)
+    const byId = new Map(alerts.map((a) => [a.id, a]))
+    if (byId.size) {
+      lines.push('  ALERTS RAISED WHILE PAUSED:')
+      for (const a of [...byId.values()].slice(-8)) lines.push(`    !${a.id} ${a.kind}${a.coord ? ` [${a.coord}]` : ''}: ${String(a.evidence ?? '').slice(0, 110)}`)
+    }
+    const digs = (this.model.digEvents ?? []).filter((e) => (e.tick ?? 0) >= from)
+    if (digs.length) {
+      lines.push('  DIG / LEDGER CHANGES:')
+      for (const e of digs.slice(-8)) lines.push(`    @${e.tick} ${e.kind}${e.todo ? ` #${e.todo}` : ''}${e.title ? ` ${String(e.title).slice(0, 40)}` : ''}${e.evidence ? ` - ${String(e.evidence).slice(0, 70)}` : ''}`)
+    }
+    const pauses = (this.model.pauseEvents ?? []).filter((e) => (e.tick ?? 0) >= from)
+    if (pauses.length) lines.push(`  PAUSE: ${pauses.map((e) => `${e.paused ? 'paused' : 'resumed'} at ${e.tick} (${e.source ?? '?'})`).join('; ')}`)
+    const delta = (k, label) => {
+      const a = facts0?.[k], b = p.facts?.[k]
+      if (a == null || b == null || a === b) return null
+      return `${label} ${a}->${b}`
+    }
+    const deltas = ['food', 'drink', 'alcohol', 'meals', 'raw_food', 'seeds', 'wood', 'stone', 'barrels', 'miners', 'dwarves', 'pending_dig', 'water_tiles']
+      .map((k) => delta(k, k)).filter(Boolean)
+    lines.push(`  FACTS: ${deltas.length ? deltas.join(', ') : 'no fact moved while paused'}` +
+      `${p.facts?.date ? ` | date Y${p.facts.date.year} M${p.facts.date.month} d${p.facts.date.day}` : ''}`)
+    const brief = buildBriefing(p, { maxTokens: this.config.briefing_max_tokens + PANEL_FILL_ALLOWANCE })
+    const message = `${lines.join('\n')}\n\n${brief.text}`
+    for (const agent of this.liveTargets()) {
+      try { agent.inject(message) } catch { /* labelled in notes */ }
+    }
+    this.note(`catch-up delivered: ${lines.length - 2} summary lines + a ${brief.tokens}-token snapshot (budget ${this.config.briefing_max_tokens + PANEL_FILL_ALLOWANCE}${brief.overBudget ? ', LABELLED overBudget' : ''})`)
+    this.mutedFromTick = null
+    this.mutedFacts = null
+    this.model.suppressed = { briefings: 0, wakes: 0 }
+    return { injected: true, lines: lines.length, tokens: brief.tokens }
+  }
+
   setQuiet(on, why = 'panel', announce = true) {
     const next = Boolean(on)
     const changed = next !== this.quiet
@@ -553,6 +595,17 @@ export default class DFObserver extends TypertRemoteService {
     // the toggle itself must land as one compact folded row, otherwise the page
     // freezes at the last briefing and the button never flips. (Measured: after a
     // click the transcript said PAUSED while the panel still read "pause briefings".)
+    if (changed) {
+      if (next) {
+        // Remember where the mute began: the resume must report EVERYTHING that
+        // was suppressed (the player's request: "after a start it should send
+        // everything at once").
+        this.mutedFromTick = this.model.tick
+        this.mutedFacts = { ...(this.model.payload().facts ?? {}) }
+      } else {
+        this.deliverCatchUp(why)
+      }
+    }
     if (changed && announce) {
       const p = this.model.payload()
       const line = `DF-OBSERVER injections ${next ? 'PAUSED' : 'RESUMED'} (${why}): `

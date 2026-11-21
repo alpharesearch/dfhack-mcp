@@ -753,7 +753,9 @@ test('the panel mute pauses injections only - never the game', async () => {
   const res = await inst.setQuiet(false, 'test')
   assert.equal(res.quiet, false, 'un-mutes')
   await inst.dispatchBriefing()
-  assert.equal(inst.model.suppressed.briefings, 1, 'un-muted briefings are not counted as suppressed')
+  // The resume's catch-up resets the counters (they have been reported), so a
+  // briefing delivered after un-muting is not counted as suppressed.
+  assert.equal(inst.model.suppressed.briefings, 0, 'counters reset once the catch-up reported them')
   assert.equal(pauseWrites, 0, 'still zero game writes after un-muting')
   // the command exists and the client exposes the button in both locales
   const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
@@ -786,6 +788,25 @@ test('the panel mute pauses injections only - never the game', async () => {
   const before = injected.length
   inst2.setQuiet(true, 'test')
   assert.equal(injected.length, before, 'a no-change toggle injects nothing')
+
+  // Resume sends EVERYTHING at once: one message with the suppressed changes plus a
+  // full snapshot (the player's request), not a replay of N briefings.
+  inst2.model.ingestFast({ paused: false, generation: 1, facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 40, drink: 0, wood: 2, stone: 140, metal: 0, barrels: 0, pending_dig: 20, water_tiles: 1040, magma_tiles: 0 }, buildings: [], boxes: [], shafts: [], warnings: { designated_tiles: 4, damp_tiles: 4, hot_tiles: 0 }, notes: [] })
+  inst2.model.evaluate(Config.parse({}))
+  await inst2.dispatchBriefing()
+  await inst2.dispatchAlerts([{ id: 'A9', kind: 'damp_hot', evidence: '4 DAMP tiles', coord: 'x1-2 y3-4 elev5' }])
+  const catchUpAt = injected.length
+  inst2.setQuiet(false, 'test')
+  const catchUp = injected.slice(catchUpAt).join('\n@@\n')
+  assert.ok(injected.length > catchUpAt, 'resuming injects the catch-up')
+  assert.match(catchUp, /CATCH-UP/, catchUp.slice(0, 120))
+  assert.match(catchUp, /briefings and \d+ wakes were suppressed/, 'it counts what was swallowed')
+  assert.match(catchUp, /ALERTS RAISED WHILE PAUSED[\s\S]*damp_hot/, 'the alerts raised while paused are listed')
+  assert.match(catchUp, /FACTS:/, 'the fact deltas are summarised')
+  assert.match(catchUp, /\[df-observer\] /, 'and a full snapshot payload rides along (the panel folds it)')
+  const injectedCount = injected.length - catchUpAt
+  assert.ok(injectedCount <= 2, `the catch-up is ONE message (saw ${injectedCount} injections on resume)`)
+  assert.equal(inst2.model.suppressed.briefings, 0, 'the counters reset after delivery')
   // (`client` is read above in this test - no redeclaration.)
   assert.match(client, /const \[mutedUI, setMutedUI\] = React\.useState\(null\)/, 'the page remembers the click locally')
   assert.match(client, /mutedUI \?\? snap\.quiet/, 'the wire overrides the local echo')

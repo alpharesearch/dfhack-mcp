@@ -997,3 +997,31 @@ header; it runs `/df-quiet on|off`, which suppresses this plugin's briefings and
 wakes, counts them (`BRIEFINGS PAUSED - N injection(s) suppressed`), persists in
 storage (a reload does not un-mute), and never touches the game: a test spies
 `transport.setPause` and asserts **zero** writes while muting and un-muting.
+
+## 33. Pause / resume semantics of the panel mute (0.1.85 - 0.1.88)
+
+The player asked for a pause button on the panel, then for two behaviours the first
+build lacked:
+
+1. **The label must flip.** It mutes a *log-fed* panel: muting suppresses the very
+   rows the projection folds, so the page cannot learn about the mute from the
+   briefings it just stopped. Fixes: the toggle **announces itself** as one compact
+   folded row (`"quiet":true` + counters), and the client keeps a local echo
+   (`mutedUI`) labelled `(this page - awaiting the wire)`, which the wire overrides.
+2. **Resume sends everything at once.** `deliverCatchUp()` composes **one** message:
+   counts (`N briefings and M wakes suppressed over K ticks`), the alerts raised
+   while paused (from `alertHistory`), the dig/ledger events (`digEvents`), the
+   pause transitions (`pauseEvents`), a fact delta against the snapshot taken at
+   mute, and a full snapshot briefing at `briefing_max_tokens + PANEL_FILL_ALLOWANCE`
+   (labelled if over). Nothing is replayed as N injections; counters reset after
+   delivery.
+
+Durability was measured, not assumed: a `meta` table **never reached disk** (writes
+are queued; a remove+install seconds later dropped them), so the mute died with the
+instance and briefings kept flowing. The mute now rides the proven ledger path
+(`todos/quiet.json`), which `restoreTodos` skips (ids must be numeric), and a
+restored mute announces itself on activation.
+
+Game boundary unchanged: `transport.setPause` is spied in the suite and asserted
+**zero** across mute, resume and reload. `pause_authority` (default `off`) is the
+only thing that lets the plugin touch the game, and the button never routes to it.
