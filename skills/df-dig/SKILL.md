@@ -103,10 +103,10 @@ becomes the access point for the next. `scripts/dig_run.py` and `dig_adit.py` do
 My watchers announced "DUG COMPLETE at 0s" twice because they measured absence.
 
 ## 7. Waits are background jobs
-Never busy-poll in model turns. `scripts/dig_run.py --elev E --x0 --x1 --y0 --y1` designates
-the box, then reports `walls | fog | floors+stairs | pending` on every change and exits:
-`0` dug complete (floors, no walls, no fog), `2` stalled with a reason, `-1`-pending means
-unparseable, i.e. unknown. `watch_dig.py` and `watch_building.py` are the same pattern.
+Never busy-poll in model turns. `scripts/dig_run.py` designates a box then reports
+`walls | fog | floors+stairs | pending` per change: exit `0` = floors with no walls and no
+fog, `2` = stalled with reason. Same pattern in `watch_dig.py`, `watch_building.py`,
+`watch_water.py`, `dig_levels.py`.
 
 ## 8. Geometry of this world (measured)
 Surface steps, aquifer band, wagon footprint, reachability caveats: [references/descent-notes.md](references/descent-notes.md)
@@ -115,8 +115,7 @@ Surface steps, aquifer band, wagon footprint, reachability caveats: [references/
 **~0.5-0.6 tiles per miner per minute** (measured: 4 miners/37 tiles = 61 s; 6 miners/66 tiles
 = ~120 s; a 2-tile stair level = 15-30 s). The crew is **pick-limited** - the embark ships 3
 picks, so more `MINE` designations than picks starve, and picks wear out (forge rungs fix it).
-Re-read `miners` in `fort-progress` every phase: migrants change the pool mid-plan.
-Measured table: [references/descent-notes.md](references/descent-notes.md)
+Re-read `miners` every phase - migrants change the pool. Table: references.
 
 ## 10-15. Strata, water work, cave-ins, descent learnings, rates
 See [references/descent-notes.md](references/descent-notes.md) - the measured detail lives there so this body stays bounded and cheap to load.
