@@ -253,7 +253,21 @@ export default class DFObserver extends TypertRemoteService {
   }
 
   liveTargets() {
-    return this.ctx.agents.list().filter((agent) => this.targetAgent(agent) !== null)
+    const out = []
+    for (const agent of this.ctx.agents.list()) {
+      if (this.targetAgent(agent) === null) continue
+      // Agents created before this plugin activated never emitted `agent/created`
+      // for us: adopt them lazily so a live session is not briefing-blind.
+      if (!this.agents.has(agent.id)) {
+        this.agents.set(agent.id, { lastTick: 0, lastAt: 0, lastSignal: null, lastWakeAt: 0 })
+        this.disposers.set(agent.id, agent.ctx.effect(() => () => {
+          this.agents.delete(agent.id)
+          this.disposers.delete(agent.id)
+        }, 'df-observer: agent bookkeeping (adopted)'))
+      }
+      out.push(agent)
+    }
+    return out
   }
 
   // ---------------------------------------------------------------------
