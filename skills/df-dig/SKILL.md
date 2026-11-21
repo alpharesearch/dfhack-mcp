@@ -140,26 +140,7 @@ Rules:
   complete in whatever order the crew reaches them.
 
 ## 17. Walls are the design, not the leftover
-My first plans used 1-tile walls - the player's verdict was right: **not enough wall**.
-- **2 tiles of wall minimum** between a room and a hall, and between adjacent rooms. 1-tile
-  walls are weak (they read as thin as a doorframe), give no privacy, no support, and no space
-  for a door + frame.
-- **Wall rows between room rows: pitch >= 6** (4 tall rooms + 2+ wall rows). My bedroom grid
-  went from pitch 5 to pitch 10, giving 1,020 tiles back to the mountain.
-- **Wall columns between bands**: 2 columns, not 1 (bands at x36-39 and x42-45, hall at y123;
-  x40-41 stay wall).
-- **Openings stay 1 tile and must reach the hall through the whole wall** - a passage that stops
-  one tile short seals the room. Doors are built in them.
-- **Diagonal contact IS a connection.** Dwarves move diagonally; so do water, vermin, miasma and
-  ambush. My 4-neighbour reach graph called rooms separated and the game said otherwise - with
-  diagonals the map's components collapsed from 63 to 17. Separation needs no corner touching.
-- **Count the open area, not the room count.** Support/cave-in thresholds are unverified on this
-  build (§13), so the conservative reading is: keep single rooms small (4x4), keep walls thick,
-  and do not merge rooms into a hall by accident - if two rooms' walls come out, you have dug a
-  big unsupported room and paid for it twice.
-- Reuse of space: when re-spacing, **NO_DIG the tiles you are giving up** (272 thin-walled room
-  tiles cleared, 1,020 grid tiles returned to wall) - a designation you mean to abandon is a
-  job you are making dwarves do.
+2 tiles minimum between room and hall and between rooms; pitch >= 6 (4-tall rooms + 2 wall rows); 2 wall columns between bands; openings 1 tile **through the whole wall thickness** with a door; **diagonal contact is a connection** (dwarves, water, vermin, miasma, ambush) so separation must be corner-clean; count open area, not rooms; NO_DIG tiles you abandon. Full rules and measurements: [references/descent-notes.md](references/descent-notes.md)
 
 ## 18. A wagon road follows the surface - the hill *is* the road
 Wagons refuse stairs, so a depot needs a 3-wide ramped route to the map edge. My first plan
