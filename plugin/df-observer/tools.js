@@ -64,7 +64,8 @@ export function toolDefinitions({ model, projection, config, sessionFilter }) {
       const logTick = logTickOf(exec)
       const scope = args.scope ?? 'summary'
       const body = statusBody(state, scope, config)
-      return { scope, tick: state.tick, logTick, ...body }
+      const foldLine = logTick == null ? '' : `\n[session log folded at tick ${logTick}${logTick < state.tick ? ` - older than this read (tick ${state.tick}): the live model above is authoritative for a live game; the log keeps what this session was told]` : ''}`
+      return { scope, tick: state.tick, logTick, ...body, text: `${body.text ?? ''}${foldLine}` }
     },
   }
 
