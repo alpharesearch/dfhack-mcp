@@ -528,7 +528,7 @@ export default class DFObserver extends TypertRemoteService {
   // ---------------------------------------------------------------------
 
   /** Flip the mute and remember it (storage + notes + the panel wire). */
-  setQuiet(on, why = 'panel') {
+  setQuiet(on, why = 'panel', announce = true) {
     const next = Boolean(on)
     const changed = next !== this.quiet
     this.quiet = next
@@ -537,6 +537,21 @@ export default class DFObserver extends TypertRemoteService {
       ? `injections PAUSED (${why}): briefings and wakes are suppressed; the game is untouched`
       : `injections resumed (${why}): ${this.model.suppressed.briefings} briefings and ${this.model.suppressed.wakes} wakes were suppressed while paused`)
     try { this.ledger?.table?.('meta')?.put?.('quiet', { quiet: next, why, at: Date.now() }) } catch { /* labelled below */ }
+    // The panel folds the SESSION LOG, and muting stops the very rows it reads - so
+    // the toggle itself must land as one compact folded row, otherwise the page
+    // freezes at the last briefing and the button never flips. (Measured: after a
+    // click the transcript said PAUSED while the panel still read "pause briefings".)
+    if (changed && announce) {
+      const p = this.model.payload()
+      const line = `DF-OBSERVER injections ${next ? 'PAUSED' : 'RESUMED'} (${why}): `
+        + `${p.suppressed.briefings} briefings and ${p.suppressed.wakes} wakes suppressed so far. The game is untouched; the panel keeps its data.`
+        + `\n[df-observer] ${JSON.stringify({ form: 'briefing', tick: p.tick,
+          data: { tick: p.tick, online: p.online, paused: p.paused, poll: p.poll, generation: p.generation,
+            pauseSource: p.pauseSource, pauseAuthority: p.pauseAuthority, quiet: next,
+            suppressed: { ...p.suppressed }, facts: p.facts, todos: (p.todos ?? []).slice(0, 12),
+            alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, coord: a.coord, acked: !!a.acked })) } })}`
+      for (const agent of this.liveTargets()) { try { agent.inject(line) } catch { /* labelled in the notes */ } }
+    }
     return { quiet: next, changed, suppressed: { ...this.model.suppressed } }
   }
 

@@ -178,6 +178,10 @@ window.__ModuleLoader__.load({
         // Ack uses (`/df-panel`): the briefing wire is ledger-first and cannot
         // carry boxes/piles/rungs on top of a 30-row ledger at the Config cap.
         const [extra, setExtra] = React.useState(null)
+        // Immediate feedback for the mute: the command row lands in the session, and the
+        // wire only refreshes when a folded row arrives (which muting stops). So the
+        // page remembers the click locally, labelled as such, and the wire overrides it.
+        const [mutedUI, setMutedUI] = React.useState(null)
         // Provenance, visible: which data path the page is showing. Measured: the
         // command rows appear, so the command runs - if the sections stay empty the
         // merge is the failure, and that must be readable, not silent.
@@ -249,8 +253,8 @@ window.__ModuleLoader__.load({
             // `pause_authority` (default off) and is not wired to this control.
             h('button', {
               key: 'quiet', type: 'button', style: { ...S.ack, marginLeft: 6 }, title: t('quiet.title'),
-              onClick: () => { void ctx.remote.commands.execute(sessionId, snap.quiet ? '/df-quiet off' : '/df-quiet on', []).then(() => { }) },
-            }, snap.quiet ? t('quiet.off') : t('quiet.on')),
+              onClick: () => { const next = !(mutedUI ?? snap.quiet); setMutedUI(next); void ctx.remote.commands.execute(sessionId, next ? '/df-quiet on' : '/df-quiet off', []).then(() => { }) },
+            }, (mutedUI ?? snap.quiet) ? t('quiet.off') : t('quiet.on')),
             h('span', { style: S.meta },
               h('span', { key: 'h' }, health),
               snap.pauseSource ? h('span', { key: 'ps' }, t(`health.pauseSource.${snap.pauseSource}`)) : null,
@@ -258,8 +262,8 @@ window.__ModuleLoader__.load({
               h('span', { key: 'tk' }, `${t('health.tick')} ${snap.tick}`),
               h('span', { key: 'p' }, `${t('health.poll')} ${snap.poll == null ? '?' : `${Math.round(snap.poll / 1000)}s`}`),
               h('span', { key: 'pa' }, `${t('pause.authority')} ${snap.pauseAuthority ?? '?'}`),
-              snap.quiet ? h('span', { key: 'q', style: { color: 'var(--dsw-alias-state-warn-primary)' } },
-                t('quiet.note', (snap.suppressed?.briefings ?? 0) + (snap.suppressed?.wakes ?? 0))) : null,
+              (mutedUI ?? snap.quiet) ? h('span', { key: 'q', style: { color: 'var(--dsw-alias-state-warn-primary)' } },
+                t('quiet.note', (snap.suppressed?.briefings ?? 0) + (snap.suppressed?.wakes ?? 0)) + (mutedUI != null && mutedUI !== snap.quiet ? ' (this page - awaiting the wire)' : '')) : null,
               snap.filter?.enabled
                 ? h('span', { key: 'fl' }, `filter ${snap.filter.live ? 'live' : 'spawning'}${snap.filter.verdictTick != null ? ` @${snap.filter.verdictTick}` : ''}${snap.filter.fallback ? ' (fallback)' : ''}`)
                 : null,

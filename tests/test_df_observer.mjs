@@ -766,8 +766,25 @@ test('the panel mute pauses injections only - never the game', async () => {
     const hits = (client.match(new RegExp("'" + key + "'", 'g')) ?? []).length
     assert.ok(hits >= 2, `${key} is present in BOTH locales (en + zh), saw ${hits}`)
   }
-  assert.match(client, /snap\.quiet \? t\('quiet\.off'\) : t\('quiet\.on'\)/, 'the button toggles its label with the state')
-  return 'mute pauses injections, counts them, and never writes to the game'
+  assert.match(client, /\(mutedUI \?\? snap\.quiet\) \? t\('quiet\.off'\) : t\('quiet\.on'\)/, 'the button toggles its label with the effective state (wire, or the local echo while the wire is muted)')
+  // The toggle must also be VISIBLE: the panel folds the session log, and muting
+  // stops the rows it reads, so the change announces itself as one folded row.
+  const injected = []
+  // liveTargets() adopts agents through their OWN Context (agent.ctx.effect), so the
+  // mock agent must carry one - measured: 'Cannot read properties of undefined (reading effect)'.
+  ctx.agents = { list: () => [{ id: 'play-1', ctx: { effect: () => () => {} }, inject: (t) => injected.push(t) }], on: () => () => {} }
+  const inst2 = new DFObserver(ctx, Config.parse({ panel_pause_button: true }))
+  inst2.setQuiet(true, 'test')
+  assert.equal(injected.length, 1, `the toggle announces itself once (saw ${injected.length} injected rows)`)
+  assert.match(injected[0], /injections PAUSED/, injected[0].slice(0, 120))
+  assert.match(injected[0], /"quiet":true/, 'the folded row carries the mute state')
+  const before = injected.length
+  inst2.setQuiet(true, 'test')
+  assert.equal(injected.length, before, 'a no-change toggle injects nothing')
+  // (`client` is read above in this test - no redeclaration.)
+  assert.match(client, /const \[mutedUI, setMutedUI\] = React\.useState\(null\)/, 'the page remembers the click locally')
+  assert.match(client, /mutedUI \?\? snap\.quiet/, 'the wire overrides the local echo')
+  return 'mute pauses injections, counts them, announces itself, and never writes to the game'
 })
 
 test('the Sidebar page body is uncapped; only the dock keeps a cap', () => {
