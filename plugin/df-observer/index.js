@@ -536,7 +536,19 @@ export default class DFObserver extends TypertRemoteService {
     if (changed) this.note(next
       ? `injections PAUSED (${why}): briefings and wakes are suppressed; the game is untouched`
       : `injections resumed (${why}): ${this.model.suppressed.briefings} briefings and ${this.model.suppressed.wakes} wakes were suppressed while paused`)
-    try { this.ledger?.table?.('meta')?.put?.('quiet', { quiet: next, why, at: Date.now() }) } catch { /* labelled below */ }
+    try {
+      // Measured: a `meta` table never reached disk (writes are queued, and a
+      // remove/install within seconds dropped them), so the mute died with the
+      // instance. The ledger table is the proven-durable path - `todos/<id>.json`
+      // files exist after reloads - and restoreTodos skips non-numeric ids, so a
+      // `quiet` key there is storage, not a to-do.
+      void this.ledger?.table?.('todos')?.put?.('quiet', { kind: 'quiet', quiet: next, why, at: Date.now() })
+      this.ledger?.table?.('meta')?.put?.('quiet', { quiet: next, why, at: Date.now() })
+    } catch (error) {
+      // Durability must announce itself: a mute that cannot be stored is a mute a
+      // reload will silently undo.
+      this.note(`mute state NOT stored (this session only): ${error?.message ?? error}`)
+    }
     // The panel folds the SESSION LOG, and muting stops the very rows it reads - so
     // the toggle itself must land as one compact folded row, otherwise the page
     // freezes at the last briefing and the button never flips. (Measured: after a
@@ -583,11 +595,13 @@ export default class DFObserver extends TypertRemoteService {
       if (stored.length) this.model.restoreTodos(stored)
       const boxes = [...domain.table('boxes').entries()].map(([, v]) => v)
       if (boxes.length) this.model.restoreBoxes(boxes)
-      const meta = domain.table('meta').get('quiet')
+      const meta = domain.table('todos').get('quiet') ?? domain.table('meta').get('quiet')
       if (meta?.quiet) {
-        this.quiet = true
-        this.model.setQuiet(true, { briefings: 0, wakes: 0 })
-        this.note(`injections are PAUSED (restored from storage${meta.why ? `, set by ${meta.why}` : ''}): briefings and wakes are suppressed; the game is untouched`)
+        // Restoring a mute must ANNOUNCE (one folded row): the panel reads the
+        // session log, and muting suppresses the rows it would otherwise fold -
+        // measured: after a reload the page read "pause briefings" at a frozen tick
+        // while the plugin was in fact muted.
+        this.setQuiet(true, 'storage', true)
       }
       this.note(`ledger restored: ${stored.length} to-dos, ${boxes.length} watched boxes`)
     } catch (error) {

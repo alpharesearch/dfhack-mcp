@@ -766,6 +766,11 @@ test('the panel mute pauses injections only - never the game', async () => {
     const hits = (client.match(new RegExp("'" + key + "'", 'g')) ?? []).length
     assert.ok(hits >= 2, `${key} is present in BOTH locales (en + zh), saw ${hits}`)
   }
+  // Durability: the mute rides the ledger table (the path proven to hit disk).
+  const indexSrc = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  assert.match(indexSrc, /table\?\.\('todos'\)\?\.put\?\.\('quiet', \{ kind: 'quiet'/, 'the mute is stored on the durable ledger path')
+  assert.match(indexSrc, /domain\.table\('todos'\)\.get\('quiet'\) \?\? domain\.table\('meta'\)\.get\('quiet'\)/, 'restore reads it back')
+  assert.match(indexSrc, /this\.setQuiet\(true, 'storage', true\)/, 'a restored mute announces itself')
   assert.match(client, /\(mutedUI \?\? snap\.quiet\) \? t\('quiet\.off'\) : t\('quiet\.on'\)/, 'the button toggles its label with the effective state (wire, or the local echo while the wire is muted)')
   // The toggle must also be VISIBLE: the panel folds the session log, and muting
   // stops the rows it reads, so the change announces itself as one folded row.
