@@ -38,7 +38,7 @@ import { ObserverTransport } from './observer.js'
 import { FortModel, STATE_VERSION, significantChange, dfObserverProjection } from './model.js'
 import { STANDING_RULES, buildBriefing, buildWake } from './brief.js'
 import { toolDefinitions } from './tools.js'
-import { FILTER_SYSTEM_PROMPT, buildFilteredBriefing, buildFilterWake, parseVerdict } from './filter.js'
+import { FILTER_SYSTEM_PROMPT, STATE_PREFIX, buildFilteredBriefing, buildFilterWake, parseVerdict } from './filter.js'
 
 /** Every tunable lives here so the player edits `cordis.patch.yml`, not code. */
 export const Config = z.object({
@@ -134,8 +134,11 @@ export const Config = z.object({
   /** Fall back to the rule-gated briefing if no verdict arrives this long
    * after a filter wake (the filter session is not the game's gatekeeper). */
   filter_timeout_ms: z.number().int().min(10000).default(120000),
-  /** Max size of the state payload the filter tool returns (filter context). */
-  filter_state_max_tokens: z.number().int().min(400).default(2600),
+  /** Max size of the state payload pushed to the filter (its own context). */
+  filter_state_max_tokens: z.number().int().min(400).default(4000),
+  /** Push the FULL payload every N significant ticks; the rest are gate lines
+   * only. The filter's session log is its history, so full pushes can be sparse. */
+  filter_full_every: z.number().int().min(1).default(2),
 }).prefault({})
 
 
@@ -190,6 +193,7 @@ export default class DFObserver extends TypertRemoteService {
     this.filterSessionId = null
     this.filterVerdict = null
     this.filterWokeAt = null
+    this.filterPushTick = 0
     this.filterFallback = false
     this.filterPromptInstalled = false
     // Remote endpoints, marked imperatively (Node runs this module without a
@@ -380,7 +384,7 @@ export default class DFObserver extends TypertRemoteService {
       : []
     if (this.filterEnabled() && (isDeep || gateNotes.length)) {
       this.lastGateSignal = this.model.payload()
-      this.wakeFilter(gateNotes)
+      this.wakeFilter(gateNotes, isDeep)
     }
     await this.dispatchBriefing()
     await this.dispatchFilterWakes()
@@ -597,22 +601,40 @@ export default class DFObserver extends TypertRemoteService {
     this.filterFallback = false
   }
 
-  filterWakeMessage(tick, gateNotes) {
+  filterWakeMessage({ tick, gateNotes, payload, full }) {
+    const gate = gateNotes.length ? ` Numeric gate: ${gateNotes.join(', ')}.` : ''
+    const instruction = 'Answer with exactly one [df-verdict] line per your instructions.'
+    if (!full) {
+      return createUserMessage({
+        source: { kind: 'df-observer', form: 'filter-tick', summary: `DF observer filter tick ${tick}` },
+        content: [{ type: 'text', text: `Observation tick ${tick}.${gate} No full payload this tick - decide from your log history and df_observe_state if you need it. ${instruction}` }],
+      })
+    }
+    let body = JSON.stringify(payload)
+    const cap = this.config.filter_state_max_tokens * 4
+    if (body.length > cap) body = `${body.slice(0, cap)}…(truncated: labelled, never a fact)`
     return createUserMessage({
-      source: { kind: 'df-observer', form: 'filter-tick', summary: 'DF observer filter tick' },
-      content: [{ type: 'text', text: `Observation tick ${tick}.${gateNotes.length ? ` Numeric gate: ${gateNotes.join(', ')}.` : ''} Read df_observe_state, then answer with exactly one [df-verdict] line per your instructions.` }],
+      source: { kind: 'df-observer', form: 'filter-tick', summary: `DF observer filter tick ${tick} (full)` },
+      content: [{ type: 'text', text: `Observation tick ${tick}.${gate} Full state payload follows; compare with your earlier ticks and rank what changed. ${instruction}\n${STATE_PREFIX}${body}` }],
     })
   }
 
-  wakeFilter(gateNotes) {
+  wakeFilter(gateNotes, isDeep) {
     const agent = this.filterAgent() ?? null
     void (async () => {
       const live = agent ?? await this.ensureFilterAgent()
       if (!live) return
       this.filterWokeAt = Date.now()
-      try { live.followup(this.filterWakeMessage(this.model.tick, gateNotes)) } catch (e) {
+      const full = this.filterPushTick % this.config.filter_full_every === 0
+      this.filterPushTick += 1
+      try {
+        live.followup(this.filterWakeMessage({
+          tick: this.model.tick, gateNotes, payload: this.model.payload(), full,
+        }))
+      } catch (e) {
         this.note(`filter wake failed: ${e?.message ?? e}`)
       }
+      void isDeep
     })()
   }
 

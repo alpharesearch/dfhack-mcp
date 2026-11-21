@@ -985,12 +985,19 @@ def observe_pile_lua(pile_ids: list[int]) -> str:
 
 
 OBSERVE_PICKS_LUA = """
-local n = 0
-for _, it in ipairs(df.global.world.items.other.IN_PLAY) do
-  local ok, nm = pcall(function() return it:name() end)
-  if ok and nm and string.find(string.lower(nm), "pick") then n = n + 1 end
+-- Picks are WEAPON items with subtype id ITEM_WEAPON_PICK (measured 53.17-r1:
+-- the TOOL group holds wheelbarrows/scrolls, NOT picks).
+local in_play = 0
+local total = 0
+for _, it in ipairs(df.global.world.items.other.ANY_WEAPON) do
+  local ok, key = pcall(function() return tostring(it.subtype.id) end)
+  if ok and key == "ITEM_WEAPON_PICK" then
+    total = total + 1
+    local okp, pos = pcall(function() return it.pos end)
+    if okp and pos ~= nil then in_play = in_play + 1 end
+  end
 end
-print("PICKS " .. n)
+print("PICKS " .. in_play .. " TOTAL " .. total)
 """
 
 

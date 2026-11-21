@@ -5,7 +5,9 @@
  */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import fs from 'node:fs'
 import path from 'node:path'
+import vm from 'node:vm'
 import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -452,6 +454,111 @@ test('filter: default OFF, verdict parsing, filtered briefing within cap, whitel
     `wake ${wake.tokens} tokens: must fit its cap, or arrive labelled overBudget`)
   return 'verdict parse + <=260-token filtered briefing + bounded wake; whitelist enforced by the plugin (dispatchFilterWakes)'
 })
+
+// ---------------------------------------------------------------------------
+// client half: factory -> apply -> render smoke (stub React; the shipped page
+// provides the real one). Catches the static-half builtin traps (styles.insert).
+const fakeSnapshotForRender = {
+  tick: 7, online: true, paused: true, pauseSource: 'plugin', generation: 1,
+  facts: { pop: 7, miners: 2, picks: 4 },
+  rungs: [{ id: 'labors', title: 'Miners', done: true }, { id: 'meeting', title: 'Meeting', done: false }],
+  next: { id: 'meeting', title: 'Meeting area', keys: 'z', at: { elev: 36, x0: 5, x1: 11, y0: 115, y1: 121 } },
+  boxes: [{ elev: 36, box: [27, 121, 42, 126], to_dig: 51, dug: 45, pending: 0 }],
+  piles: [], shafts: [], warnings: null,
+  todos: [{ id: 5, title: 'Meeting area', state: 'open', evidence: 'rung open' }],
+  alerts: [{ id: 'A3', kind: 'water', coord: 'x50,y123', evidence: 'water elev35:4', acked: false, cleared: false }],
+  digEvents: [], pauseEvents: [], crashlog: null, notes: ['note one'], overload: null,
+  pollIntervalMs: 60000, config: { pause_authority: 'off', panel_poll_ms: 5000 },
+  filter: { enabled: false }, sessionFolded: true,
+}
+
+function clientSandbox(registered, onComponent) {
+  const fakeReact = {
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(3) }),
+    useState: (init) => (init === null ? [fakeSnapshotForRender, () => {}] : [init === false ? true : init, () => {}]),
+    useEffect: (fn) => { const cleanup = fn(); if (typeof cleanup === 'function') cleanup() },
+  }
+  const sandbox = {
+    window: { __ModuleLoader__: { load: (reg) => { registered.reg = reg } } },
+    require: (name) => { if (name === 'react') return fakeReact; throw new Error(`unexpected require ${name}`) },
+    console, setInterval, clearInterval, Math, JSON, String, Number, Array, Object, Promise,
+    onComponent,
+  }
+  return sandbox
+}
+
+function loadClient() {
+  const source = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
+  const registered = {}
+  const sandbox = clientSandbox(registered, null)
+  vm.runInNewContext(source, sandbox)
+  return { source, factory: registered.reg?.factory, id: registered.reg?.id }
+}
+
+test('client: factory registers, apply wires slots, panel renders with token-only styles', () => {
+  const { source, factory, id } = loadClient()
+  const codeLines = source.split('\n').filter((l) => !/^\s*\*/.test(l) && !/^\s*\/\//.test(l))
+  assert.doesNotMatch(codeLines.join('\n'), /styles\.(insert|remove)/, 'static client half has no styles builtin - inline styles only')
+  assert.equal(id, '@local/df-observer')
+  assert.ok(factory, 'factory registered')
+  const calls = []
+  const ctx = {
+    effect: (fn) => { const dispose = fn(); calls.push(['effect']); return () => { if (typeof dispose === 'function') dispose() } },
+    locale: { register: (ns, dicts) => { calls.push(['locale', ns, Object.keys(dicts).join('+')]); return () => {} } },
+    slots: {
+      inject: (slot, fn) => { fn(); calls.push(['inject', slot]); return () => {} },
+      register: (opts) => { calls.push(['register', opts.name, opts.id ?? opts.key]); return () => {} },
+    },
+    uiConversation: { events: { register: (def) => { calls.push(['events', def.kind, def.target]); return () => {} } } },
+    remote: { dfObserver: { panel: async () => fakeSnapshotForRender, ackAlert: async () => ({ ok: true }) } },
+  }
+  const plugin = factory((name) => { if (name === 'react') return fakeReactOf(); throw new Error(name) })
+  assert.equal(plugin.inject.join(','), 'slots,uiConversation,remoteAccess,locale')
+  plugin.apply(ctx)
+  const names = calls.map((c) => c.join(':'))
+  assert.ok(names.includes('locale:dfObserver:en+zh'), 'dictionaries registered (en+zh)')
+  assert.ok(names.some((n) => n.startsWith('inject:conversation.input.dock')), 'panel injected into the composer dock')
+  assert.ok(names.some((n) => n.startsWith('register:conversation.input.dock')), 'panel registered')
+  assert.ok(names.includes('events:df-alert:chat'), 'alert definition registered for chat')
+  assert.ok(names.some((n) => n.startsWith('inject:conversation.chat.node')), 'chat row injected')
+  // Render path: rebuild with a component spy and render the dock panel with data.
+  let component = null
+  const registered = {}
+  const renderSandbox = clientSandbox(registered, (c) => { component = c })
+  vm.runInNewContext(fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8'), renderSandbox)
+  const renderCtx = {
+    effect: (fn) => { const d = fn(); return () => { if (typeof d === 'function') d() } },
+    locale: { register: () => () => {} },
+    slots: {
+      inject: (slot, fn) => { fn(); return () => {} },
+      register: (opts, comp) => { if (opts.name === 'conversation.input.dock') component = comp; return () => {} },
+    },
+    uiConversation: { events: { register: () => () => {} } },
+    remote: { dfObserver: { panel: async () => fakeSnapshotForRender, ackAlert: async () => ({ ok: true }) } },
+  }
+  registered.reg.factory((name) => { if (name === 'react') return fakeReactOf(); throw new Error(name) }).apply(renderCtx)
+  assert.equal(typeof component, 'function', 'panel component captured')
+  const tree = component({ sessionId: 'session-1' })
+  const walked = JSON.stringify(tree)
+  assert.match(walked, /Fort observer/, 'panel title renders')
+  assert.match(walked, /water/, 'alert row renders')
+  assert.match(walked, /to_dig 51/, 'box numbers render')
+  assert.match(walked, /last pause: plugin/, 'pause attribution renders')
+  const tokenRefs = walked.match(/var\(--[^)]*\)/g) ?? []
+  const badTokens = tokenRefs.filter((v) => !v.startsWith('var(--dsw-alias-'))
+  const literals = walked.match(/#[0-9a-fA-F]{3,8}\b/g) ?? []
+  assert.equal(badTokens.length, 0, `only theme tokens are used (bad: ${JSON.stringify(badTokens.slice(0, 3))})`)
+  assert.equal(literals.length, 0, `no literal colors (found: ${JSON.stringify(literals.slice(0, 3))})`)
+  return `factory+apply+render smoke OK (${names.length} registrations, ${tokenRefs.length} token refs)`
+})
+
+function fakeReactOf() {
+  return {
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(3) }),
+    useState: (init) => (init === null ? [fakeSnapshotForRender, () => {}] : [init === false ? true : init, () => {}]),
+    useEffect: (fn) => { const cleanup = fn(); if (typeof cleanup === 'function') cleanup() },
+  }
+}
 
 // ---------------------------------------------------------------------------
 // manifest/display checklist

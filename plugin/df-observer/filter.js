@@ -21,6 +21,13 @@
  *   outside the whitelist is demoted to briefing text, never to a wake.
  * - Evidence must quote tile categories/coordinates; NO DATA is never a fact.
  *
+ * The filter's context is deliberately generous (>262k on current routes): the
+ * plugin PUSHES the full observation payload into the filter's inbox every
+ * `filter_full_every` ticks, and a short gate line in between - the filter's
+ * own session log is its tick history, so it can notice trends (a stall
+ * deepening, water creeping) that a stateless per-tick glance cannot. It never
+ * pays for that history from a play session's context.
+ *
  * Failure path: no verdict within `filter_timeout_ms` -> the plugin falls back
  * to the rule-gated direct briefing, with the fallback recorded in its notes.
  * The filter agent is disposed with the plugin fiber.
@@ -29,6 +36,7 @@
  */
 
 export const VERDICT_PREFIX = '[df-verdict] '
+export const STATE_PREFIX = '[df-state] '
 
 export const FILTER_SYSTEM_PROMPT = [
   'You are the DF-OBSERVER FILTER: a read-only analyst of one Dwarf Fortress game, watched through the df-observer plugin.',
