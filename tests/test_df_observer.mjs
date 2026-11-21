@@ -557,17 +557,18 @@ test('projection schema keeps the panel fields (poll, pauseAuthority, filter)', 
   const keys = Object.keys(projection.stateSchema.shape)
   // The fold copies STATE_FIELDS and starts from init(): both must carry the
   // chip fields, or the panel reads '?' no matter what the schema declares.
-  for (const key of ['poll', 'pauseAuthority', 'filter']) {
-    assert.ok(STATE_FIELDS.includes(key), `STATE_FIELDS must include ${key}`)
+  for (const key of ['poll', 'pauseAuthority', 'filter', 'designations']) {
+    assert.ok(STATE_FIELDS.includes(key), `STATE_FIELDS must include ${key} (the fold drops unlisted fields)`)
     assert.ok(key in projection.init(), `init() must define ${key}`)
   }
   const folded = projection.apply(projection.init(), {
     type: 'user/message',
-    data: { content: `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: 9, data: { tick: 9, poll: 8000, pauseAuthority: 'off', filter: { enabled: true, live: true, verdictTick: 7 } } })}` },
+    data: { content: `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: 9, data: { tick: 9, poll: 8000, pauseAuthority: 'off', designations: { designated_total: 107, by_elev: [{ elev: 41, designated_tiles: 83, clusters: [{ x0: 38, x1: 48, y0: 113, y1: 122, tiles: 83 }] }] }, filter: { enabled: true, live: true, verdictTick: 7 } } })}` },
   })
   assert.equal(folded.poll, 8000, 'the fold carries poll')
   assert.equal(folded.pauseAuthority, 'off', 'the fold carries pauseAuthority')
   assert.equal(folded.filter?.verdictTick, 7, 'the fold carries the filter state (the chip needs it)')
+  assert.equal(folded.designations?.designated_total, 107, 'the fold carries the designation scan (the panel needs it)')
   for (const key of ['poll', 'pauseAuthority', 'filter', 'generation', 'pauseSource', 'reports']) {
     assert.ok(keys.includes(key), `stateSchema must declare ${key} (the panel chips read it)`)
   }

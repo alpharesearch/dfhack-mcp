@@ -32,7 +32,7 @@ export const PAYLOAD_PREFIX = '[df-observer] '
 export const STATE_FIELDS = [
   'tick', 'online', 'observedAt', 'paused', 'pauseSource', 'pauseAtTick', 'pluginPauseTick',
   'generation', 'poll', 'pauseAuthority', 'filter',
-  'facts', 'buildings', 'boxes', 'shafts', 'piles', 'warnings', 'rungs', 'next',
+  'facts', 'buildings', 'boxes', 'shafts', 'piles', 'warnings', 'rungs', 'next', 'designations',
   'reports', 'crashlog', 'notes', 'alerts', 'alertHistory', 'todos', 'digEvents', 'pauseEvents',
   'overload', 'briefings',
 ]
