@@ -844,10 +844,12 @@ async def tunnel_sites(length: int = Query(12, ge=4, le=40), width: int = Query(
                        min_depth: int = Query(2, ge=1, le=12),
                        near_x: int = Query(None), near_y: int = Query(None),
                        near_elev: int = Query(None),
+                       dry: bool = Query(True, description="reject runs whose columns contain aquifer at/above the dig level (the game's DAMP warning)"),
                        max_tokens: int = Query(1500)):
     """Find tunnel lines that obey the player's rule: solid rock, `width` rows, `length` tiles, on one elevation, each tile at least `min_depth` BELOW its local surface (mountain stays on top), rock-sealed at the far end, with explored walkable ground at the entrance. Ranked by depth then distance to near_x/near_y/near_elev (pass the wagon or fort centre). THIS is the tool that prevents a 'tunnel' dug on the surface with nothing above it."""
     near = (near_x, near_y, near_elev) if None not in (near_x, near_y, near_elev) else None
-    sites = await world.tunnel_sites(length=length, width=width, min_depth=min_depth, near=near)
+    sites = await world.tunnel_sites(length=length, width=width, min_depth=min_depth,
+                                     near=near, require_dry=dry)
     b = WM.Budget(max_tokens)
     lines = [f"tunnel sites: length>={length} width={width} min_depth={min_depth}"
              + (f" near=({near_x},{near_y},{near_elev})" if near else "")]
@@ -861,6 +863,46 @@ async def tunnel_sites(length: int = Query(12, ge=4, le=40), width: int = Query(
     for l in lines:
         b.spend(len(l) + 1)
     return WM.finish(lines, b)
+
+@app.get("/hazards", operation_id="hazards")
+async def hazards(x0: int = Query(...), y0: int = Query(...),
+                  x1: int = Query(...), y1: int = Query(...),
+                  elev: int = Query(..., description="the elevation you plan to dig at"),
+                  max_tokens: int = Query(2000)):
+    """DAMP and HOT for a rectangle at a dig elevation, the way the game warns a player. damp = aquifer at/below the dig level in that column, or standing water; hot = magma within range below. Digging into an aquifer floods the fort; digging into the magma crust brings lava. Reports counts, the worst tiles, and the aquifer/magma elevations so you can route around, under, or over it."""
+    z0, z1 = await world.fort_band()
+    hz = await world.hazard_map(z0 - WM.GAME_Z_OFFSET, z1 - WM.GAME_Z_OFFSET)
+    b = WM.Budget(max_tokens)
+    lines = [f"hazards at elev {elev}, x{x0}-{x1} y{y0}-{y1}"]
+    damp = hot = wet = clean = 0
+    worst = []
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            rec = hz.get((x, y), {"aquifer": [], "water": {}, "magma": [], "salt": []})
+            aq = [e for e in rec["aquifer"] if e >= elev]
+            wa = {e: v for e, v in rec["water"].items() if e >= elev}
+            mg = [e for e in rec["magma"] if e <= elev]
+            d = bool(aq) or bool(wa)
+            if d:
+                damp += 1
+            if mg:
+                hot += 1
+            if not d and not mg:
+                clean += 1
+            if d and len(worst) < 6:
+                worst.append(f"  DAMP x{x},y{y}: aquifer@{aq[:4]} water@{sorted(wa.items())[:3]}")
+    lines.append(f"  damp tiles: {damp} | magma-below tiles: {hot} | clean: {clean}")
+    lines.extend(worst)
+    for l in lines:
+        b.spend(len(l) + 1)
+    return WM.finish(lines, b)
+
+@app.get("/magma-depth", operation_id="magma_depth")
+async def magma_depth(x: int = Query(...), y: int = Query(...),
+                      elev: int = Query(..., description="dig elevation"),
+                      e_min: int = Query(-120), step: int = Query(2)):
+    """Distance down to magma from a dig point - the HOT warning as a number. The magma crust sits far below the fort band, so this scans downward in coarse windows and returns the first magma elevation and how many levels below your dig it is."""
+    return await world.magma_depth_below(x, y, elev, e_min=e_min, step=step)
 
 @app.get("/depth-profile", operation_id="depth_profile")
 async def depth_profile(elev: int = Query(..., description="the elevation you plan to dig at"),

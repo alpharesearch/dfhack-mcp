@@ -1135,6 +1135,82 @@ class WorldModel:
                 "surface_elev": top,
                 "depth_under_surface": (top - int(elev)) if top is not None else None}
 
+    # ---- hazard model (damp / hot) ------------------------------------------
+    # The game warns a player at designation time: an area that is DAMP is aquifer or
+    # flowing water, an area that is HOT is near the magma crust. Digging into either
+    # floods the fort with water or lava, so a plan must see the hazard BEFORE designating.
+
+    async def hazard_map(self, e0: int | None = None, e1: int | None = None) -> dict:
+        """(x,y) -> {aquifer:[elevs], water:{elev:level}, magma:[elevs], salt:[elevs]} from
+        the cached block arrays. RFR gives per-tile aquifer/water/magma flags, so this costs
+        no extra RPC once the band is cached."""
+        if e0 is None or e1 is None:
+            z0, z1 = await self.fort_band()
+            e0, e1 = z0 - GAME_Z_OFFSET, z1 - GAME_Z_OFFSET
+        gen = await self._gen()
+        blocks = await self.cache.blocks(e0 + GAME_Z_OFFSET, e1 + GAME_Z_OFFSET + 1, gen)
+        out: dict = {}
+        for b in blocks:
+            elev = b.map_z - GAME_Z_OFFSET
+            aq = list(b.aquifer) if len(b.aquifer) >= 256 else []
+            wat = list(b.water) if len(b.water) >= 256 else []
+            mag = list(b.magma) if len(b.magma) >= 256 else []
+            salt = list(b.water_salt) if len(b.water_salt) >= 256 else []
+            for i in range(min(256, len(b.tiles))):
+                x = b.map_x + (i % 16)
+                y = b.map_y + (i // 16)
+                rec = out.setdefault((x, y), {"aquifer": [], "water": {}, "magma": [], "salt": []})
+                if i < len(aq) and aq[i]:
+                    rec["aquifer"].append(elev)
+                if i < len(wat) and wat[i]:
+                    rec["water"][elev] = int(wat[i])
+                if i < len(mag) and mag[i]:
+                    rec["magma"].append(elev)
+                if i < len(salt) and salt[i] and i < len(wat) and wat[i]:
+                    rec["salt"].append(elev)
+        return out
+
+    async def magma_depth_below(self, x: int, y: int, below_elev: int,
+                                e_min: int = -120, step: int = 2) -> dict:
+        """How far down the magma is, from (x,y,below_elev): the HOT warning as a number.
+
+        Scans downward in coarse windows (magma crust is far below the fort band, so this
+        is a bounded search, not a full map read). Reports the first elevation carrying
+        magma and the distance from the requested dig elevation.
+        """
+        gen = await self._gen()
+        start = int(below_elev)
+        # Contiguous 12-level windows (the RPC reply-size limit). A stepping scan SKIPS
+        # levels, and the magma sea is a thin band - the first version jumped 8 levels at
+        # a time and reported "no magma" on a world that has one.
+        win = 12
+        e = start - 1
+        last = None
+        while e >= e_min:
+            lo = max(e_min, e - win + 1)
+            try:
+                blocks = await self.cache.blocks(lo + GAME_Z_OFFSET, e + GAME_Z_OFFSET + 1, gen)
+            except Exception as ex:
+                return {"x": int(x), "y": int(y), "from_elev": start,
+                        "error": f"scan stopped at elev {e}: {ex}", "magma_elev": None}
+            hit = None
+            for b in blocks:
+                mag = list(b.magma) if len(b.magma) >= 256 else []
+                for i in range(min(256, len(b.tiles))):
+                    if mag[i] if i < len(mag) else False:
+                        if b.map_x + (i % 16) == int(x) and b.map_y + (i // 16) == int(y):
+                            hit = b.map_z - GAME_Z_OFFSET
+                            break
+                if hit is not None:
+                    break
+            if hit is not None:
+                return {"x": int(x), "y": int(y), "from_elev": start, "magma_elev": hit,
+                        "levels_to_magma": start - hit}
+            last = lo
+            e = lo - 1
+        return {"x": int(x), "y": int(y), "from_elev": start, "magma_elev": None,
+                "scanned_to": last, "note": "no magma found in scanned range"}
+
     async def annotate_depth(self, facts: "FortFacts") -> "FortFacts":
         """Count floor tiles that sit at depth >=2 under their local surface.
 
@@ -1157,7 +1233,8 @@ class WorldModel:
         return facts
 
     async def tunnel_sites(self, length: int = 12, width: int = 3, min_depth: int = 2,
-                           near: tuple | None = None, max_sites: int = 8) -> list[dict]:
+                           near: tuple | None = None, max_sites: int = 8,
+                           require_dry: bool = True) -> list[dict]:
         """Rank candidate tunnel lines by the rule a player actually uses.
 
         A site is: `length` tiles long and `width` rows wide on ONE elevation, every tile
@@ -1171,6 +1248,7 @@ class WorldModel:
         e0, e1 = z0 - GAME_Z_OFFSET, z1 - GAME_Z_OFFSET
         surf = await self.surface_map(e0, e1)
         levels = await self.levels(e0, e1)
+        hz = await self.hazard_map(e0, e1) if require_dry else {}
         sites = []
         L, W, MD = int(length), int(width), int(min_depth)
         for lv in levels:
@@ -1197,6 +1275,21 @@ class WorldModel:
                     if any(d is None or d < MD for d in depths):
                         x += 1
                         continue
+                    # DAMP check: an aquifer at or above the dig level in any column of the
+                    # run means water inflow when dug - the game warns "damp" for this.
+                    if require_dry:
+                        damp = False
+                        for dy in range(W):
+                            for dx in range(L):
+                                rec = hz.get((ox + x + dx, oy + y + dy))
+                                if rec and any(e >= lv.elev for e in rec["aquifer"]):
+                                    damp = True
+                                    break
+                            if damp:
+                                break
+                        if damp:
+                            x += 1
+                            continue
                     # entrance: explored walkable ground just east of the run
                     ex, ey = x + L, y + (W // 2)
                     entrance = lv.grid[y + (W // 2)][ex] if ex < lv.cols else " "
@@ -1300,6 +1393,8 @@ class WorldModel:
                 out["water"] = b.water[i]
             if i < len(b.magma):
                 out["magma"] = b.magma[i]
+            if i < len(b.aquifer) and b.aquifer[i]:
+                out["aquifer"] = True          # the game's DAMP warning, per tile
             if i < len(b.hidden):
                 out["hidden"] = bool(b.hidden[i])
             if i < len(b.tile_dig_designation):

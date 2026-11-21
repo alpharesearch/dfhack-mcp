@@ -413,3 +413,42 @@ Until then the honest label for those rungs is "underground floors incl. natural
 4. **Stair shafts are the z-level trap** (the ladder's own keys say "designate EVERY z"):
    planned tool `shaft-plan?x&y&from_elev&to_elev` returning the per-z designation kind
    (top = down-stairs, middle = up-down, bottom = up-stairs) so a shaft is never half-ordered.
+
+# Hazard model: DAMP and HOT (water, aquifer, magma)
+
+The player gets a designation-time warning - the area is damp, or hot. Digging into an
+aquifer floods the fort; digging into the magma crust brings lava. So the layer must know
+this **before** designating, and must say "unknown" when it cannot know.
+
+## Measured on this world
+| Signal | Source | Result |
+|---|---|---|
+| Aquifer tiles | RFR `MapBlock.aquifer` per-tile flags (explored blocks only) | **17,067** in the fort band, concentrated at **elev 34 (12,703)**, 33 (3,847), 36 (517) - i.e. 3-5 levels under the surface, which is the standard DF aquifer layer |
+| Point check | `dfhack.maps.isTileAquifer` / `isTileHeavyAquifer` | work (false at the tunnel tiles: tunnel is above the aquifer) |
+| Standing water | RFR `MapBlock.water` | 1,070 tiles in band (elev 36), plus rivers at the surface |
+| Magma | RFR `MapBlock.magma` | **none found in 33..-120** |
+| Volcano / magma pipe | `dfhack.maps.getGlobalInitFeature(0)` | flags empty, x/y nil -> **no volcano on this map** |
+| Region flags | `maps.getTileBiomeRgn(x,y,z,out).flags` | empty at all sampled points |
+
+## The rules this forces
+1. **Fog is not "safe", it is unknown.** RFR reports explored tiles only, so a deep scan
+   that finds no magma proves nothing. `magma_depth` must report `scanned_to` and the
+   hazard tools report unexplored counts. Never plan a shaft downward on fog.
+2. **Damp blocks a tunnel plan.** `tunnel-sites(require_dry=true)` rejects any run whose
+   columns contain aquifer at/above the dig level. Verified: your line at elev 39 reports
+   `damp 0 | magma-below 0 | clean 112`; the aquifer layer lives at 34, so 39 is above it -
+   the correct relationship, and the reason 39 is a legal tunnel level here.
+3. **Hot is worldgen, not tile scan.** Magma presence comes from worldgen features
+   (`getGlobalInitFeature` volcano flags) plus tile magma where explored. On this world: no
+   volcano, so no hot hazard - that must be *stated*, not assumed.
+4. **Route around / under / over.** When a run is damp, the options are: go above the
+   aquifer (our case), go below it into the open strata, or pump (`liquids` script) - the
+   tool reports the aquifer elevations so the plan is a choice, not a guess.
+5. `tile_at` now returns `aquifer: true` per tile, so a site check answers damp/hot locally.
+
+## Tool list (added)
+- `GET /hazards?x0&y0&x1&y1&elev` -> damp / magma-below / clean counts + the worst tiles with
+  their aquifer and water elevations.
+- `GET /magma-depth?x&y&elev` -> contiguous 12-level downward scan, first magma elevation,
+  `levels_to_magma`, and `scanned_to` (the honest "we do not know" field).
+- `tunnel-sites?...&dry=true` (default) -> depth + rock + dry, in one query.
