@@ -488,9 +488,11 @@ test('acceptance tiles_progress: finds monitored boxes in payload shape', () => 
 // ---------------------------------------------------------------------------
 // seeds must not duplicate restored to-dos
 test('seed dedupe: restored to-dos are not re-created by the ladder read', () => {
-  const model = freshModel()
+  // A BARE model: freshModel() already seeds, so restoring on top of it is the
+  // duplicate case, not the fix.
+  const model = new FortModel(baseCfg)
   model.restoreTodos([
-    { id: 71, title: 'General pile near the wagon', origin: 'auto', state: 'done', accept: { kind: 'pile_general' }, evidence: 'pile 20 accepts …' },
+    { id: 71, title: 'General pile near the wagon', origin: 'auto', state: 'done', accept: { kind: 'pile_general' }, evidence: 'pile 20 accepts ...' },
     { id: 74, title: 'Miners rung', origin: 'ladder', state: 'done', accept: { kind: 'rung', rung: 'labors' }, evidence: 'rung satisfied' },
   ])
   model.ingestDeep({
@@ -499,12 +501,9 @@ test('seed dedupe: restored to-dos are not re-created by the ladder read', () =>
     next: null, piles: [], reports: [], crashlog: null, notes: [],
   })
   const labors = model.todos.filter((t) => t.accept?.kind === 'rung' && t.accept?.rung === 'labors')
-  assert.equal(labsafe(laborCount(labors)), 1, 'the labors rung exists exactly once')
-  const generals = model.todos.filter((t) => t.accept?.kind === 'pile_general')
-  assert.equal(generals.length, 1, 'pile_general not duplicated by seeds')
+  assert.equal(labors.length, 1, `the labors rung exists exactly once, saw ${labors.map((t) => t.id).join(',')}`)
+  assert.equal(model.todos.filter((t) => t.accept?.kind === 'pile_general').length, 1, 'pile_general not duplicated by seeds')
   assert.ok(model.todos.some((t) => t.accept?.kind === 'rung' && t.accept?.rung === 'meeting'), 'new rungs still seed')
-  function laborCount(x) { return x.length }
-  function labsafe(n) { return n }
   return 'seed dedupe by acceptance signature verified'
 })
 
