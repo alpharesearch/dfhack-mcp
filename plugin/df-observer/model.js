@@ -637,6 +637,9 @@ export class FortModel {
       tick: this.tick, t: Date.now(), online: this.online !== false,
       paused: this.paused, pauseSource: this.pauseSource, pauseAtTick: this.pauseAtTick,
       generation: this.generation,
+      poll: this.pollMs ?? null,
+      pauseAuthority: this.cfg.pause_authority,
+      filter: this.filterState ?? null,
       facts: this.facts ? {
         pop: num(this.facts.pop), miners: num(this.facts.miners),
         picks: this.facts.picks === null || this.facts.picks === undefined ? null : num(this.facts.picks),
@@ -714,6 +717,8 @@ export function viewOf(state) {
   if (state._view === undefined) {
     state._view = {
       tick: state.tick, online: state.online, observedAt: state.observedAt,
+      poll: state.poll ?? null, pauseAuthority: state.pauseAuthority ?? null,
+      filter: state.filter ?? null,
       paused: state.paused, pauseSource: state.pauseSource, pauseAtTick: state.pauseAtTick,
       generation: state.generation, facts: state.facts, buildings: state.buildings,
       boxes: state.boxes, shafts: state.shafts, piles: state.piles, warnings: state.warnings,

@@ -202,6 +202,7 @@ export default class DFObserver extends TypertRemoteService {
     this.filterPushTick = 0
     this.filterFallback = false
     this.filterPromptInstalled = false
+    this.modelPollAnnounced = 0
     // Remote endpoints, marked imperatively (Node runs this module without a
     // decorator transform; the marker path below is exactly the @Remote form).
     // markers live at module scope (see markRemotePrototype) - the gateway
@@ -402,6 +403,10 @@ export default class DFObserver extends TypertRemoteService {
     if (wasOffline) {
       await this.dispatchAlerts(this.model.markOnline(offlineMs))
     }
+    this.model.pollMs = this.currentIntervalMs()
+    this.model.filterState = this.filterEnabled() ? {
+      enabled: true, live: !!this.filterAgent(), verdictTick: this.filterVerdict?.tick ?? null,
+    } : null
     this.model.ingestFast(data)
     if (isDeep) this.model.ingestDeep(data)
     const raised = this.model.evaluate({})

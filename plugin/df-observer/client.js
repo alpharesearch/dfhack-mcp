@@ -169,8 +169,8 @@ window.__ModuleLoader__.load({
               snap.pauseSource ? h('span', { key: 'ps' }, t(`health.pauseSource.${snap.pauseSource}`)) : null,
               h('span', { key: 'g' }, `${t('health.gen')} ${snap.generation ?? '?'}`),
               h('span', { key: 'tk' }, `${t('health.tick')} ${snap.tick}`),
-              h('span', { key: 'p' }, `${t('health.poll')} ${Math.round((snap.pollIntervalMs ?? 0) / 1000)}s`),
-              h('span', { key: 'pa' }, `${t('pause.authority')} ${snap.config?.pause_authority ?? 'off'}`),
+              h('span', { key: 'p' }, `${t('health.poll')} ${snap.poll == null ? '?' : `${Math.round(snap.poll / 1000)}s`}`),
+              h('span', { key: 'pa' }, `${t('pause.authority')} ${snap.pauseAuthority ?? '?'}`),
               snap.filter?.enabled
                 ? h('span', { key: 'fl' }, `filter ${snap.filter.live ? 'live' : 'spawning'}${snap.filter.verdictTick != null ? ` @${snap.filter.verdictTick}` : ''}${snap.filter.fallback ? ' (fallback)' : ''}`)
                 : null,
