@@ -613,3 +613,25 @@ variant (+219 tokens per request); `rules_mode: full` adds 239.
 Knobs, all Config: `tool_docs` (compact|full), `rules_mode` (compact|full|off),
 `briefing_max_tokens` (700), `filter_briefing_max_tokens` (340),
 `briefing_mode` (on|off), `wake_enabled`.
+
+## 20. The filter, live end to end (0.1.40, measured)
+
+Two defects kept the filter from ever being used: `assistant/message` is not a
+bus event (the append feed is `session/event`), so the verdict listener never
+fired; and `df_observe_state` output failed the lossless-JSON check (the filter's
+own log shows "The tool is throwing an error", and it fell back to `df_status`).
+
+Live injections from this session (verdict-driven, filter session
+`df-observer-filter-…`):
+
+```
+DF-OBSERVER (filtered) tick 7
+HEADLINE: Three game days passed, zero tiles dug: all boxes frozen, pending 0, elev35 adit fog-blocked, drink 0
+DF-OBSERVER (filtered) tick 8
+HEADLINE: Watched-pile food 43→40 falling with drink 0; dig boxes frozen, pending 0; crew alert A2 persists
+```
+
+Measured on the live payload (3,848 tokens): rule briefing **456**, filtered
+**225** (caps 260 and 340 land at the same body) → **231 tokens saved per
+injection**. A stale verdict is labelled by its tick ("No change at tick 11" on
+tick 13), never presented as fresh.
