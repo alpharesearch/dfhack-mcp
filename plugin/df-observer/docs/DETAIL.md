@@ -141,3 +141,33 @@ config object, so copy the keys you change.
 - Reinstalling a linked bundle at the SAME version reuses the loaded module in a
   live profile: bump `version` when the code changes (measured 0.1.0 -> 0.1.1,
   and 0.1.21's new header labels arrived live after a bump + reinstall).
+
+## Alert kinds and wake boundaries (current build)
+
+| kind | raised when | wakes (steer) by default |
+|---|---|---|
+| `water` | a monitored shaft column shows water, **or** the monitored band's water tiles grow by `water_growth_min` (measured 1030 -> 1091 = the aquifer breach flooding) | yes |
+| `damp_hot` | the game's designation warnings flag DAMP/HOT tiles (the elev22-24 case), or magma is under a monitored column | no |
+| `dig_complete` | a watched box reaches `to_dig == 0 && dug > 0`, or a to-do's acceptance flips to done | yes |
+| `dig_stalled` | a face is frozen for `stall_ticks` reads - drained (designations queued, drained, nothing dug) **or** idle (nothing queued, nothing dug) | yes |
+| `tile_state_lost` | a box's `dug` count *decreases* (a dug floor/stair was destroyed) | yes |
+| `crew` | supply by the player's ranking: alcohol 0 -> meals 0 -> raw food 0; or the game's own `cancels Eat/Drink`-style report | no |
+| `game_says` | a noteworthy game report (attack, flood, out of food, caravan, migrant...) - evidence is the **verbatim quote** + elevation | no |
+| `game_crashed` / `game_offline` | the crash log grows / the game stops answering | yes |
+
+`alert_wakes` is Config; a wake fires once per alert lifetime (`wakeSent`) plus
+`wake_min_spacing_ms`, and briefings always `inject` (never steer).
+
+## What a tool answer tells you about freshness
+
+`df_status` header: `tick N | running|PAUSED|GAME OFFLINE | gen G | data <age>s old`
+(or `data NO READ YET`). A field with no reading is labelled `NO DATA`, never
+inferred; an empty probe read cannot flip a to-do (`noData`).
+
+## Diagnosing the game channel
+
+`bash plugin/df-observer/deploy.sh channel` compares the plugin's own read path
+(`GET /observe`, plain HTTP) with the MCP tools' path (`POST /mcp`): 404 there is
+the measured dead session binding after a DFHack server restart (`-32600 Session
+not found` in tool calls), which does **not** affect the observer's `df_*` tools
+- they answer from the live model.
