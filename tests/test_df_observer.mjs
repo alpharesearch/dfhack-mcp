@@ -504,7 +504,15 @@ test('seed dedupe: restored to-dos are not re-created by the ladder read', () =>
   assert.equal(labors.length, 1, `the labors rung exists exactly once, saw ${labors.map((t) => t.id).join(',')}`)
   assert.equal(model.todos.filter((t) => t.accept?.kind === 'pile_general').length, 1, 'pile_general not duplicated by seeds')
   assert.ok(model.todos.some((t) => t.accept?.kind === 'rung' && t.accept?.rung === 'meeting'), 'new rungs still seed')
-  return 'seed dedupe by acceptance signature verified'
+  // Extra acceptance fields (the pile excludes) must not defeat the signature.
+  const model2 = new FortModel(baseCfg)
+  model2.restoreTodos([{ id: 84, title: 'General pile', origin: 'auto', state: 'done',
+    accept: { kind: 'pile_general', excludes: ['stone', 'wood'] }, evidence: 'pile 20 ...' }])
+  model2.ingestDeep({ rungs: [{ id: 'stockpile', title: 'General stockpile', done: true, keys: 'z', why: 'sorting' }],
+    next: null, piles: [], reports: [], crashlog: null, notes: [] })
+  const generals2 = model2.todos.filter((t) => t.accept?.kind === 'pile_general')
+  assert.equal(generals2.length, 1, `pile_general with an excludes list stays single, saw ${generals2.map((t) => t.id).join(',')}`)
+  return 'seed dedupe by acceptance signature verified (canonical, all fields)'
 })
 
 // ---------------------------------------------------------------------------

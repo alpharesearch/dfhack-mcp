@@ -136,15 +136,18 @@ export const BASIC_TODOS = [
     accept: { kind: 'buildings_kw', keyword: 'door', min: 1 }, cite: 'df-dig §16b (openings)' },
 ]
 
-/** Identity of a to-do for dedupe: what it proves, not its title text. */
+/** Identity of a to-do for dedupe: everything the acceptance test proves,
+ * canonically ordered - not its title text (measured: auto pile tasks carry
+ * exclude lists, and a key-by-a-few-fields signature let them seed twice). */
 export function todoSignature(todo) {
   const a = todo?.accept ?? {}
-  const parts = [a.kind ?? 'manual']
-  for (const k of ['rung', 'category', 'keyword', 'elev', 'x0', 'y0', 'x1', 'y1', 'min', 'min_items']) {
-    if (a[k] != null) parts.push(`${k}=${a[k]}`)
+  const canon = (v) => {
+    if (v == null) return 'null'
+    if (Array.isArray(v)) return `[${v.map(canon).sort().join(',')}]`
+    if (typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${k}:${canon(v[k])}`).join(',')}}`
+    return String(v)
   }
-  if (Array.isArray(a.categories)) parts.push(`categories=${[...a.categories].sort().join('+')}`)
-  return parts.join('|')
+  return canon(a)
 }
 
 /** Fields the status probe owns; they survive fast ticks (facts is replaced). */
