@@ -52,3 +52,10 @@ enabled category, with the game's own sizes (`/repair-stockpile-settings`), and 
 acceptance test is **the custom button opening**, not a flag read-back. My earlier
 "fresh `df.new(df.stockpile_settings)` also has mats=0" test misled me: a fresh object has
 no categories enabled - the arrays are sized *when a category is switched on*.
+
+## Verified closed (player test)
+After `/configure-stockpile` (flags + array allocation in the same pass), the player clicked
+**Custom** on the general pile (id 15) and the repaired piles: **no crash**. The mechanism -
+`SIGSEGV at 0xa` in `render_things` via `overlay.plug.so` - is closed by allocating the arrays
+the UI walks. `repair_stockpile_settings` remains only as a rescue for piles built before the
+fix; normal construction (`/make-stockpile`) never needs it.
