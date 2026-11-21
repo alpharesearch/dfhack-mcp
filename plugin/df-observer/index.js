@@ -150,7 +150,16 @@ const BRIEF_SECTION_ORDER = 55
  * ClassMethodDecoratorContext whose initializer runs on the instance being
  * constructed. Requires: called from inside the constructor (`this` = instance).
  */
-function markDirectRemote(instance, method, options) {
+/**
+ * Apply the `@Remote` marker to the PROTOTYPE at module load - the Node runtime
+ * here has no decorator syntax, and the gateway's binding is read when the
+ * service is CONSTRUCTED (`bindTypertRemote` in the base constructor), so a
+ * marker applied later (in `[Service.init]`) is invisible to the Client.
+ * We fabricate the standard ClassMethodDecoratorContext, take the initializer
+ * the decorator schedules, and run it with `this` bound to an object whose
+ * prototype is the class prototype - exactly what the real decorator does.
+ */
+function markRemotePrototype(Class, method, options) {
   const decorator = Remote(options)
   let initializer = null
   decorator(function () {}, {
@@ -161,7 +170,7 @@ function markDirectRemote(instance, method, options) {
     addInitializer(fn) { initializer = fn },
   })
   if (initializer === null) throw new Error(`df-observer: Remote marker for ${method} produced no initializer`)
-  initializer.call(instance)
+  initializer.call(Object.create(Class.prototype))
 }
 
 /**
@@ -198,8 +207,8 @@ export default class DFObserver extends TypertRemoteService {
     this.filterPromptInstalled = false
     // Remote endpoints, marked imperatively (Node runs this module without a
     // decorator transform; the marker path below is exactly the @Remote form).
-    markDirectRemote(this, 'panel', { name: 'panel' })
-    markDirectRemote(this, 'ackAlert', { name: 'ackAlert' })
+    // markers live at module scope (see markRemotePrototype) - the gateway
+    // reads the prototype descriptor at construction time.
   }
 
   note(message) {
@@ -746,3 +755,8 @@ export default class DFObserver extends TypertRemoteService {
     return { ok: !!alert, id, tick: this.model.tick }
   }
 }
+
+// The panel Remote is marked at module load (the gateway reads the prototype
+// descriptor when the service is constructed, which happens on activation).
+markRemotePrototype(DFObserver, 'panel', { name: 'panel' })
+markRemotePrototype(DFObserver, 'ackAlert', { name: 'ackAlert' })

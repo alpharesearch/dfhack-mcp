@@ -456,6 +456,22 @@ test('filter: default OFF, verdict parsing, filtered briefing within cap, whitel
 })
 
 // ---------------------------------------------------------------------------
+// panel Remote: markers must exist on the PROTOTYPE at module load (the
+// gateway binds endpoints when the service is constructed).
+test('remote: panel/ackAlert are marked Remote before construction', async () => {
+  const mod = await import(path.join(pluginDir, 'index.js'))
+  const { createTypertRemoteInfo } = await import(path.join(pluginDir, 'node_modules', '@deepseek-ai', 'dsh-typert-protocol', 'lib', 'index.js'))
+  const proto = mod.default.prototype
+  const names = []
+  for (const name of ['panel', 'ackAlert']) {
+    const info = createTypertRemoteInfo(proto[name], name, proto)
+    assert.ok(info, `${name} is not a Remote method on the prototype`)
+    names.push(name)
+  }
+  return `marked at module load: ${names.join(', ')}`
+})
+
+// ---------------------------------------------------------------------------
 // client half: factory -> apply -> render smoke (stub React; the shipped page
 // provides the real one). Catches the static-half builtin traps (styles.insert).
 const fakeSnapshotForRender = {
@@ -513,7 +529,7 @@ test('client: factory registers, apply wires slots, panel renders with token-onl
     remote: { dfObserver: { panel: async () => fakeSnapshotForRender, ackAlert: async () => ({ ok: true }) } },
   }
   const plugin = factory((name) => { if (name === 'react') return fakeReactOf(); throw new Error(name) })
-  assert.equal(plugin.inject.join(','), 'slots,uiConversation,remoteAccess,locale')
+  assert.equal(plugin.inject.join(','), 'slots,uiConversation,remote,locale')
   plugin.apply(ctx)
   const names = calls.map((c) => c.join(':'))
   assert.ok(names.includes('locale:dfObserver:en+zh'), 'dictionaries registered (en+zh)')

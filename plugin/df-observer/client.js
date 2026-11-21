@@ -314,8 +314,11 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // Context PROPERTIES, not service ids: 'remote' is the face that serves
+    // ctx.remote.<serviceKey>.<endpoint>() (measured: 'remoteAccess' leaves
+    // ctx.remote as "cannot get property remote without inject").
     return {
-      inject: ['slots', 'uiConversation', 'remoteAccess', 'locale'],
+      inject: ['slots', 'uiConversation', 'remote', 'locale'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { en: UI_EN, zh: UI_ZH }), 'df-observer: dictionaries')
         ctx.effect(() => ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
