@@ -313,3 +313,26 @@ Test asked: 3-wide tunnel west ~15 into the mountain, 6x6 chamber, place a trade
    -> Plan: a `survey`-style op that reports, for a requested rectangle, how many tiles the
    game would accept as diggable (explored + rock), BEFORE designating. That is the
    difference between ordering work and ordering a no-op.
+
+## Notifying the agent when a job finishes
+
+Three mechanisms, in increasing order of "how the game means it":
+
+1. **Harness watcher (works today, in use).** `scripts/watch_dig.py` runs as a background
+   job, polls the designation count (the only reliable mining-progress signal on 53.17-r1),
+   and exits 0 at completion. The harness delivers the completion notice to the agent - no
+   busy-poll in the conversation, no timeout risk. Scope with `--elev/--box`.
+2. **In-game announcement (the real channel, planned).** DFHack `repeat` + a small script in
+   `deployables/scripts/` that checks designations/jobs each tick and calls
+   `dfhack.gui.showAnnouncement("DSH: tunnel complete", color)`. Announcements land in
+   `world.status.reports`, so `get_reports` surfaces them - the player sees the same line
+   in-game, and the agent gets an event, not a poll. This generalizes to the game's own
+   events (caravan arrived, "the fortress is under attack", migrant wave, strange mood),
+   which is exactly the `alerts` tool in this plan: completion events and world events share
+   one notification channel.
+3. **Blocking tool (bounded).** `GET /wait-for-dig` could return when designations clear,
+   but the DSH row's `toolCallTimeoutMs` is 120000, so it only covers short waits (a 37-tile
+   band took ~1-3 min here). Use it for "wait up to 90 s", never as the job-complete signal.
+
+Rule for the plan: **the agent must not busy-poll.** Polling in the conversation costs turns
+and tokens; the watcher (1) and announcements (2) move waiting out of the model.

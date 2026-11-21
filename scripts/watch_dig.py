@@ -42,7 +42,6 @@ def post(path, body, timeout=30):
 def pending(elev=None, box=None):
     """Designation tiles currently pending, optionally restricted to a box on one level."""
     if elev is None:
-        band = get("/world-cache-reset")            # forces a fresh read next call
         try:
             lk = get("/look", {"max_tokens": 2200}, timeout=90)
         except Exception:
@@ -89,7 +88,7 @@ def main():
     last = None
     while True:
         try:
-            post("/world-cache-reset", {})
+            get("/world-cache-reset", timeout=60)     # GET endpoint; POST answers 405
         except Exception as e:
             print(f"connection problem: {e}", file=sys.stderr)
         try:
