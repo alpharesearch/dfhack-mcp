@@ -320,6 +320,8 @@ test('briefing stays inside briefing_max_tokens and carries the state line', () 
   assert.match(full.text, /FORT BRIEFING \(in-game elevations\)/)
   assert.match(full.text, /to_dig 51 \| dug 39 \| pending 6/)
   assert.match(full.text, /water in monitored shaft column/)
+  assert.ok(full.bodyLevel === 0 || full.tokens <= 1200, 'a generous budget keeps the full body')
+  assert.match(full.text, /stop the shaft\/dig at this column/, 'the alert advice survives at a generous budget')
   assert.match(full.text, /accept: /)
   assert.match(full.text, /complete = to_dig 0 && dug >0/)
   const mid = buildBriefing(model.payload(), { maxTokens: 700 })
@@ -628,6 +630,22 @@ test('tool answers stamp the age of the newest game read', async () => {
   const res2 = await defs2.find((d) => d.name === 'df_status').execute({ scope: 'health' }, { agent: { id: 'play-1' } })
   assert.match(res2.text, /data NO READ YET/, 'a model without reads says so')
   return 'read age stamped in the header line'
+})
+
+test('the pending split names the backlog outside the watched boxes', async () => {
+  const model = freshModel()
+  model.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 24, drink: 0, wood: 1, stone: 159, metal: 0, barrels: 18, pending_dig: 103 },
+    buildings: [], boxes: [{ elev: 35, box: [45, 121, 66, 122], to_dig: 20, dug: 24, pending: 4, hidden: 18 },
+      { elev: 25, box: [43, 121, 44, 122], to_dig: 4, dug: 0, pending: 0, hidden: 0 }],
+    shafts: [], warnings: { designated_tiles: 16, damp_tiles: 4, hot_tiles: 0 }, notes: [] })
+  model.evaluate(model.cfg)
+  const defs = toolDefinitions({ model, projection: null, config: model.cfg, sessionFilter: () => true })
+  const res = await defs.find((d) => d.name === 'df_status').execute({ scope: 'summary' }, { agent: { id: 'play-1' } })
+  assert.match(res.text, /pending dig 103 \(watched boxes 4, outside them 99 - location of the rest is not proven by the survey\)/, res.text.split('\n')[2])
+  const brief = buildBriefing(model.payload(), { maxTokens: 700 })
+  assert.match(brief.text, /pending 103 \(watched 4\/out 99\)/, 'the briefing carries the terse split')
+  return 'watched vs unwatched backlog named in tools and briefings'
 })
 
 test('payload carries lastCheck so df_todo why can show the trail', async () => {

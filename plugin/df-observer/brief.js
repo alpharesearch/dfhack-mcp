@@ -49,7 +49,10 @@ function factsLine(payload) {
        `raw ${f.raw_food == null ? '?' : num(f.raw_food)}`].join(' ') + ' (fort items)'
   const parts = [dateText, popText, `miners ${num(f.miners)} of ${picksText(f)} picks`,
     supplyText, seedsText, `wood ${num(f.wood)}`, `stone ${num(f.stone)}`,
-    `metal ${num(f.metal)}`, `pending dig ${num(f.pending_dig)}`].filter(Boolean)
+    `metal ${num(f.metal)}`,
+    // The queued-jobs split: the watched boxes' pending vs the game's total, so a
+    // backlog outside the survey list is named as such (measured: 103 pending).
+    `pending ${num(f.pending_dig)} (watched ${pendingWatched(payload)}/out ${pendingOutside(f, payload)})`].filter(Boolean)
   const state = payload.online === false ? 'GAME OFFLINE' : (payload.paused ? 'PAUSED' : 'running')
   const who = payload.pauseSource ? ` (last pause: ${payload.pauseSource}${payload.pauseAtTick != null ? ` @tick ${payload.pauseAtTick}` : ''})` : ''
   return `FORT BRIEFING (in-game elevations) | ${state}${payload.paused ? who : ''} | ${parts.join(' | ')}`
@@ -151,6 +154,15 @@ function healthLines(payload, max = 6) {
 }
 
 /** The facts a panel header cannot do without, in the fewest keys. */
+/** Queued dig jobs inside the watched boxes, and the remainder the survey cannot place. */
+function pendingWatched(p) {
+  return (p.boxes ?? []).reduce((n, b) => n + (Number(b.pending) || 0), 0)
+}
+function pendingOutside(f, p) {
+  const outside = num(f.pending_dig) - pendingWatched(p)
+  return outside >= 0 ? outside : '?'
+}
+
 function compactFacts(f) {
   if (!f) return null
   const out = {}
@@ -259,7 +271,11 @@ export function buildBriefing(payload, { maxTokens, form = 'briefing' }) {
     const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form, tick: payload.tick, data })}`
     const payloadTokens = estimateTokens(stateLine)
     if (payloadTokens > maxTokens - 40 && level < SHRINK_MAX) continue
-    for (let body = 7; body >= 0; body -= 1) {
+    // Trim ONLY as much as the budget needs: start at body=0 (full prose) and
+    // increase. Measured regression: running 7 -> 0 returned the most trimmed
+    // variant whenever it fit, so `ALERTS: 1 active` lost its evidence lines at a
+    // 1,200-token budget.
+    for (let body = 0; body <= 7; body += 1) {
       const caps = {
         ladderOpen: Math.max(0, 5 - body),
         todos: Math.max(1, 12 - 2 * body),

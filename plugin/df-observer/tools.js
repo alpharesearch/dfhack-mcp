@@ -42,6 +42,16 @@ export function jsonSafe(value, depth = 0) {
   return value
 }
 
+/** Where the queued dig jobs actually are: the game's total vs the watched boxes.
+ * The filter measured the useful question - "103 pending, location unproven". */
+function pendingSplit(state) {
+  const total = Number(state?.facts?.pending_dig)
+  if (!Number.isFinite(total)) return ''
+  const watched = (state.boxes ?? []).reduce((n, b) => n + (Number(b.pending) || 0), 0)
+  const outside = total - watched
+  return ` (watched boxes ${watched}, outside them ${outside >= 0 ? outside : '?'} - location of the rest is not proven by the survey)`
+}
+
 export function toolDefinitions({ model, projection, config, sessionFilter }) {
   // Tool schemas ride in EVERY request header of a target agent: measured 962
   // tokens with the long how-to text. `tool_docs: compact` (default) keeps the
@@ -249,7 +259,7 @@ function statusBody(state, scope, config) {
       `tick ${state.tick} | ${state.online === false ? 'GAME OFFLINE' : state.paused ? 'paused' : 'running'}${state.pauseSource ? ` (last pause: ${state.pauseSource})` : ''} | gen ${state.generation ?? '?'}`
       + ` | data ${state.age_s == null ? 'NO READ YET' : `${state.age_s}s old`}`,
       `filter: ${state.filter?.enabled ? (state.filter.live ? `live (verdict tick ${state.filter.verdictTick ?? '?'})` : 'enabled, no verdict yet') : 'off'} | rules_mode ${state.filter?.rules_mode ?? config.rules_mode}`,
-      facts ? `${facts.dwarves == null ? `pop ${num(facts.pop)} (dwarves ?)` : `dwarves ${num(facts.dwarves)} (units ${num(facts.pop)})`} miners ${num(facts.miners)}/${facts.picks == null ? '? (deep probe has no data)' : num(facts.picks)} picks | food ${num(facts.food)} drink ${num(facts.drink)} (ON WATCHED PILES, not the game's fort-wide Food/Drink bars) wood ${num(facts.wood)} stone ${num(facts.stone)} | pending dig ${num(facts.pending_dig)}`
+      facts ? `${facts.dwarves == null ? `pop ${num(facts.pop)} (dwarves ?)` : `dwarves ${num(facts.dwarves)} (units ${num(facts.pop)})`} miners ${num(facts.miners)}/${facts.picks == null ? '? (deep probe has no data)' : num(facts.picks)} picks | food ${num(facts.food)} drink ${num(facts.drink)} (ON WATCHED PILES, not the game's fort-wide Food/Drink bars) wood ${num(facts.wood)} stone ${num(facts.stone)} | pending dig ${num(facts.pending_dig)}${pendingSplit(state)}`
         : 'facts: NO DATA this tick',
       ...(state.boxes ?? []).map((b) => `elev${b.elev} x${b.box[0]}-${b.box[2]} y${b.box[1]}-${b.box[3]}: to_dig ${b.to_dig} dug ${b.dug} pending ${b.pending}`),
       ...(state.rungs ?? []).filter((r) => !r.done).slice(0, 6).map((r) => `[ ] ${r.id}: ${short(r.title, 90)}`),
