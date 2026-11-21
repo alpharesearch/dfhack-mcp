@@ -703,6 +703,25 @@ export class FortModel {
         last.z != null ? `elev${last.z}` : '')
     }
 
+    // ---- the game's own reports as alerts (its hints outrank derived math) ----
+    // Newest-first over the reports we have not seen yet; only noteworthy
+    // patterns raise, each quote is verbatim, and the sweep is bounded so a
+    // busy announcement stream cannot flood the ledger.
+    const notable = /batter|wound|kill|murder|attack|ambush|siege|breach|flood|lava|magma|volcano|necro|forgotten|vampire|were|demon|gollm|out of food|Out of food|no food|Out of drink|cancels Eat|cancels Drink|starv|trade carav|migrant/i
+    const seen = this.reportSeen ?? new Set()
+    this.reportSeen = seen
+    const fresh = (this.reports ?? []).filter((r) => r?.text && notable.test(String(r.text)))
+    let raisedNow = 0
+    for (const r of fresh.slice(-6).reverse()) {
+      const key = `game-says-${String(r.text).slice(0, 80)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      raise('game_says', key,
+        `the game says (Y${r.year ?? '?'} @time ${r.time ?? '?'}): "${String(r.text).slice(0, 140)}"`,
+        r.z != null ? `elev${r.z}` : '')
+      if (++raisedNow >= 3) break
+    }
+
     // ---- crash log: NAME/SIZE only (contents are out of scope) ----
     const crashFiles = this.crashlog?.files ?? []
     if (this.crashlog && this.crashlog.dir) {

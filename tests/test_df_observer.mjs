@@ -613,6 +613,23 @@ test('GAME SAYS: the game reports are quoted in the briefing', () => {
 
 // ---------------------------------------------------------------------------
 // wake boundary: steer reaches a busy agent at its next step
+test('game_says: a noteworthy report raises an alert with the verbatim quote, once', () => {
+  const model = freshModel()
+  const ingest = (reports) => model.ingestDeep({ rungs: [], next: null, notes: [], piles: [], reports })
+  ingest([{ year: 102, time: 155588, text: 'èzum Noramzefon, Ghostly Weaponsmith batters Åblel Rakustàlil, Metalcrafter!', z: 38 }])
+  const hits = model.evaluate(model.cfg).filter((a) => a.kind === 'game_says')
+  assert.equal(hits.length, 1, 'the report raises one alert')
+  assert.match(hits[0].evidence, /the game says \(Y102 @time 155588\): "èzum Noramzefon, Ghostly Weaponsmith batters/, hits[0].evidence)
+  assert.equal(hits[0].coord, 'elev38', 'the elevation is carried')
+  // the same report on the next read must not raise again
+  ingest([{ year: 102, time: 155588, text: 'èzum Noramzefon, Ghostly Weaponsmith batters Åblel Rakustàlil, Metalcrafter!', z: 38 }])
+  assert.ok(!model.evaluate(model.cfg).some((a) => a.kind === 'game_says'), 'a repeat report raises nothing')
+  // a quiet report raises nothing
+  ingest([{ year: 102, time: 1, text: 'An animal has grown to become a Stray Yak Bull.', z: 37 }])
+  assert.ok(!model.evaluate(model.cfg).some((a) => a.kind === 'game_says'), 'routine reports stay quiet')
+  return 'game_says alerts on noteworthy reports, verbatim, once'
+})
+
 test('water growth in the band raises the whitelisted water alert', () => {
   const model = freshModel()
   const ingestWater = (tiles) => model.ingestFast({ paused: false, generation: 1,
