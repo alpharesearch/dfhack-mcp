@@ -133,16 +133,24 @@ export function buildFilteredBriefing(verdict, payload, { maxTokens }) {
       verdict.headline ? `HEADLINE: ${verdict.headline}` : '',
       ...(verdict.changes ?? []).slice(0, 2).map((c) => `  - ${c}`),
     ].filter(Boolean).join('\n'),
+    // Last prose rung: header + headline only. Measured at the Config cap of 340:
+    // without it the ladder stripped the to-do TITLES (the panel's words) to pay
+    // for filter commentary the reader can re-derive with df_status.
+    [head, verdict.headline ? `HEADLINE: ${verdict.headline}` : ''].filter(Boolean).join('\n'),
   ]
-  for (let textLevel = 0; textLevel < texts.length; textLevel += 1) {
-    const text = texts[textLevel]
-    for (let level = 0; level <= SHRINK_MAX; level += 1) {
-      const full = shrinkPayloadLevel(payload, level)
-      // Sugar first, in the order a reader misses it last: titles, then the scan.
-      // The ledger (ids + states) is never part of the strip ladder.
-      for (const data of [full, withoutTitles(full), withoutScan(withoutTitles(full))]) {
-        const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: payload.tick, data })}`
-        const out = `${text}\n${stateLine}`
+  // Priority, measured: at the Config cap of 340 the greedy prose-first order
+  // trimmed the payload until the to-do TITLES vanished (0 of 7 open rows titled)
+  // while my commentary survived. Panel readability outranks filter prose, so the
+  // ladder tries to KEEP the payload as rich as possible and trims the text first;
+  // titles are dropped only when even the shortest text cannot pay for them.
+  for (let level = 0; level <= SHRINK_MAX; level += 1) {
+    const full = shrinkPayloadLevel(payload, level)
+    // Sugar last: titles stay as long as anything does; then the scan.
+    // The ledger (ids + states) is never part of the strip ladder.
+    for (const data of [full, withoutScan(full), withoutTitles(withoutScan(full))]) {
+      const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: payload.tick, data })}`
+      for (let textLevel = 0; textLevel < texts.length; textLevel += 1) {
+        const out = `${texts[textLevel]}\n${stateLine}`
         const tokens = estimateTokens(out)
         if (tokens <= maxTokens) return { text: out, tokens, payloadLevel: level, textLevel }
       }

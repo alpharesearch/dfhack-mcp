@@ -204,7 +204,11 @@ function truncate(text, max) {
  * first `titleRows` OPEN ones, and evidence only when `evidence` > 0. */
 function leanTodos(todos, limit = 30, evidence = 0, titleRows = 12) {
   let titled = 0
-  return (todos ?? []).slice(0, limit).map((t) => {
+  // Measured: the ledger is ordered done-first, so slicing 30 rows dropped the
+  // OPEN ones entirely - the panel lists open rows, the agent acts on them, and
+  // they were the part being cut. Open rows go first; ids+states all survive.
+  const ordered = [...(todos ?? [])].sort((a, b) => (a.state === 'done') - (b.state === 'done'))
+  return ordered.slice(0, limit).map((t) => {
     const row = { id: t.id, state: t.state }
     if (t.state !== 'done' && titled < titleRows) {
       titled += 1

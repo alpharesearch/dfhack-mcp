@@ -313,8 +313,12 @@ test('briefing stays inside briefing_max_tokens and carries the state line', () 
   // The log contract: the folded payload must reproduce the LEDGER (ids, states,
   // evidence) and the tick; decoration sections may shrink with the budget.
   assert.equal(foldedFull.tick, live.tick)
-  assert.deepEqual(foldedFull.data.todos.map((t) => `${t.id}:${t.state}`),
-    live.todos.map((t) => `${t.id}:${t.state}`), 'ledger ids+states reconstruct from the log line')
+  const sorted = (arr) => [...arr].sort()
+  assert.deepEqual(sorted(foldedFull.data.todos.map((t) => `${t.id}:${t.state}`)),
+    sorted(live.todos.map((t) => `${t.id}:${t.state}`)),
+    'ledger ids+states reconstruct from the log line (open rows are ordered first, measured)')
+  const opens = foldedFull.data.todos.filter((t) => t.state !== 'done')
+  assert.ok(opens.every((t) => t.title), 'the open rows carry titles (the panel shows words, not bare ids)')
   assert.ok(foldedFull.data.todos.every((t) => t.evidence), 'ledger evidence survives')
   assert.match(full.text, /\[df-observer\] \{/)
   assert.match(full.text, /FORT BRIEFING \(in-game elevations\)/)
@@ -327,8 +331,8 @@ test('briefing stays inside briefing_max_tokens and carries the state line', () 
   const mid = buildBriefing(model.payload(), { maxTokens: 700 })
   assert.ok(mid.tokens <= 700, `tokens ${mid.tokens}`)
   const foldedMid = foldOf(mid.text)
-  assert.deepEqual(foldedMid.data.todos.map((t) => `${t.id}:${t.state}`),
-    live.todos.map((t) => `${t.id}:${t.state}`), 'ledger reconstructs at the Config budget')
+  assert.deepEqual(sorted(foldedMid.data.todos.map((t) => `${t.id}:${t.state}`)),
+    sorted(live.todos.map((t) => `${t.id}:${t.state}`)), 'ledger reconstructs at the Config budget')
   const brief = buildBriefing(model.payload(), { maxTokens: 300 })
   assert.ok(brief.tokens <= 300, `tokens ${brief.tokens}`)
   const line = brief.text.split('\n').find((l) => l.startsWith('[df-observer] '))
