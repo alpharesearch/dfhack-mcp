@@ -1252,11 +1252,19 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
             if e is None:
                 e = (int(e0) + int(e1)) // 2
             try:
-                sv = await world.survey(e, x0, y0, x1, y1)
-                boxes.append(observe_simplify_survey(sv))
-            except Exception as e:              # label per-box failure, keep the rest
-                boxes.append({"elev": e, "box": [x0, y0, x1, y1], "error": str(e)})
-                notes.append(f"survey x{x0}-{x1} y{y0}-{y1} elev{e} unavailable: {e}")
+                # Tile state comes from the block cache: `dug` is positive tile
+                # class, independent of any designation flag left on a floor (the
+                # /survey RPC classifies a designated floor as already_designated,
+                # which under-counts dug - measured dug 2 where 13 were floor).
+                st = await world.box_state(e, x0, y0, x1, y1)
+                if st.get("tiles_known", 0) == 0:
+                    st = observe_simplify_survey(await world.survey(e, x0, y0, x1, y1))
+                boxes.append(st)
+                if st.get("notes"):
+                    notes.append(f"box x{x0}-{x1} y{y0}-{y1} elev{e}: {st['notes']}")
+            except Exception as err:            # label per-box failure, keep the rest
+                boxes.append({"elev": e, "box": [x0, y0, x1, y1], "error": str(err)})
+                notes.append(f"survey x{x0}-{x1} y{y0}-{y1} elev{e} unavailable: {err}")
         out["boxes"] = boxes
         if not req.get("boxes"):
             notes.append("no boxes requested: per-level dig progress unknown")

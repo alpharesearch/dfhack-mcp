@@ -5,6 +5,7 @@ or a Lua fragment: the server resolves ids from the game's def list, converts el
 and composes a fixed template. So the tests check composition and parsing, not the game.
 """
 import pathlib
+import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
@@ -113,7 +114,11 @@ def test_failure_line_becomes_an_error_not_a_silent_success():
 def test_no_lua_is_reachable_from_the_mcp_surface():
     """The whole design rule: raw Lua must not be a tool."""
     main_src = pathlib.Path(__file__).resolve().parents[1].joinpath("main.py").read_text()
-    assert 'exclude_operations=["game_lua"]' in main_src
+    # The exclusion list grows as debug endpoints are added (observe, observe_stats, ...);
+    # the rule is that game_lua is IN it, not that the list has one member.
+    m = re.search(r'exclude_operations=\[([^\]]*)\]', main_src)
+    assert m is not None, "no exclude_operations on the MCP app"
+    assert '"game_lua"' in m.group(1), f"game_lua not excluded: {m.group(1)}"
     assert 'operation_id="game_lua"' in main_src            # endpoint exists (HTTP debug)
     for op in ("place_building", "remove_building", "building_at", "walkable_between",
                "job_queue", "unit_counts"):

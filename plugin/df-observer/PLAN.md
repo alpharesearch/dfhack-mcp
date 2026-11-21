@@ -526,3 +526,22 @@ The game's supply hints outrank our derived math: a report matching
 `game-says-supply` with the report's own words and `elevNN` from the report.
 The filter prompt carries the same rule ("quote them verbatim ... attribute them
 to the game").
+
+### Measured: completion is a tile-state question, twice over
+A box was announced complete as `to_dig 0, dug 2` (accept `dug>0`) while 21 of 21 tiles were
+dug. Two independent bugs produced that:
+
+1. **Designation class replaced tile class.** `survey` overwrote a tile's category with
+   `already_designated`, so 19 dug floors carrying stale orders counted as neither `dug` nor
+   `to_dig` - and the game cancels such orders (they were gone on the next read). Fixed: tile
+   state is the category; designations are reported as `designated` + `designated_on` per
+   category, with `to_dig = rock + hidden` and `dug = floor + stairs + ramp` independent of
+   orders, plus `safe_to_designate` = rock/hidden **without** an order on it.
+2. **Glyph alphabet gaps.** `>` (stairs_down) and `<` (stairs_up) were not in the decode map,
+   `^` (ramp top) and `'` (smoothed floor) likewise - dug stairs read as `other`. Now included.
+
+Plugin rules that follow:
+- `tiles_progress` boxes need `min_dug` sized to the box (a 7x3 room is not "complete" at 2
+  tiles); `dug > 0` alone is a weak test - use it only for probe tunnels.
+- Stale designations on dug floors are noise: report them (`designated_on.floor > 0`) as a
+  housekeeping alert, never as progress.

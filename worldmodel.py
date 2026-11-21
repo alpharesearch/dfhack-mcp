@@ -1335,6 +1335,8 @@ class WorldModel:
                     des[(b.map_x + (i % 16), b.map_y + (i // 16))] = int(d)
         cats: dict = {}
         samples: dict = {}
+        des_on: dict = {}
+        designated = 0
         for y in range(y0, y1 + 1):
             for x in range(x0, x1 + 1):
                 g = band.get((x, y), {}).get(elev)
@@ -1346,25 +1348,45 @@ class WorldModel:
                     c = "rock"
                 elif g == "=":
                     c = "stairs"
-                elif g == "/":
-                    c = "ramp"
+                elif g in (">", "<"):
+                    # '>' stairs_down, '<' stairs_up (measured live: a 7x3 box of dug floors
+                    # and down stairs read "dug 2" because '>' was not in the map at all)
+                    c = "stairs"
+                elif g in ("/", "^"):
+                    c = "ramp"             # '^' = ramp top: a ramp is a two-level structure
                 elif g == " ":
                     c = "open"            # open air (cavern): nothing to dig, never designate
                 elif g in ("~",):
                     c = "water"
-                elif g in (".", "g", "s", "S", "b", "v"):
-                    c = "floor"
+                elif g in (".", "g", "s", "S", "b", "v", "'", "T", "t"):
+                    c = "floor"           # includes grass/shrub/smoothed-floor walkable ground
                 else:
                     c = "other"
-                if (x, y) in des:
-                    c = "already_designated"
+                # Designation is NOT a tile state: a floor tile with a stale order on it is
+                # still dug. Measured live: a box read as "to_dig 0, dug 2" of 21 because 19
+                # DUG FLOORS carried designations and the designation class replaced their
+                # tile class - the observer then announced a 7x3 box complete on 2 stair
+                # tiles. Tile state is the category; designations are reported alongside.
                 cats[c] = cats.get(c, 0) + 1
+                des_on[c] = des_on.get(c, 0) + 1 if (x, y) in des else des_on.get(c, 0)
+                if (x, y) in des:
+                    designated += 1
                 samples.setdefault(c, []).append((x, y, g, bld.get((x, y)), len(items.get((x, y), []))))
-        safe = cats.get("rock", 0) + cats.get("hidden", 0)
+        designated_on = {k: v for k, v in des_on.items() if v}
+        if designated:
+            cats["already_designated"] = designated
+        # to_dig is the rock/fog a dig order can act on; a designation on a dug floor is a
+        # stale order the game cancels, so it must not reduce dug nor add to to_dig.
+        safe = sum(v for k, v in designated_on.items() if k in ("rock", "hidden"))
+        undesignated_rock = cats.get("rock", 0) + cats.get("hidden", 0) - safe
         blocked = {k: v for k, v in cats.items() if k not in ("rock", "hidden")}
         return {"elev": elev, "ui_elev": ui_elev(elev + GAME_Z_OFFSET),
                 "box": [x0, y0, x1, y1], "counts": cats,
-                "safe_to_designate": safe, "blocked": blocked,
+                "to_dig": cats.get("rock", 0) + cats.get("hidden", 0),
+                "dug": cats.get("floor", 0) + cats.get("stairs", 0) + cats.get("ramp", 0),
+                "designated": designated, "designated_on": designated_on,
+                "undesignated_diggable": undesignated_rock,
+                "safe_to_designate": undesignated_rock, "blocked": blocked,
                 "building_tiles": len(bld), "item_tiles": len(items),
                 "samples": {k: v[:4] for k, v in samples.items()}}
 
@@ -1715,6 +1737,55 @@ class WorldModel:
         ruler = "    |" + "".join(str((a % 10)) for a in range(a0, a1 + 1))
         head = f"section axis={axis} at={at} span {a0}-{a1} in-game elev {e0}-{e1}\n{ruler}"
         return {"head": head, "rows": rows}
+
+    # Tile classes that are POSITIVE dug state (a floor exists), independent of any
+    # designation flag still sitting on it. Measured: the /survey RPC classifies a
+    # designated floor as "already_designated", so a box with stale flags showed
+    # dug 2 when 13 tiles were floor.
+    DUG_CLASSES = {"floor", "smooth_floor", "constructed", "stairs", "stairs_up",
+                   "stairs_down", "stairs_ud", "ramp", "roots_ramp", "track"}
+    TO_DIG_CLASSES = {"rock", "wall", "smooth_wall", "wood", "magma", "unused"}
+
+    async def box_state(self, elev: int, x0: int, y0: int, x1: int, y1: int) -> dict:
+        """Per-box tile state from the block cache: to_dig (diggable, not designated,
+        plus hidden), dug (positive floor/stairs/ramp classes, designated or not),
+        pending (designated and not yet dug). Labelled when tiles are missing."""
+        z = int(elev) + GAME_Z_OFFSET
+        gen = await self._gen()
+        dec = await self._dec(gen)
+        blocks = await self.cache.blocks(z, z + 1, gen)
+        by_xy = {(int(b.map_x), int(b.map_y)): b for b in blocks}
+        to_dig = dug = pending = hidden = known = 0
+        for x in range(int(x0), int(x1) + 1):
+            for y in range(int(y0), int(y1) + 1):
+                b = by_xy.get((x - (x % 16), y - (y % 16)))
+                if b is None:
+                    continue
+                i = (y % 16) * 16 + (x % 16)
+                if i >= len(b.tiles):
+                    continue
+                known += 1
+                cls = dec.tile_class(b.tiles[i]).key
+                hid = bool(b.hidden[i]) if i < len(b.hidden) else False
+                desig = False
+                if i < len(b.tile_dig_designation):
+                    dn = dig_names().get(int(b.tile_dig_designation[i]))
+                    desig = bool(dn) and dn != "NO_DIG"
+                if hid:
+                    hidden += 1
+                    to_dig += 1
+                    continue
+                if cls in self.DUG_CLASSES:
+                    dug += 1
+                elif cls in self.TO_DIG_CLASSES:
+                    to_dig += 1
+                    if desig:
+                        pending += 1
+        total = (int(x1) - int(x0) + 1) * (int(y1) - int(y0) + 1)
+        return {"elev": int(elev), "box": [int(x0), int(y0), int(x1), int(y1)],
+                "to_dig": to_dig, "dug": dug, "pending": pending, "hidden": hidden,
+                "tiles_known": known, "total_tiles": total,
+                "notes": None if known == total else f"{total - known} tiles not in the cache (hidden/fog): NO DATA, not a fact"}
 
     async def tile_at(self, x: int, y: int, elev: int, force: bool = False) -> dict:
         """One tile read from the block cache: tiletype, its decoded name and glyph class,
