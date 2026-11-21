@@ -864,6 +864,25 @@ async def tunnel_sites(length: int = Query(12, ge=4, le=40), width: int = Query(
         b.spend(len(l) + 1)
     return WM.finish(lines, b)
 
+@app.get("/warnings", operation_id="warnings")
+async def warnings(e0: int = Query(None), e1: int = Query(None),
+                   max_tokens: int = Query(1200)):
+    """The game's designation-time warnings, computed for the whole current dig: DAMP (aquifer or standing water in the tile's column at/above the dig level - mining it floods the works) and HOT (magma below). Reports flagged tile counts, the bounding boxes per elevation and samples, so a dangerous dig line can be cleared with NO_DIG before any dwarf breaches it."""
+    w = await world.warnings(e0, e1)
+    b = WM.Budget(max_tokens)
+    lines = [f"designations scanned: {w['designated_tiles']} | DAMP {w['damp_tiles']} | HOT {w['hot_tiles']}"]
+    for bx in w["damp_boxes"]:
+        lines.append(f"  DAMP x{bx['x0']}-{bx['x1']} y{bx['y0']}-{bx['y1']} elev{bx['elev0']}-{bx['elev1']} ({bx['tiles']} tiles) - clear with NO_DIG")
+    for bx in w["hot_boxes"]:
+        lines.append(f"  HOT x{bx['x0']}-{bx['x1']} y{bx['y0']}-{bx['y1']} elev{bx['elev0']}-{bx['elev1']} ({bx['tiles']} tiles) - magma below")
+    for x, y, e, aq, wa in w["samples"]:
+        lines.append(f"    x{x},y{y},elev{e} (ui {e-1}) aquifer{aq} water{wa}")
+    if not w["damp_tiles"] and not w["hot_tiles"]:
+        lines.append("  no damp/hot designations - the current dig is safe")
+    for l in lines:
+        b.spend(len(l) + 1)
+    return WM.finish(lines, b)
+
 @app.get("/probe-plan", operation_id="probe_plan")
 async def probe_plan(x: int = Query(...), y: int = Query(...),
                      elev0: int = Query(..., description="lowest elevation to consider"),

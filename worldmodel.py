@@ -1245,6 +1245,52 @@ class WorldModel:
         facts.underground_floors = n
         return facts
 
+    async def warnings(self, e0: int | None = None, e1: int | None = None) -> dict:
+        """Live designations the game would warn a player about, found without being told.
+
+        A designation is DAMP when its column carries aquifer or standing water at/above the
+        dig level (mining it floods the works - this is exactly what stopped the player's
+        elev-34 line) and HOT when magma sits below it. Returns the flagged tiles clustered
+        into rectangles with the hazard elevations, so clearing them (NO_DIG) is a click-list,
+        not an investigation.
+        """
+        if e0 is None or e1 is None:
+            z0, z1 = await self.fort_band()
+            e0, e1 = z0 - GAME_Z_OFFSET, z1 - GAME_Z_OFFSET
+        gen = await self._gen()
+        hz = await self.hazard_map(e0, e1)
+        blocks = await self.cache.blocks(e0 + GAME_Z_OFFSET, e1 + GAME_Z_OFFSET + 1, gen)
+        dig_names = None
+        damp: list[tuple] = []
+        hot: list[tuple] = []
+        total = 0
+        for b in blocks:
+            elev = b.map_z - GAME_Z_OFFSET
+            des = list(b.tile_dig_designation)
+            for i in range(min(256, len(des))):
+                d = int(des[i])
+                if not d:
+                    continue
+                total += 1
+                x = b.map_x + (i % 16); y = b.map_y + (i // 16)
+                rec = hz.get((x, y), {"aquifer": [], "water": {}, "magma": []})
+                aq = [a for a in rec["aquifer"] if a >= elev]
+                wa = [a for a in rec["water"] if a >= elev]
+                mg = [a for a in rec["magma"] if a < elev]
+                if aq or wa:
+                    damp.append((x, y, elev, aq[:3], sorted(wa)[:3]))
+                elif mg:
+                    hot.append((x, y, elev, mg[:3]))
+        def cluster(pts):
+            if not pts:
+                return []
+            xs = [p[0] for p in pts]; ys = [p[1] for p in pts]; zs = [p[2] for p in pts]
+            return [{"x0": min(xs), "x1": max(xs), "y0": min(ys), "y1": max(ys),
+                     "elev0": min(zs), "elev1": max(zs), "tiles": len(pts)}]
+        return {"designated_tiles": total, "damp_tiles": len(damp), "hot_tiles": len(hot),
+                "damp_boxes": cluster(damp), "hot_boxes": cluster(hot),
+                "samples": damp[:6] + hot[:3]}
+
     async def probe_plan(self, x: int, y: int, elev0: int, elev1: int,
                          min_depth: int = 2) -> list[dict]:
         """Rank elevations at one (x,y) column for a PROBE dig - how a player beats fog.

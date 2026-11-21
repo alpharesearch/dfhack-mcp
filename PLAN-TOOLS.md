@@ -529,3 +529,19 @@ was left running. `hazards` is the gate for that decision; the layer should be a
 "these N designations are damp, clear them" - planned as `warnings` (P1) which lists live
 designations whose columns carry aquifer/water/magma, so the agent catches this state
 without being told.
+
+### Mirroring must check overlap with the player's own work (lesson)
+My first copy landed on the mouth of the player's example: their room is at **elev 39
+x45-49, y107-117** with a `>>` up-down stairwell at x46-47,y108-109 (and the same room
+shape at elev 34), and my tunnel ran x43-58 y119-120 - entering their room. Fixed by
+clearing my designations (NO_DIG 80+4, verified none left) and re-designating 4 tiles
+further south at **y121-124**.
+
+Rules this adds to `mirror_structure`:
+1. **Read existing dug space and designations of the player, not just terrain** - the
+   target rectangle must not intersect any existing room/stair/tunnel footprint
+   (they are buildings + floor transitions), and must keep a clearance margin (>=4 tiles).
+2. **Check the whole z-stack of the target**, not one level: their stairwell passes through
+   every elevation, so a "south of the wagon" plan must respect the columns it crosses.
+3. Report the chosen offset explicitly ("4 tiles south of your room at y117"), because
+   players read space by adjacency, not by coordinate ranges.
