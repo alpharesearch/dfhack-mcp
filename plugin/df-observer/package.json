@@ -21,6 +21,7 @@
     "cordis.patch.yml",
     "locale/*.json",
     "docs",
+    "deploy.sh",
     "icon.svg"
   ],
   "dependencies": {

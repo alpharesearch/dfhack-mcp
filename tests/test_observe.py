@@ -116,11 +116,19 @@ async def live():
     import urllib.request
     def get(path):
         return json.loads(urllib.request.urlopen("http://127.0.0.1:8000" + path, timeout=120).read().decode())
-    direct = get("/survey?elev=36&x0=27&y0=121&x1=42&y1=126")
-    ds = M.observe_simplify_survey(direct)
+    # Parity with the endpoint the plugin mirrors. The game digs BETWEEN the two
+    # reads, so require agreement within one poll cycle of movement (labelled),
+    # not byte equality across a race.
+    import time
+    direct = M.observe_simplify_survey(get("/survey?elev=36&x0=27&y0=121&x1=42&y1=126"))
+    time.sleep(2)
+    direct2 = M.observe_simplify_survey(get("/survey?elev=36&x0=27&y0=121&x1=42&y1=126"))
     mine = res["boxes"][0]
-    check("survey parity to_dig", mine["to_dig"], ds["to_dig"])
-    check("survey parity dug", mine["dug"], ds["dug"])
+    for field in ("to_dig", "dug"):
+        lo, hi = sorted((direct[field], direct2[field]))
+        ok = lo - 24 <= mine[field] <= hi + 24
+        if not ok:
+            FAILS.append(f"survey parity {field}: observe {mine[field]} outside live window {lo}-{hi}")
     pause = get("/get-pause-state")
     check("pause parity", res["paused"], pause["paused"])
     print("live payload size:", len(json.dumps(res)), "bytes")
