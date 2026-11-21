@@ -171,3 +171,105 @@ Target after this pass: **~24 tools** in the MCP surface.
 4. Offline unit test for template composition + a live test gated on RPC **readiness**
    (port-up is not ready: RPC listens before the world loads and answers `CR_FAILURE`).
 5. Reply carries the game's own rejection text when it fails.
+
+---
+
+# Addendum: alerts and events (the missing perception channel)
+
+Raised by the player: *the game has an alert system, and events like a caravan arriving or a
+monster walking into the fort must be known.* Agreed, and it is a **planning gap in this
+document** - my `look`/`get_reports` pair is not that channel.
+
+## Why `get_reports` is not the alert system
+
+`world.status.reports` is the scrolling announcement log: prose lines, no timers, no
+forecasts, no severity, and it overwrites. It tells you a caravan arrived; it does not tell
+you a caravan is 40 tiles out, that a migrant wave of 12 lands in 3 days, that an attack
+wave of 7 goblins is scheduled for autumn, or that a Megabeast is inside the fort and the
+dwarves are panicking. Those are **state**, not text - and the alert icons in the UI are
+computed from state. So the tool must compute from state too.
+
+## Measured: where the event system lives (53.17-r1, live probes)
+
+| Structure | Contents |
+|---|---|
+| `world.armies.all` (**532** entries) | every army in the world: `flags` (caravan / ambassador / invader / destroyed / visited-map ...), `race`, `creature_class`, `pos`, `path_x/path_y`, `last_pos`, `travel_count`, `travel_rate`, `watch_time`, `wait_count`, `items` (caravan goods), `members`, `squads`, `controller_id`, `id`, `mat_type/mat_index` (artifact), `tracking_rating`, `sneak_rating`, `block_path_x/y` |
+| `world.army_controllers.all` | the wave scheduler: `flag`, `goal`, `number_pop` (wave size), `year`, `year_tick` (arrival time), `pos_x/pos_y`, `site_id`, `subregion_id`, `entity_id`, `commander_hf`, `mission_report`, `assigned_squads`, `activity_id`, `data` |
+| `world.attack_chance_info` | the Attack Chances panel data (count 0 on a fresh embark) |
+| `world.event` | the current event (attacker / type) |
+| `world.status` (21 fields) | `announcement_alert`, `alert_button_announcement_id`, **`popups`** (modal dialogs open - caravan trade, ambassador, attack confirm), `reports`, `announcements`, `flags`, `slots`, `display_timer`, `interrogation_reports`, `mission_reports`, `spoils_reports` |
+| `world.squads.all` (**82** world-wide) | squads, rosters, drill/room assignments - military readiness |
+| `world.manager_orders` | work orders (read side; 0 now) |
+| `world.incidents` / `crimes` | deaths, injuries, crimes - the legal/morale events |
+| `list-waves` script | readable wave report computed from **history figures** (`hfdata.year`, `hfdata.seconds`, `hfdata.petitioned`) -> "Wave 0 consisted of 7 unit(s) and arrived in the spring of year 100", with names and professions; migrants vs petitioners separated |
+| unit wellbeing | DF53 has **no `unit.status.stress`**. Stress lives in **`unit.status.misc_traits`**; `counters` = pain, dizziness, nausea, winded, stunned, unconscious, suffocation, `soldier_mood(_countdown)`; `counters2` = exhaustion, hunger_timer, thirst_timer, sleepiness_timer, numbness, paralysis, stored_fat, fever; strangemood via `unit.mood`/`moodstage`; curses via `curse_year/curse_time`; were-creature via the `uwss_*` field set; syndromes via `unit.syndromes`; the dwarf's own thought log via `unit.reports` (0 on a fresh dwarf, fills during play) |
+| unit flags | enumerated live per unit: `flags1/2/3/4` (bit names readable when set: `move_state`, `calculated_nerves`, `vision_good`, ...) - `panicking` to be confirmed by name |
+
+**Not yet decoded (explicit TODOs, with the probe that will settle each):**
+1. `alert_entry` field names - `pairs()` on `world.status.announcement_alert` enumerates nothing,
+   `df.new(df.alert_entry)` is not constructible. Path: build the alert set from the state
+   predicates below (which is what the UI does), and keep `status.announcement_alert` as an
+   extra signal once its fields are found via `devel/query` on the live struct.
+2. stress misctrait index (find the "stress" `mat_index` in `unit.status.misc_traits` and its
+   flags/timer), the `panicking` flag name, and `popups` screen-type decoding.
+
+## Tools this implies
+
+### `alerts` - P0, the time-critical channel
+```
+GET /alerts  ->  {
+  date: "year 100, Spring, day 4 ~08:00",
+  alerts: [ {kind: "caravan_incoming", severity: "opportunity",
+             detail: "1 caravan, 40 tiles NE, path marked, 3 goods wagons",
+             suggested: "clear a 3-wide depot path; check wagon access",
+             source: "armies.all[17] flags=TRADING pos=(...)"},
+             {kind: "monster_in_fort", severity: "critical", ...},
+             {kind: "migrant_wave", severity: "info", detail: "12 in 3 days", ...},
+             {kind: "popup_open", severity: "blocking", detail: "caravan trade dialog"} ],
+  new_since: "<cursor>"          # delta cursor, same pattern as world_delta
+}
+```
+Computed from: `armies.all` (flags + position relative to the fort + distance + goods),
+`army_controllers.all` (wave ETA from `year`/`year_tick` + `number_pop`),
+`attack_chance_info`, `world.event`, `popups`, wild/hostile units **inside** a fort walkable
+region (the "monster walked in" case), strangemood units (`unit.mood`), incidents, and the
+announcement stream as a text supplement.
+
+`severity` is a first-class field (critical/opportunity/info/blocking) with a `suggested`
+action string, because the point of an alert is a decision, not a fact.
+
+### `wellbeing` - P0, the "turns all the dwarfs" case
+```
+GET /wellbeing -> { panic: N, stressed: N (worst: name, stress value), moods: [...],
+                    syndromes/afflictions: [...], wounded: [...], starving/thirsty/exhausted: N,
+                    morale_summary: "...", source_units: [...] }
+```
+From `status.misc_traits` stress, `counters`/`counters2`, `mood/moodstage`, `syndromes`,
+`uwss_*`, `curse_year`, `health`, `unit.reports`. This is what makes a monster in the fort
+legible: not "a goblin exists" but "6 of 7 dwarves are panicking, 2 are sobbing".
+
+### `waves` - P1, forecasts
+`list-waves` (migrants/petitioners by wave with names/professions) + `army_controllers`
+(attack waves with ETA/site/pop). Feeds `fort_progress` so the ladder can say
+"pop 7, next wave +12 in 3 days -> you need the farm plot NOW".
+
+### `caravan` - P2, the trade interaction
+From `armies.all` with the trading flag: `pos`, distance, goods (`items` with values via
+`dfhack.items.getItemBaseValue`), merchants present, depot reachability via `path_report`,
+and the `popups` state (a trade dialog is modal - a loop that ignores it stalls).
+
+## Loop consequences (why this changes the design, not just adds a tool)
+
+1. **Alerts are the clock.** A play loop must poll `alerts` on every turn, not just
+   `world_delta`: terrain changes slowly, events do not.
+2. **`popups` can freeze the interface** - modal dialogs (caravan, ambassador, "attack!")
+   need `pass_keyboard_event`/dismissal, so the loop needs an explicit "is the UI blocked"
+   answer.
+3. **Severity, not facts.** A 200M-parameter model needs "critical + suggested action",
+   which is why the tool returns decisions-shaped records, matching `fort_progress`'s
+   rungs+keys pattern.
+4. **New transport fact this session:** `RPC_REPLY_TEXT` fragments carry **bytes** for DF's
+   CP1252 output (quoted nicknames like `"Cryptdrove"`, box characters). A plain
+   `"".join(fragments)` raised `TypeError: expected str instance, bytes found` and 500'd
+   the request - reproduced with `list-waves`. Fixed by `decode_fragments()` (decode per
+   fragment with `replace`) in `vendor/dfhack-client-python`, mirrored in the sibling clone.

@@ -40,6 +40,26 @@ HANDSHAKE_VERSION = 1
 HANDSHAKE_REPLY_LEN = 12
 
 
+def decode_fragments(fragments) -> str:
+    """Join RPC_REPLY_TEXT fragments safely.
+
+    `TextNotification.text` is BYTES for non-UTF8 output - Dwarf Fortress prints
+    CP1252/Latin-1 quoted names (e.g. the "Cryptdrove" nickname) and box characters.
+    A plain "".join(fragments) then raises
+    "TypeError: sequence item 0: expected str instance, bytes found" and takes the
+    whole request down with a 500 (observed with `list-waves`). Decode per fragment,
+    replacing undecodable bytes so player-facing text survives.
+    """
+    out = []
+    for f in fragments:
+        t = f.text
+        if isinstance(t, (bytes, bytearray)):
+            out.append(t.decode("utf-8", "replace"))
+        else:
+            out.append(t)
+    return "".join(out)
+
+
 _reply_log: list[str] = []                     # DFHack console text, per call (see drain_replies)
 
 
@@ -348,7 +368,7 @@ def remote(func=None, *, plugin=''):
                     buffer = await _read_exact(_reader, size, "a text notification")
                     text_obj = CoreTextNotification()
                     text_obj.ParseFromString(buffer)
-                    text = "".join(f.text for f in text_obj.fragments)
+                    text = decode_fragments(text_obj.fragments)
                     print("[INFO] DFHack: " + text)
                     _reply_log.append(text)          # so a caller can return it to the model
                     continue
