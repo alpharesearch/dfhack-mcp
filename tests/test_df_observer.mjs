@@ -445,15 +445,15 @@ test('status probe: deep merge into facts, header carries date and seeds', () =>
     buildings: [], boxes: [], shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [],
   })
   model.ingestDeep({ rungs: [], next: null, piles: [], reports: [], crashlog: null, notes: [],
-    status: { picks: 3, site_id: 677, seeds: 76, date: { year: 100, season: 3, day: 28 } } })
+    status: { picks: 3, site_id: 677, seeds: 76, date: { year: 100, month: 8, day: 28 } } })
   const f = model.payload().facts
   assert.equal(f.picks, 3, 'picks from the probe')
   assert.equal(f.seeds, 76, 'seeds from the probe')
   assert.equal(f.site_id, 677, 'site id from the probe')
-  assert.deepEqual(f.date, { year: 100, season: 3, day: 28 }, 'date from the probe')
+  assert.deepEqual(f.date, { year: 100, month: 8, day: 28 }, 'date from the probe')
   const brief = buildBriefing(model.payload(), { maxTokens: 700 })
   assert.match(brief.text, /Y100/, 'header carries the year')
-  assert.match(brief.text, /d28/, 'header carries the day')
+  assert.match(brief.text, /Aut M8 d28/, 'month 8 renders as Autumn (month/3)')
   assert.match(brief.text, /seeds 76/, 'header carries seeds')
   assert.match(brief.text, /dwarves 21 \(units 81\)/, 'dwarf number, units labelled')
   // no probe this tick: fields stay null, header stays honest

@@ -35,7 +35,10 @@ function factsLine(payload) {
   if (!f) return 'FORT BRIEFING | facts: NO DATA this tick (labelled, not a fact)'
   const popText = f.dwarves == null ? `pop ${num(f.pop)} (dwarves ?)` : `dwarves ${num(f.dwarves)} (units ${num(f.pop)})`
   const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter']
-  const dateText = f.date ? `Y${f.date.year} ${(SEASONS[f.date.season] ?? '?').slice(0, 3)} d${f.date.day}` : null
+  // The probe reports the DF MONTH index (0-11); the season is month/3.
+  const dateText = f.date && f.date.month != null
+    ? `Y${f.date.year} ${(SEASONS[Math.floor(f.date.month / 3)] ?? '?').slice(0, 3)} M${f.date.month} d${f.date.day}`
+    : (f.date ? `Y${f.date.year} month ? d${f.date.day}` : null)
   const seedsText = f.seeds == null ? null : `seeds ${num(f.seeds)}`
   const parts = [dateText, popText, `miners ${num(f.miners)} of ${picksText(f)} picks`,
     `food ${num(f.food)}`, `drink ${num(f.drink)}`, seedsText, `wood ${num(f.wood)}`, `stone ${num(f.stone)}`,
