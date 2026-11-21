@@ -461,3 +461,11 @@ Live A/B, measured 2026-11-21 with the filter session running in the profile
 | filtered @260 cap | 174 (body squeezed - too lean) |
 
 = **334 tokens saved per injection** with the filter live.
+
+## 16. Cadence re-measured (0.1.26, live)
+
+`scripts/watch_poll.py` over 27 /observe polls with the game running:
+**avg 8.14 s (min 8.13, max 8.15)**, deep ticks flagged every 4th poll -
+matches `poll_running_ms: 8000` (the earlier 8.0 s reading holds at 0.1.26).
+Paused cadence measured earlier at 60.0 s (`poll_paused_ms`).
+
