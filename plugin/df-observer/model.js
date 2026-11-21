@@ -298,6 +298,7 @@ export class FortModel {
     this.crashSeen = new Set()
     this.seeded = false
     this.lastDeepTick = -Infinity
+    this.statusFacts = {}
     this.lastDwarves = 0
     this.lastDwarvesTick = null
     this.dwarvesKnown = false
@@ -333,7 +334,16 @@ export class FortModel {
       if (this.generation !== null && this.generation !== data.generation) changed.push('generation')
       this.generation = data.generation
     }
-    if (data.facts) { this.facts = data.facts; changed.push('facts') }
+    if (data.facts) {
+      // The status-bar fields come from the deep probe; a fast tick replaces
+      // `facts` with the server's own object, so re-attach what we probed.
+      const carried = {}
+      for (const key of ['picks', 'site_id', 'seeds', 'date']) {
+        if (this.statusFacts[key] != null) carried[key] = this.statusFacts[key]
+      }
+      this.facts = Object.keys(carried).length ? { ...data.facts, ...carried } : data.facts
+      changed.push('facts')
+    }
     if (data.buildings) this.buildings = data.buildings
     if (Array.isArray(data.boxes)) { this.boxes = data.boxes; changed.push('boxes') }
     if (Array.isArray(data.shafts)) { this.shafts = data.shafts; changed.push('shafts') }
@@ -347,11 +357,17 @@ export class FortModel {
     // The status probe (one Lua round-trip, deep ticks only): picks, site id,
     // date, seeds. An absent probe leaves the fields null - never 0.
     const st = data.status ?? (data.picks != null ? { picks: data.picks } : null)
-    if (st && this.facts) {
-      if (st.picks != null) this.facts.picks = st.picks
-      if (st.site_id != null) this.facts.site_id = st.site_id
-      if (st.seeds != null) this.facts.seeds = st.seeds
-      if (st.date != null) this.facts.date = st.date
+    if (st) {
+      // The probe rides the deep tick; remember it so the next FAST tick (which
+      // replaces `facts` wholesale) does not erase the status bar.
+      for (const key of ['picks', 'site_id', 'seeds', 'date']) {
+        if (st[key] != null) this.statusFacts[key] = st[key]
+      }
+      if (this.facts) {
+        for (const key of ['picks', 'site_id', 'seeds', 'date']) {
+          if (this.statusFacts[key] != null) this.facts[key] = this.statusFacts[key]
+        }
+      }
     }
     if (Array.isArray(data.rungs)) { this.rungs = data.rungs }
     if (data.next !== undefined) this.next = data.next

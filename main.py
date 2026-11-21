@@ -1031,7 +1031,7 @@ def observe_parse_obs2(out: str) -> dict:
         parsed = {"picks": num_of("PICKS"), "site_id": num_of("SITE"), "seeds": num_of("SEEDS")}
         if date and date != "ERR" and len(date.split("-")) == 3:
             y, m, d = date.split("-")
-            parsed["date"] = {"year": int(y), "season": int(m), "day": int(d)}
+            parsed["date"] = {"year": int(y), "month": int(m), "day": int(d)}
         else:
             parsed["date"] = None
         if kv.get("SITE") == "none":

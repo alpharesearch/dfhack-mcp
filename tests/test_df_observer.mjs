@@ -465,7 +465,18 @@ test('status probe: deep merge into facts, header carries date and seeds', () =>
   const bf = bare.payload().facts
   assert.equal(bf.seeds, null, 'no probe -> seeds null, not 0')
   assert.equal(bf.date, null, 'no probe -> date null')
-  return 'status probe merges into facts (picks/site/date/seeds); header shows them; absent probe stays null'
+  // The status bar must SURVIVE a fast tick (fast replaces `facts` wholesale).
+  model.ingestFast({
+    paused: false, generation: 1,
+    facts: { pop: 82, dwarves: 21, miners: 2, food: 12, drink: 0, wood: 0, stone: 136, metal: 0, barrels: 14,
+      pending_dig: 0, underground_floors: 4, water_tiles: 0, magma_tiles: 0 },
+    buildings: [], boxes: [], shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [],
+  })
+  const carried = model.payload().facts
+  assert.equal(carried.seeds, 76, 'seeds survive the fast tick')
+  assert.deepEqual(carried.date, { year: 100, month: 8, day: 28 }, 'date survives the fast tick')
+  assert.equal(carried.picks, 3, 'picks survive the fast tick')
+  return 'status probe merges into facts (picks/site/date/seeds), survives fast ticks, absent probe stays null'
 })
 
 // ---------------------------------------------------------------------------
