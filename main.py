@@ -146,6 +146,7 @@ Known DFHack RPC quirks (learned the hard way, encoded into the tools below):
 
 import asyncio
 import shutil
+from collections import Counter
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, Request
 from fastapi_mcp import FastApiMCP
@@ -883,6 +884,365 @@ async def warnings(e0: int = Query(None), e1: int = Query(None),
         b.spend(len(l) + 1)
     return WM.finish(lines, b)
 
+# ---------------------------------------------------------------------------
+# /observe - ONE composite read for the df-observer plugin (plugin/df-observer).
+#
+# Why it exists: the observer polls every 5-15 s and needs 6-9 signals per tick.
+# Polling the human-oriented views costs the plugin (and through it, nobody's)
+# context, and parsing prose into state is a trap. So this endpoint answers
+# machine-shaped facts, in one round trip, with every field explicitly present
+# (a `notes` list labels each "no data": absence is never a fact) and every
+# elevation an IN-GAME panel number (z - 129).
+#
+# Read-only by construction: it touches the RFR block cache, the Lua READ
+# templates, and the crash-log directory listing. No designations, no writes.
+# ---------------------------------------------------------------------------
+
+OBSERVE_SCHEMA = "df-observer/v1"
+OBSERVE_LUA_SETTLE = 0.8
+
+# <gamedir> for the crash-log watch. Server-side config (env), not the plugin's.
+OBSERVE_GAME_DIR = os.getenv("DFHACK_GAME_DIR", "")
+
+
+OBSERVE_PILE_LUA_TEMPLATE = r"""
+local want = string.split("__IDS__", " ")
+local cats = {"stone", "wood", "food", "refuse", "furniture", "corpses", "cloth", "bars_blocks", "gems", "leather", "metal"}
+local piles = {}
+for _, id in ipairs(want) do
+  local b = nil
+  for _, sp in ipairs(df.global.world.buildings.other.STOCKPILE) do
+    if sp.id == tonumber(id) then b = sp break end
+  end
+  local rec = {id = tonumber(id), found = 0}
+  if b ~= nil then
+    rec.found = 1; rec.b = b; rec.x0 = b.x1; rec.x1 = b.x2; rec.y0 = b.y1; rec.y1 = b.y2
+    rec.elev = b.z - 129
+    local on = {}
+    for _, c in ipairs({"ammo", "animals", "armor", "bars_blocks", "cloth", "coins", "corpses",
+      "finished_goods", "food", "furniture", "gems", "leather", "refuse", "sheet", "stone",
+      "weapons", "wood"}) do
+      if b.settings.flags[c] == true then on[#on + 1] = c end
+    end
+    rec.accepts = table.concat(on, ",")
+    rec.active = b.flags.active and 1 or 0
+    rec.wheelbarrows = b.storage.max_wheelbarrows
+    rec.barrels = b.storage.max_barrels
+    rec.bins = b.storage.max_bins
+    rec.counts = {}
+  end
+  piles[#piles + 1] = rec
+end
+for _, it in ipairs(df.global.world.items.other.IN_PLAY) do
+  local okp, pos = pcall(function() return it.pos end)
+  if okp and pos then
+    local tn = "?"
+    pcall(function() for k, v in pairs(df) do if v == it._type then tn = k end end end)
+    for _, rec in ipairs(piles) do
+      if rec.found == 1 and pos.z - 129 == rec.elev
+         and pos.x >= rec.x0 and pos.x <= rec.x1
+         and pos.y >= rec.y0 and pos.y <= rec.y1 then
+        rec.counts.total = (rec.counts.total or 0) + 1
+        for _, c in ipairs(cats) do
+          if tn == c then rec.counts[c] = (rec.counts[c] or 0) + 1 end
+        end
+      end
+    end
+  end
+end
+for _, rec in ipairs(piles) do
+  local parts = { {"id", rec.id}, {"found", rec.found} }
+  if rec.found == 1 then
+    table.insert(parts, {"x0", rec.x0}); table.insert(parts, {"x1", rec.x1})
+    table.insert(parts, {"y0", rec.y0}); table.insert(parts, {"y1", rec.y1})
+    table.insert(parts, {"elev", rec.elev}); table.insert(parts, {"active", rec.active})
+    table.insert(parts, {"wheelbarrows", rec.wheelbarrows})
+    table.insert(parts, {"barrels", rec.barrels}); table.insert(parts, {"bins", rec.bins})
+    table.insert(parts, {"accepts", rec.accepts})
+    for k, v in pairs(rec.counts) do table.insert(parts, {k, v}) end
+  end
+  table.sort(parts, function(a, b) return a[1] < b[1] end)
+  local kv = {}
+  for _, p in ipairs(parts) do kv[#kv + 1] = p[1] .. "=" .. p[2] end
+  print("PILE " .. rec.id .. " " .. table.concat(kv, " "))
+end
+"""
+
+def observe_pile_lua(pile_ids: list[int]) -> str:
+    """The pile-health probe as ONE Lua chunk (the watch_pile.py idioms, batched).
+
+    Prints one `PILE <id> id=.. found=0|1 x0=.. x1=.. y0=.. y1=.. elev=.. active=..
+    wheelbarrows=.. barrels=.. bins=.. accepts=.. items=.. stone=.. wood=.. food=..
+    refuse=.. furniture=..` line per requested id, in the requested order. Categories
+    are aggregated by item-type name - the honest granularity from items.other.IN_PLAY.
+    """
+    ids = " ".join(str(int(i)) for i in pile_ids)
+    return OBSERVE_PILE_LUA_TEMPLATE.replace("__IDS__", ids).strip()
+
+
+def observe_parse_piles(out: str) -> dict:
+    """`PILE 12 id=12 found=1 x0=.. k=v ...` lines -> {id: {k: v}} (ints where numeric)."""
+    piles: dict = {}
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.startswith("PILE "):
+            continue
+        fields = line.split()
+        rec: dict = {}
+        for f in fields[2:]:
+            if "=" not in f:
+                continue
+            k, v = f.split("=", 1)
+            try:
+                rec[k] = int(v)
+            except ValueError:
+                rec[k] = v
+        try:
+            piles[int(fields[1])] = rec
+        except ValueError:
+            continue
+    return piles
+
+
+def observe_simplify_survey(sv: dict) -> dict:
+    """Survey counts -> positive progress state.
+
+    to_dig = rock + hidden (never designated); dug = floor + stairs + ramp; pending =
+    already_designated. Completion requires POSITIVE state (to_dig == 0 AND dug > 0):
+    absence in a box of fog is NOT completion - the trap that burned us twice.
+    """
+    c = sv.get("counts", {})
+    g = lambda k: int(c.get(k, 0))
+    return {
+        "elev": sv.get("elev"), "box": sv.get("box"),
+        "to_dig": g("rock") + g("hidden"), "dug": g("floor") + g("stairs") + g("ramp"),
+        "pending": g("already_designated"), "water": g("water"), "open": g("open"),
+        "building": g("building"), "other": g("other"),
+        "total_tiles": sum(g(k) for k in ("rock", "hidden", "floor", "stairs", "ramp",
+                                          "water", "open", "building", "other",
+                                          "already_designated")),
+    }
+
+
+def observe_shafts(haz: dict, shafts: list, e0: int, e1: int) -> list:
+    """Per monitored shaft column: aquifer / water / magma elevations inside the window."""
+    out = []
+    for s in shafts:
+        x, y = int(s["x"]), int(s["y"])
+        rec = haz.get((x, y), {})
+        water = {int(e): int(lv) for e, lv in (rec.get("water") or {}).items()
+                 if e0 <= int(e) <= e1 and int(lv) > 0}
+        out.append({
+            "x": x, "y": y,
+            "aquifer_elevs": sorted(int(e) for e in rec.get("aquifer", []) if e0 <= int(e) <= e1),
+            "water_elevs": sorted(water),
+            "water_levels": water,
+            "magma_elevs": sorted(int(e) for e in rec.get("magma", []) if e0 <= int(e) <= e1),
+        })
+    return out
+
+
+def observe_crashlog(dir_path: str, limit: int) -> dict:
+    """Names, sizes, mtimes of crash-log files - file signals ONLY (contents are out
+    of scope for the observer; deep forensics belong to a separate plugin)."""
+    if not dir_path:
+        return {"dir": None, "notes": ["no crash-log directory configured (DFHACK_GAME_DIR)"]}
+    if not os.path.isdir(dir_path):
+        return {"dir": dir_path, "notes": ["crash-log directory does not exist on this host"]}
+    cand = os.path.join(dir_path, "crashlog")
+    if not os.path.isdir(cand):
+        cand = dir_path
+    files = []
+    try:
+        for name in os.listdir(cand):
+            p = os.path.join(cand, name)
+            if not os.path.isfile(p):
+                continue
+            low = name.lower()
+            if not (low.startswith("crash") or low.endswith(".log")):
+                continue
+            st = os.stat(p)
+            files.append({"name": name, "bytes": int(st.st_size), "mtime": int(st.st_mtime)})
+    except OSError as e:
+        return {"dir": cand, "notes": [f"listing failed: {e}"], "files": []}
+    files.sort(key=lambda f: -f["mtime"])
+    return {"dir": cand, "files": files[:max(0, int(limit))]}
+
+
+@app.get("/observe", operation_id="observe")
+async def observe(q: str = Query("{}", description="JSON observe request, see docstring")):
+    """One machine-shaped composite read for the df-observer plugin (schema df-observer/v1).
+
+    q is a JSON object (all keys optional): {elev0, elev1, boxes:[[x0,y0,x1,y1,elev],...],
+    shafts:[[x,y],...], pile_ids:[...], warnings:bool, facts:bool, rungs:bool, next:bool,
+    reports:N, pause:bool, crashlog_files:N, survey:bool}. Everything answers IN-GAME
+    ELEVATION (z - 129). Survey-derived counts are tile categories: to_dig = rock+hidden,
+    dug = floor+stairs+ramp, pending = already_designated - positive state only.
+    Pile rows are one batched read-Lua probe (extents, accepted categories, container
+    limits, wheelbarrows, on-pile item counts by category). Shafts answer aquifer/water/
+    magma elevations per column from the cached hazard map. Crash log answers file
+    NAME/SIZE/MTIME only. A `notes` list labels every source that produced no data.
+
+    This is a debug/operator endpoint (not an MCP tool): read-only, no designations,
+    no builds, no commands, no game writes.
+    """
+    notes: list = []
+    try:
+        req = json.loads(q) if q.strip() else {}
+    except json.JSONDecodeError as e:
+        return {"schema": OBSERVE_SCHEMA, "error": f"bad q JSON: {e}"}
+    if not isinstance(req, dict):
+        return {"schema": OBSERVE_SCHEMA, "error": "q must be a JSON object"}
+
+    out: dict = {"schema": OBSERVE_SCHEMA}
+    try:
+        await ensure_connection()
+    except DFHackTransportError as e:
+        return {"schema": OBSERVE_SCHEMA, "connected": False, "error": str(e),
+                "notes": ["game offline: RPC connect failed"]}
+    out["connected"] = True
+    try:
+        st = connection_state()
+        out["generation"] = int(st.get("generation", -1))
+    except Exception as e:                      # pragma: no cover - defensive
+        notes.append(f"generation unavailable: {e}")
+
+    if req.get("pause", True):
+        try:
+            out["paused"] = bool((await GetPauseState()).paused)
+        except (DFHackError, DFHackTransportError) as e:
+            out["paused"] = None
+            notes.append(f"pause state unavailable: {e}")
+
+    e0 = req.get("elev0"); e1 = req.get("elev1")
+    if e0 is None or e1 is None:
+        z_lo, z_hi = await world.fort_band()
+        e0 = z_lo - GAME_Z_OFFSET if e0 is None else int(e0)
+        e1 = z_hi - GAME_Z_OFFSET if e1 is None else int(e1)
+    out["elev0"], out["elev1"] = int(e0), int(e1)
+
+    levels = facts = None
+    want_facts = bool(req.get("facts", True)) or bool(req.get("rungs", True))
+    if want_facts:
+        try:
+            gen = await world._gen()
+            dec = await world._dec(gen)
+            levels = await world.levels(int(e0), int(e1))
+            facts = WM.FortFacts(levels, await LO.load_units(dec, gen, world._state), dec)
+            await world.annotate_depth(facts)
+        except Exception as e:                  # cache/RFR/lua failures label, not crash
+            notes.append(f"facts unavailable: {e}")
+    if facts is not None:
+        out["facts"] = {
+            "pop": facts.pop, "soldiers": facts.soldiers, "hostile": facts.hostile,
+            "miners": facts.miners, "hunters": facts.hunters,
+            "food": facts.food, "drink": facts.drink, "wood": facts.wood,
+            "stone": facts.stone, "metal": facts.metal, "barrels": facts.barrels,
+            "pending_dig": facts.designations, "underground_floors": getattr(facts, "underground_floors", 0),
+            "water_tiles": facts.water_tiles, "magma_tiles": facts.magma_tiles,
+            "buildings_total": len(facts.buildings),
+        }
+        if req.get("buildings", True):
+            roll = Counter(b["name"] for b in facts.buildings)
+            out["buildings"] = [{"name": k, "count": v} for k, v in sorted(roll.items(),
+                                                                           key=lambda kv: -kv[1])[:40]]
+    if facts is not None and req.get("rungs", True):
+        rungs = [{"id": rid, "title": rung, "done": bool(done(facts)), "keys": keys, "why": why}
+                 for (rid, rung, done, keys, why) in WM._LADDER]
+        out["rungs"] = rungs
+        missing = [r for r in rungs if not r["done"]]
+        if missing:
+            nxt = missing[0]
+            entry = {"id": nxt["id"], "title": nxt["title"], "keys": nxt["keys"], "why": nxt["why"]}
+            want = {"farm": (5, 5), "meeting": (7, 7), "stockpile": (11, 11), "bedrooms": (9, 9),
+                    "workshops": (9, 9), "depot": (5, 5), "drinks": (5, 5)}.get(nxt["id"], (7, 7))
+            room = WM.suggest_room(facts, want[0], want[1],
+                                   prefer_elev=facts.levels[len(facts.levels) // 2].elev
+                                   if facts.levels else None)
+            if room:
+                entry["at"] = room
+            out["next"] = entry
+        else:
+            out["next"] = None
+    if facts is None and req.get("rungs", True):
+        notes.append("rungs not computed (facts unavailable)")
+
+    if req.get("survey", True):
+        boxes = []
+        for b in req.get("boxes", [])[:16]:
+            (x0, y0, x1, y1) = (int(v) for v in b[:4])
+            e = int(b[4]) if len(b) > 4 and b[4] is not None else None
+            if e is None:
+                e = (int(e0) + int(e1)) // 2
+            try:
+                sv = await world.survey(e, x0, y0, x1, y1)
+                boxes.append(observe_simplify_survey(sv))
+            except Exception as e:              # label per-box failure, keep the rest
+                boxes.append({"elev": e, "box": [x0, y0, x1, y1], "error": str(e)})
+                notes.append(f"survey x{x0}-{x1} y{y0}-{y1} elev{e} unavailable: {e}")
+        out["boxes"] = boxes
+        if not req.get("boxes"):
+            notes.append("no boxes requested: per-level dig progress unknown")
+
+    if req.get("warnings", True):
+        try:
+            w = await world.warnings(int(e0), int(e1))
+            out["warnings"] = {"designated_tiles": w["designated_tiles"],
+                               "damp_tiles": w["damp_tiles"], "hot_tiles": w["hot_tiles"],
+                               "damp_boxes": w["damp_boxes"][:6], "hot_boxes": w["hot_boxes"][:6],
+                               "samples": w["samples"][:6]}
+        except Exception as e:
+            out["warnings"] = None
+            notes.append(f"warnings unavailable: {e}")
+
+    shafts = req.get("shafts", [])[:16]
+    if shafts:
+        try:
+            haz = await world.hazard_map(int(e0), int(e1))
+            out["shafts"] = observe_shafts(haz, [{"x": s[0], "y": s[1]} for s in shafts],
+                                           int(e0), int(e1))
+        except Exception as e:
+            out["shafts"] = None
+            notes.append(f"shaft hazard map unavailable: {e}")
+    else:
+        out["shafts"] = []
+        notes.append("no shafts requested: monitored columns not checked")
+
+    pile_ids = [int(i) for i in req.get("pile_ids", [])[:16]]
+    if pile_ids:
+        try:
+            out["piles"] = observe_parse_piles(await LO._lua(observe_pile_lua(pile_ids),
+                                                              settle=OBSERVE_LUA_SETTLE))
+        except LO.LuaOpError as e:
+            out["piles"] = None
+            notes.append(f"pile probe unavailable: {e}")
+    else:
+        out["piles"] = {}
+        notes.append("no pile_ids requested: pile health unknown")
+
+    n_rep = int(req.get("reports", 0) or 0)
+    if n_rep > 0:
+        try:
+            status = await GetReports()
+            reps = [{"year": int(r.year), "time": int(r.time), "text": str(r.text)[:160],
+                     "z": int(r.pos.z) - GAME_Z_OFFSET} for r in list(status.reports)[-n_rep:]]
+            out["reports"] = reps[-12:]
+        except (DFHackError, DFHackTransportError) as e:
+            out["reports"] = None
+            notes.append(f"reports unavailable: {e}")
+    else:
+        out["reports"] = []
+
+    n_cr = int(req.get("crashlog_files", 0) or 0)
+    if n_cr > 0:
+        out["crashlog"] = observe_crashlog(req.get("crashlog_dir") or OBSERVE_GAME_DIR, n_cr)
+    else:
+        out["crashlog"] = None
+
+    out["notes"] = notes
+    return out
+
+
 @app.get("/wagon-path", operation_id="wagon_path")
 async def wagon_path(x: int = Query(...), y: int = Query(...), elev: int = Query(...)):
     """Can a wagon get from this tile to the map edge? BFS over floors and ramps with diagonals, EXCLUDING stairs (wagons refuse them). Reports reachable tile count and the edge tiles reached - this is how the trade depot rung gets verified as a road, not declared from a building check."""
@@ -1192,7 +1552,9 @@ mcp = FastApiMCP(
     # game_lua stays an HTTP debug endpoint only. Raw Lua in the tool list invites a
     # local model to write arbitrary game state; the typed operations in luaops.py are
     # the supported way in.
-    exclude_operations=["game_lua"]
+    # observe is the df-observer plugin's composite read (machine-shaped JSON, ~2-4k
+    # tokens): a plugin transport, not a model tool - it stays HTTP-only too.
+    exclude_operations=["game_lua", "observe"]
 )
 # Streamable HTTP (POST/GET /mcp) - the transport dsh-mcp-client speaks.
 # mcp.mount() is deprecated and mounts the legacy SSE pair (GET /mcp + POST /mcp/messages/).
