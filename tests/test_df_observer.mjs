@@ -577,6 +577,20 @@ test('GAME SAYS: the game reports are quoted in the briefing', () => {
 
 // ---------------------------------------------------------------------------
 // wake boundary: steer reaches a busy agent at its next step
+test('verdict capture: the session/event shape is parsed', async () => {
+  const { verdictFromEvent } = await import(path.join(pluginDir, 'index.js'))
+  const line = '[df-verdict] {"tick":12,"significance":"high","headline":"Tunnel face drained with no dug change","changes":["box x45-66 y121-122 to_dig 44 pending 0"],"next":{"id":"water","title":"Water adit","keys":"m","at":"x45 y121 elev35"},"wake":[{"kind":"dig_stalled","evidence":"to_dig 44, dug 0, pending 0"}],"notes":["drink 0"]}'
+  const fromMessage = verdictFromEvent({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: line }] } } })
+  assert.ok(fromMessage, 'the durable log shape (data.message.content) parses')
+  assert.equal(fromMessage.tick, 12)
+  assert.equal(fromMessage.significance, 'high')
+  const fromBare = verdictFromEvent({ type: 'assistant/message', data: { content: [{ type: 'text', text: line }] } })
+  assert.ok(fromBare, 'the bare data.content shape parses too')
+  assert.equal(verdictFromEvent({ type: 'user/message', data: { message: { content: [{ type: 'text', text: line }] } } }), null, 'other events are ignored')
+  assert.equal(verdictFromEvent({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'no verdict here' }] } } }), null, 'a chat line without the prefix is not a verdict')
+  return 'session/event assistant messages yield verdicts in both shapes'
+})
+
 test('noData: an empty probe read never flips a to-do', () => {
   const model = freshModel()
   const pileTodo = model.addTodo({ title: 'wood reaches the wood pile', accept: { kind: 'pile_category', category: 'wood', min_items: 1 } })

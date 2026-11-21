@@ -37,7 +37,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { ObserverTransport } from './observer.js'
 import { FortModel, STATE_VERSION, significantChange, dfObserverProjection } from './model.js'
 import { buildBriefing, buildWake, standingRules } from './brief.js'
-import { toolDefinitions } from './tools.js'
+import { toolDefinitions, jsonSafe } from './tools.js'
 import { FILTER_SYSTEM_PROMPT, STATE_PREFIX, buildFilteredBriefing, buildFilterWake, parseVerdict } from './filter.js'
 
 /** Every tunable lives here so the player edits `cordis.patch.yml`, not code. */
@@ -190,6 +190,14 @@ function markRemotePrototype(Class, method, options) {
  *   else    -> inject (context for the next pre-step, never wakes)
  * Falls back to followup when this Agent has no steer.
  */
+/** Pull the [df-verdict] out of one `session/event` assistant event (both the
+ * log shape `data.message.content` and a bare `data.content`). */
+export function verdictFromEvent(event) {
+  if (event?.type !== 'assistant/message') return null
+  const data = event.data ?? {}
+  return parseVerdict(data.message?.content ?? data.content ?? event.content)
+}
+
 export function deliveryOf(form, agent) {
   if (form !== 'alert') return 'inject'
   return typeof agent?.steer === 'function' ? 'steer' : 'followup'
@@ -679,22 +687,26 @@ export default class DFObserver extends TypertRemoteService {
         render: (args, value) => [{ type: 'text', text: typeof value?.text === 'string' ? value.text : JSON.stringify(value) }],
       },
       async execute() {
-        const text = JSON.stringify(this.model.payload())
+        // The Host rejects non-lossless tool output; the payload carries nulls
+        // and nested rows, so pass it through the same guard the other tools use.
+        const payload = jsonSafe(this.model.payload())
+        const text = JSON.stringify(payload)
         const cap = this.config.filter_state_max_tokens * 4
-        return { text: text.length > cap ? `${text.slice(0, cap)}…(truncated: labelled, never a fact)` : text }
+        return { text: text.length > cap ? `${text.slice(0, cap)}…(truncated at the state cap: labelled, never a fact)` : text }
       },
     }, { when: ({ agent }) => agent?.id === this.filterSessionId }), 'df-observer: filter tool')
     // Verdict capture: the filter session's assistant answers fold into the
     // plugin's live state; the filter session's own log keeps them durably.
-    ctx.on('assistant/message', ({ agent }) => {
-      if (agent.id !== this.filterSessionId) return
-      const events = agent.session?.events ?? []
-      for (let i = events.length - 1; i >= 0; i -= 1) {
-        const event = events[i]
-        if (event?.type !== 'assistant/message') continue
-        const verdict = parseVerdict(event.data?.content)
-        if (verdict) { this.acceptVerdict(verdict); return }
-      }
+    // Measured: `assistant/message` is NOT a bus event - the durable append feed
+    // is `session/event`. The old listener could never fire, so the filter ran
+    // (its log holds verdicts) and the plugin stayed on rule briefings with
+    // `verdict tick ?` forever.
+    ctx.on('session/event', (session, event) => {
+      const sessionId = session?.id ?? (typeof session === 'string' ? session : undefined)
+      if (sessionId !== this.filterSessionId) return
+      if (event?.type !== 'assistant/message') return
+      const verdict = verdictFromEvent(event)
+      if (verdict) this.acceptVerdict(verdict)
     })
     ctx.effect(() => () => {
       const agent = this.filterAgent()
