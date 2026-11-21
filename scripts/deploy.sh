@@ -87,5 +87,30 @@ case "$MODE" in
     list) list_map;;
     check) run check;;
     deploy) run deploy;;
-    *) echo "usage: $0 [check|deploy|list]   (default check)"; exit 2;;
+    skills-check|skills)
+        # The play-knowledge library: copy skills/<name>/SKILL.md bundles into the harness
+        # skills root. Explicit only - nothing lands in a harness without being asked.
+        DEST="${DSH_HOME:-$HOME/.dsh}/skills"
+        [ "$1" = skills-check ] && MODE=check || MODE=deploy
+        echo "skills -> $DEST ($MODE)"
+        n=0
+        for d in "$REPO"/skills/*/; do
+            [ -f "$d/SKILL.md" ] || { echo "  skip $(basename "$d"): no SKILL.md"; continue; }
+            if [ "$MODE" = check ]; then
+                if [ -f "$DEST/$(basename "$d")/SKILL.md" ]; then
+                    cmp -s "$d/SKILL.md" "$DEST/$(basename "$d")/SKILL.md" \
+                        && echo "  same $(basename "$d")" || echo "  DIFFERS $(basename "$d")"
+                else
+                    echo "  missing $(basename "$d")"
+                fi
+            else
+                mkdir -p "$DEST/$(basename "$d")"
+                cp "$d/SKILL.md" "$DEST/$(basename "$d")/SKILL.md"
+                echo "  copied $(basename "$d")"
+            fi
+            n=$((n+1))
+        done
+        echo "skills: $n ($MODE) -> $DEST"
+        ;;
+    *) echo "usage: $0 [check|deploy|list|skills-check|skills]   (default check)"; exit 2;;
 esac

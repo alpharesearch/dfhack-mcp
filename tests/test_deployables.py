@@ -97,6 +97,31 @@ def test_missing_deploy_target_is_reported_not_crashed():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_skill_library_format():
+    """skills/<name>/SKILL.md must satisfy the filesystem provider contract: one level
+    deep, kebab-case name matching the directory, required name+description frontmatter."""
+    import re
+    REPO = pathlib.Path(__file__).resolve().parents[1]
+    base = REPO / "skills"
+    assert base.is_dir(), "skills/ library missing"
+    assert (base / "README.md").is_file(), "skills/README.md missing"
+    names = [d.name for d in base.iterdir() if d.is_dir()]
+    assert names, "no skills in the library"
+    for n in names:
+        pth = base / n / "SKILL.md"
+        assert pth.is_file(), f"{n}: provider discovers <name>/SKILL.md only, one level deep"
+        assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", n), f"{n}: name must be kebab-case"
+        txt = pth.read_text(encoding="utf-8")
+        assert txt.startswith("---"), f"{n}: missing YAML frontmatter"
+        fm = txt.split("---", 2)[1]
+        assert re.search(r"^name:\s*" + re.escape(n) + r"\s*$", fm, re.M), \
+            f"{n}: frontmatter name must match the directory"
+        assert re.search(r"^description:\s*\S", fm, re.M), f"{n}: description required"
+        body = txt.split("---", 2)[2]
+        assert len(body) > 200, f"{n}: body too short to carry procedure"
+        assert len(body) < 12000, f"{n}: body too long ({len(body)} chars) - move reference material to sibling files"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0
@@ -107,3 +132,5 @@ if __name__ == "__main__":
             failed += 1; print(f"FAIL {fn.__name__}: {e}")
     print(f"\n{len(fns) - failed}/{len(fns)} passed")
     sys.exit(1 if failed else 0)
+
+
