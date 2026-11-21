@@ -48,6 +48,22 @@ def test_elevation_is_converted_to_rpc_z_internally():
     assert "GAME_Z_OFFSET" in src2
 
 
+def test_stockpile_config_initialises_the_ui_arrays():
+    """Contract: configuring a stockpile must allocate the material arrays the game's
+    custom-settings UI walks, in the same pass as the flags. Flags-only config crashes the
+    player's Custom click (SIGSEGV at 0xa, render_things/overlay)."""
+    import inspect
+    src = inspect.getsource(LO.configure_stockpile)
+    assert "SETTINGS_ARRAYS" in src and "resize" in src
+    assert "arrays:" in src                                  # read-back reports the array sizes
+    assert hasattr(LO, "make_stockpile") and hasattr(LO, "repair_stockpile_settings")
+    sizes = LO.SETTINGS_ARRAYS
+    assert sizes["ammo"]["mats"] == 319 and sizes["leather"]["mats"] == 892
+    assert sizes["animals"]["enabled"] == 1327 and sizes["food"]["meat"] == 14476
+    # misc has no flag in the game (writing flags.misc throws) - it must not be in CATEGORIES
+    assert "misc" not in LO.CATEGORIES and "misc" in LO.MATS_ONLY
+
+
 def test_templates_only_emit_a_single_status_line():
     import inspect
     for fn in ("place_building", "building_at", "remove_building", "walkable_between"):

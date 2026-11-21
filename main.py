@@ -971,6 +971,21 @@ async def magma_depth(x: int = Query(...), y: int = Query(...),
     """Distance down to magma from a dig point - the HOT warning as a number. The magma crust sits far below the fort band, so this scans downward in coarse windows and returns the first magma elevation and how many levels below your dig it is."""
     return await world.magma_depth_below(x, y, elev, e_min=e_min, step=step)
 
+@app.post("/make-stockpile", operation_id="make_stockpile")
+async def make_stockpile(body: dict):
+    """Create a multi-tile stockpile and set it up correctly in ONE call: size + category flags + the material arrays the game's custom-settings UI walks + container limits. Every new pile should come through here, so no pile is ever left in the state that crashes the Custom button."""
+    try:
+        dec = await world._dec(await world._gen())
+        return await LO.make_stockpile(
+            dec, int(body["x"]), int(body["y"]), int(body["elev"]), int(body["w"]), int(body["h"]),
+            allow=body.get("allow"), deny=body.get("deny"),
+            all_categories=bool(body.get("all_categories", False)),
+            max_wheelbarrows=body.get("max_wheelbarrows"),
+            max_barrels=body.get("max_barrels"), max_bins=body.get("max_bins"))
+    except LO.LuaOpError as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/create-stockpile", operation_id="create_stockpile")
 async def create_stockpile(body: dict):
     """Create a multi-tile stockpile (abstract -> setSize -> completeBuild). Use this, not place_building, for any pile bigger than 1 tile; then set its categories with /configure-stockpile."""

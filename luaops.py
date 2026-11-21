@@ -346,6 +346,26 @@ async def configure_stockpile(dec, building_id: int, allow: list[str] | None = N
         on = (c in wanted and c not in denied)
         lines.append("  s.flags.%s = %s" % (c, "true" if on else "false"))
     writes = "\n".join(lines)
+    # Flags alone are NOT a stockpile: the game's custom-settings UI walks per-category
+    # material arrays that the UI allocates when a category is switched on. Setting a flag on
+    # top of a size-0 vector crashes the game when the player clicks Custom (measured:
+    # SIGSEGV at 0xa in render_things with overlay on the stack). So every category we switch
+    # on is initialised here, in the same pass - the repair tool is a rescue for piles built
+    # before this existed, never part of normal use.
+    alloc_lines = []
+    for c in CATEGORIES:
+        on = (c in wanted and c not in denied)
+        sizes = SETTINGS_ARRAYS.get(c, {})
+        if not on or not sizes:
+            continue
+        for field, n in sizes.items():
+            if n <= 0:
+                continue
+            alloc_lines.append(f"  if s.{c}.{field} ~= nil and #s.{c}.{field} < {n} then")
+            alloc_lines.append(f"    s.{c}.{field}:resize({n})")
+            alloc_lines.append(f"    for i = 0, {n - 1} do pcall(function() s.{c}.{field}[i] = 1 end) end")
+            alloc_lines.append("  end")
+    writes = writes + "\n" + "\n".join(alloc_lines)
     # Measured: the container limits are NOT on the building - they are
     # b.storage.max_barrels / max_bins / max_wheelbarrows, and give/take links are
     # b.links.give_to_pile / take_from_pile / give_to_workshop / take_from_workshop.
@@ -370,7 +390,23 @@ for _,c in ipairs{"__CATS__"} do before[#before+1] = c .. "=" .. tostring(s.flag
 __WRITES__
 __EXTRAS__local after = {}
 for _,c in ipairs{"__CATS__"} do after[#after+1] = c .. "=" .. tostring(s.flags[c]) end
-print("OK id=" .. tostring(b.id) .. " | after: " .. table.concat(after, " "))
+local arrays = {}
+for _,c in ipairs{"ammo","animals","armor","bars_blocks","cloth","coins","corpses","finished_goods","food","furniture","gems","leather","refuse","sheet","stone","weapons","wood"} do
+  if s.flags[c] == true then
+    local cat = b.settings[c]
+    if cat ~= nil then
+      local parts = {}
+      for k,v in pairs(cat) do
+        local n = -1
+        local ok = pcall(function() n = #v end)
+        if ok and n >= 0 and tostring(v):find("vector<char>") then parts[#parts+1] = tostring(k) .. "=" .. n end
+      end
+      table.sort(parts)
+      if #parts > 0 then arrays[#arrays+1] = c .. "{" .. table.concat(parts, ",") .. "}" end
+    end
+  end
+end
+print("OK id=" .. tostring(b.id) .. " | after: " .. table.concat(after, " ") .. " | arrays: " .. table.concat(arrays, " "))
 """.strip().replace("__ID__", str(int(building_id))).replace("__CATS__", catlist)         .replace("__WRITES__", writes).replace("__EXTRAS__", extras)
     out = await _lua(expr)
     line = _one(out)
@@ -405,38 +441,75 @@ print(string.format("OK id=%d extent=%d..%d,%d..%d tiles=%s", b.id, b.x1, b.x2, 
     return {"success": True, "line": line}
 
 async def create_stockpile(dec, x: int, y: int, elev: int, w: int, h: int) -> dict:
-    """Create a MULTI-TILE stockpile exactly the way hack/lua/dfhack/buildings.lua does:
-    allocInstance -> setSize (legal only on the uncommitted instance) -> constructAbstract.
+    """Create a MULTI-TILE stockpile with the game's own building calls.
 
-    Measured on 53.17-r1: constructBuilding{..., w, h, nominal=true} yields a 1x1 stockpile,
-    and setSize on a committed building answers "expected: bld->id == -1". The library's own
-    order (buildings.lua:506-545) is allocInstance(pos, type, subtype, custom),
-    setSize(instance, width, height, direction), then constructAbstract/WithItems/WithFilters.
+    Measured on 53.17-r1 (all of this is in the crash/diary history):
+    - `constructBuilding{..., w, h}` does nothing for size: the library reads
+      `width`/`height`, so w/h produced 1x1 piles.
+    - `constructAbstract` requires `!bld->isActual()`, and `allocInstance` for a STOCKPILE
+      (type 29) yields an actual building - so abstract is not the commit for piles, and
+      calling it on the committed instance is the "expected: !bld->isActual()" failure.
+    - `setSize` is legal only before the commit and fails on overlap.
+    So: allocInstance -> setSize; if the pile is not live afterwards, try constructAbstract
+    in a pcall and treat an isActual refusal as "already live"; verify by finding the
+    STOCKPILE whose footprint starts at (x, y) at this z, and report id/extents/tile count.
     """
     z = int(elev) + GAME_Z_OFFSET
     lua = """
 local pos = xyz2pos(__X__, __Y__, __Z__)
-local inst = dfhack.buildings.allocInstance(pos, 21, 0, 0)
-if inst == nil then print("FAIL allocInstance") return end
-local ok, w2, h2, area, r_area = dfhack.buildings.setSize(inst, __W__, __H__, 8)
-if not ok then print("FAIL setSize: cannot place at this position") return end
-local oka = dfhack.buildings.constructAbstract(inst)
-if not oka then print("FAIL constructAbstract") return end
-local at = nil
-pcall(function() at = dfhack.buildings.findAtTile(__X__, __Y__, __Z__) end)
-if at == nil then print("FAIL built but not found at tile") return end
-local n = 0
-pcall(function() n = dfhack.buildings.countExtentTiles(at) end)
-print(string.format("OK id=%d extent=%d..%d,%d..%d tiles=%d", at.id, at.x1, at.x2, at.y1, at.y2, n))
+local inst = dfhack.buildings.allocInstance(pos, 29, -1, -1)
+if inst == nil then print("ERR|allocInstance failed") return end
+if not dfhack.buildings.setSize(inst, __W__, __H__, 8) then
+  print("ERR|setSize refused (overlap with a building, walls/ramps in the footprint?)") return
+end
+local ok_abs, err_abs = pcall(function() return dfhack.buildings.constructAbstract(inst) end)
+local found = nil
+for _,sp in ipairs(df.global.world.buildings.other.STOCKPILE) do
+  if sp.x1 == __X__ and sp.y1 == __Y__ and sp.z == __Z__ then found = sp break end
+end
+if found == nil then
+  print("ERR|pile not live after construction (constructAbstract said " .. tostring(ok_abs) .. ": " .. tostring(err_abs) .. ")")
+  return
+end
+local tiles = 0
+pcall(function() tiles = dfhack.buildings.countExtentTiles(found, found.x1, found.z, found.y1) end)
+local area = (found.x2-found.x1+1)*(found.y2-found.y1+1)
+print(string.format("OK|%d|%d..%d,%d..%d|%d|%d", found.id, found.x1, found.x2, found.y1, found.y2, tiles, area))
 """
     expr = lua.strip()
     for k, v in (("__X__", int(x)), ("__Y__", int(y)), ("__Z__", z), ("__W__", int(w)), ("__H__", int(h))):
         expr = expr.replace(k, str(v))
     out = await _lua(expr)
     line = _one(out)
-    if line.startswith("FAIL"):
-        raise LuaOpError(line)
-    return {"success": True, "line": line}
+    if line.startswith("ERR|"):
+        raise LuaOpError(line[4:])
+    parts = line.split("|")
+    if len(parts) < 5:
+        raise LuaOpError("unparsable create result: " + line[:120])
+    bid, extent, tiles, area = int(parts[1]), parts[2], int(parts[3]), int(parts[4])
+    return {"success": True, "building_id": bid, "extent": extent,
+            "usable_tiles": tiles, "rect_tiles": area, "holes": area - tiles}
+
+
+async def make_stockpile(dec, x: int, y: int, elev: int, w: int, h: int,
+                         allow: list[str] | None = None, deny: list[str] | None = None,
+                         all_categories: bool = False, max_wheelbarrows: int | None = None,
+                         max_barrels: int | None = None, max_bins: int | None = None) -> dict:
+    """Create a multi-tile stockpile AND set it up correctly, in one call.
+
+    Order: allocInstance -> setSize -> constructAbstract, then the category flags plus the
+    material arrays the custom-settings UI walks, then container limits - all before we
+    report. There is no follow-up step to forget: a pile made here is openable in the UI.
+    """
+    built = await create_stockpile(dec, x, y, elev, w, h)
+    bid = int(built["building_id"])
+    cfg = await configure_stockpile(dec, bid, allow=allow, deny=deny,
+                                   all_categories=all_categories,
+                                   max_wheelbarrows=max_wheelbarrows,
+                                   max_barrels=max_barrels, max_bins=max_bins)
+    return {"success": True, "building_id": bid, "extent": built["extent"],
+            "usable_tiles": built["usable_tiles"], "holes": built["holes"],
+            "configured": cfg.get("line")}
 
 # The per-category material arrays the custom-settings UI walks, as allocated by the game
 # itself (measured against a UI-made pile, stockpile number 6, on this world). Writing only
@@ -482,7 +555,7 @@ def _array_alloc_lua(category: str, sizes: dict) -> str:
         lines.append(f"    s.{field}:resize({n})")
         lines.append(f"    for i = 0, {n - 1} do pcall(function() s.{field}[i] = 1 end) end")
         lines.append("  end")
-    return "\n".join(lines)
+    return "\\n".join(lines)
 
 
 async def repair_stockpile_settings(dec, building_id: int) -> dict:
@@ -497,8 +570,8 @@ async def repair_stockpile_settings(dec, building_id: int) -> dict:
     for cat, sizes in SETTINGS_ARRAYS.items():
         block = _array_alloc_lua(cat, sizes)
         if block:
-            per_cat.append(f'local s = sp.settings.{cat}\nif s ~= nil then\n{block}\nend')
-    body = "\n".join(per_cat)
+            per_cat.append(f'local s = sp.settings.{cat}\\nif s ~= nil then\\n{block}\\nend')
+    body = "\\n".join(per_cat)
     expr = f"""
 local sp = nil
 for _,x in ipairs(df.global.world.buildings.other.STOCKPILE) do if x.id == {int(building_id)} then sp = x end end
