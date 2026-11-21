@@ -273,3 +273,43 @@ and the `popups` state (a trade dialog is modal - a loop that ignores it stalls)
    `"".join(fragments)` raised `TypeError: expected str instance, bytes found` and 500'd
    the request - reproduced with `list-waves`. Fixed by `decode_fragments()` (decode per
    fragment with `replace`) in `vendor/dfhack-client-python`, mirrored in the sibling clone.
+
+---
+
+# Field notes from the "dig it like a player" test
+
+Test asked: 3-wide tunnel west ~15 into the mountain, 6x6 chamber, place a trade depot,
+**no blueprints, no dig-now** - the dwarves do the labor. (Agreed on the principle:
+`dig-now` is a cheat command, not play. The play verbs are designate + labor + time.)
+
+## Result
+
+- Designations sent as `[x, y, elev+128]` **land at x,y** - no transposition. The old swap
+  in `send_dig_command` sent an 87-tile tunnel to mirrored coordinates, where unexplored
+  tiles rejected it silently. Fixed (default no-swap, `swap:true` opt-in).
+- With 4 dwarves on `MINE` (set via `set_unit_labors`, i.e. the `y` menu) and the game
+  unpaused, a 6-tile wall designation at x84-89,y160,elev39 was **fully dug in ~30 s**:
+  6 -> 5 -> 3 -> 0, read straight from `world_objects` dig clusters.
+- My first site was wrong: I read `.` (grass floor) and ` ` (open) as "the mountain".
+  Soil floors ARE diggable, so the dwarves dutifully removed ~52 tiles of meadow.
+  Diggable is not the same as rock, and the layer's glyph legend says so - I did not use it.
+
+## Two facts for the tool plan
+
+1. **`job_queue` is not a progress signal for digging.** `df.global.world.jobs.list` stayed
+   **0** across the whole test while mining happened. In 53.17-r1, map blocks expose no job
+   container (`pairs()` on a block lists 24 fields, none job-related), and mining is
+   designation-driven labor. The progress channel is the **designation count trend**
+   (`world_objects`/`look` dig clusters, `world_delta`), not the queue.
+   -> Plan: `job_queue` keeps a documented scope ("manager postings / linked jobs"), and
+   progress reporting must read designations.
+2. **Explored rock is a shell here, not a massif.** Scans over the fort band found:
+   - longest explored westward solid run: **13** tiles (elev 43, y168, x33-45);
+   - at the wagon's elevation (39): a **10 x 1** solid band (x84-93, y160) with
+     floors/ramps east of it, and **nothing explored below y160** in x84-92;
+   - **no 6x6 fully-solid explored box** with an explored entrance anywhere in the band.
+   The wagon is a building (`building_wagonst`, id 0) at x65-67, y116-118, elev 39 - and
+   `RFR` did not list it in `MapBlock.buildings` while `findAtTile` returned it, again.
+   -> Plan: a `survey`-style op that reports, for a requested rectangle, how many tiles the
+   game would accept as diggable (explored + rock), BEFORE designating. That is the
+   difference between ordering work and ordering a no-op.

@@ -544,14 +544,20 @@ async def set_pause_state(request: Request):
 
 @app.post("/send-dig-command", operation_id="send_dig_command")
 async def send_dig_command(request: Request):
-    """Designate digging. designation: one of NO_DIG, DEFAULT_DIG, UP_DOWN_STAIR_DIG, CHANNEL_DIG, RAMP_DIG, DOWN_STAIR_DIG, UP_STAIR_DIG; locations: list of [x,y,z] (RPC z; RPC z = game elevation + 128). Only DISCOVERED, diggable tiles accept designations (run 'reveal' first for dark areas) and acceptance is z-dependent; NO replies are sent: ALWAYS verify with get_block_list (designations read at their LANDED coords, which may be x/y-transposed) before running dig-now with matching bounds."""
+    """Designate digging - the `m` menu over RPC, no blueprint and no instant-dig. designation: one of NO_DIG, DEFAULT_DIG, UP_DOWN_STAIR_DIG, CHANNEL_DIG, RAMP_DIG, DOWN_STAIR_DIG, UP_STAIR_DIG; locations: list of [x,y,z] where z = elevation + 128, sent AS GIVEN (measured: lands where you put it). Optional swap:true reproduces the old mirrored behaviour for other builds. Only DISCOVERED, diggable tiles accept designations - unexplored tiles are rejected SILENTLY, and there is no reply, so ALWAYS verify: read `world_objects`/`look` for the dig cluster and its tile count before assuming work was ordered. Use NO_DIG to clear a rectangle."""
     body = await request.json()
     designation = body["designation"].upper()
     if designation not in DIG_DESIGNATIONS:
         return {"error": f"unknown designation '{designation}'", "known": sorted(DIG_DESIGNATIONS)}
-    locs = [Coord(x=int(p[1]), y=int(p[0]), z=int(p[2])) for p in body["locations"]]
-    # The game transposes x/y when applying designations; swap them here so the
-    # designation lands at the requested (x, y).
+    # Measured on 53.17-r1 STEAM (single-tile calibration): a designation sent as
+    # [x=63, y=118, z=167] lands at x63,y118 on elev 39 - AS GIVEN, no transposition.
+    # The old x/y swap was inherited from an earlier observation and sent whole
+    # tunnels to the mirrored coordinates, where unexplored tiles silently rejected
+    # them (verified: 87 designated tiles, dig count stayed 0). Passing `swap` is
+    # accepted for callers who need the old behaviour on some other build.
+    swap = bool(body.get("swap", False))
+    locs = [Coord(x=int(p[1]), y=int(p[0]), z=int(p[2])) for p in body["locations"]] if swap \
+           else [Coord(x=int(p[0]), y=int(p[1]), z=int(p[2])) for p in body["locations"]]
     await SendDigCommand(input = DigCommand(designation = DIG_DESIGNATIONS[designation], locations = locs))
     return {"designation": designation, "tiles": len(locs), "success": True}
 
