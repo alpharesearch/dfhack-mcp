@@ -160,3 +160,15 @@ elevation. Rules:
 - Reachability is ours to compute (`reach-map`, `dig_reachable`): `getWalkableGroup` is
   uncallable over RPC, `canWalkBetween` throws for adjacent stair tiles and lies for
   same-level grass.
+
+| ui elev | our elev | Stratum / verdict |
+|---|---|---|
+| 36 | 37 | soil/grass layer, depth 2-3 under surface 39-40 -> **farm level** (5x5 soil room) |
+| 35 | 36 | dry stone above the aquifer, mineral vein band -> **bedrooms/dining/offices** (the grid) |
+| 34-33 | 35-34 | **aquifer band - NO-DIG.** This is the barrier: 12,703 aquifer tiles at elev 34, water bodies east. Rooms here flood. |
+| 31-27 | 32-28 | below the band, dry (damp *flags* only, no water) -> **industry stack**: storage, smelter (magnetite+coal are in the veins), workshops |
+| 25 | 26 | deep, and the shaft column reads **aquifer at 25** - keep small, plan drainage |
+
+```
+x53-60 surface 41 | x61-67 surface 39 | x68-72 surface 38 | x73-191 surface 37 (plain -> edge)
+```

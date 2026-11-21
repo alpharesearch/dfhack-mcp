@@ -124,13 +124,8 @@ See [references/descent-notes.md](references/descent-notes.md) - the measured de
 ## 16. Plan in Z: one district per level, on the strata map
 A shaft is not an inconvenience, it is the spine of the fort. Order per **elevation**, chosen
 by what the strata allow (measured on this world, in-game numbers):
-| ui elev | our elev | Stratum / verdict |
-|---|---|---|
-| 36 | 37 | soil/grass layer, depth 2-3 under surface 39-40 -> **farm level** (5x5 soil room) |
-| 35 | 36 | dry stone above the aquifer, mineral vein band -> **bedrooms/dining/offices** (the grid) |
-| 34-33 | 35-34 | **aquifer band - NO-DIG.** This is the barrier: 12,703 aquifer tiles at elev 34, water bodies east. Rooms here flood. |
-| 31-27 | 32-28 | below the band, dry (damp *flags* only, no water) -> **industry stack**: storage, smelter (magnetite+coal are in the veins), workshops |
-| 25 | 26 | deep, and the shaft column reads **aquifer at 25** - keep small, plan drainage |
+Strata table for this world: [references/descent-notes.md](references/descent-notes.md)
+
 Per level, the shape that works (94 tiles each):
 `4x4 landing` touching the stair column -> `1-wide hall` -> `4x4 rooms` off the hall with a
 **1-tile opening** each and a **wall row between every room**. The landing is what makes a
@@ -175,9 +170,8 @@ tunnelled a corridor down through elev 38/37 - the player's verdict: *not how DF
 ramps outside and the hill connects to the plain that connects to the map edge.* The measured
 surface profile east of the depot (elev 39 = in-game 38, y=120) says why:
 
-```
-x53-60 surface 41 | x61-67 surface 39 | x68-72 surface 38 | x73-191 surface 37 (plain -> edge)
-```
+Measured profile (see references): x53-60=41, x61-67=39, x68-72=38, x73-191=37.
+
 
 Method, in order:
 1. **Read the surface along the intended line** (`surface_map` per row) - elevations, per column.
