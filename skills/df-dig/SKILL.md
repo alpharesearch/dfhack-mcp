@@ -118,21 +118,12 @@ unparseable, i.e. unknown. `watch_dig.py` and `watch_building.py` are the same p
 - Reachability is ours to compute (`reach-map`, `dig_reachable`): `getWalkableGroup` is
   uncallable over RPC, `canWalkBetween` throws for adjacent stair tiles and lies for
   same-level grass.
-## 9. Dig rates measured on this save (plan time with these, not guesses)
-| Crew | Work | Wall-clock |
-|---|---|---|
-| 4 miners | 37 tiles (tunnel band + chamber) | **61 s** |
-| 6 miners | 66 tiles (17x3 tunnel extension + 6x6 room) | **~120 s** |
-| 6 miners | 2 stair tiles per level, 5 levels (shaft 39 -> 35) | ~2 min |
-
-So ~0.5-0.6 tiles per miner per minute. A 60-tile room is minutes, not hours - **do not
-rush it with dig-now; the game is fast enough and the labour is the point**. Migrant waves
-change the crew mid-plan, so re-read `miners` each phase.
-
-**Picks are the real gate on miner count**: the embark ships 3 picks, so more than ~3
-simultaneous miners get starved of tools, and picks wear out - the ladder's metal/forge
-rungs are the long-term fix. Assign `MINE` broadly, expect the effective crew to be
-pick-limited.
+## 9. Rate and crew (plan time with these, not guesses)
+**~0.5-0.6 tiles per miner per minute** (measured: 4 miners/37 tiles = 61 s; 6 miners/66 tiles
+= ~120 s; a 2-tile stair level = 15-30 s). The crew is **pick-limited** - the embark ships 3
+picks, so more `MINE` designations than picks starve, and picks wear out (forge rungs fix it).
+Re-read `miners` in `fort-progress` every phase: migrants change the pool mid-plan.
+Measured table: [references/descent-notes.md](references/descent-notes.md)
 
 ## 10-15. Strata, water work, cave-ins, descent learnings, rates
 See [references/descent-notes.md](references/descent-notes.md) - the measured detail lives there so this body stays bounded and cheap to load.
