@@ -883,6 +883,11 @@ async def warnings(e0: int = Query(None), e1: int = Query(None),
         b.spend(len(l) + 1)
     return WM.finish(lines, b)
 
+@app.get("/wagon-path", operation_id="wagon_path")
+async def wagon_path(x: int = Query(...), y: int = Query(...), elev: int = Query(...)):
+    """Can a wagon get from this tile to the map edge? BFS over floors and ramps with diagonals, EXCLUDING stairs (wagons refuse them). Reports reachable tile count and the edge tiles reached - this is how the trade depot rung gets verified as a road, not declared from a building check."""
+    return await world.wagon_path(x, y, elev)
+
 @app.get("/dig-reachable", operation_id="dig_reachable")
 async def dig_reachable(x: int = Query(...), y: int = Query(...), elev: int = Query(...),
                         from_x: int = Query(..., description="a dwarf-occupied tile, e.g. the wagon"),

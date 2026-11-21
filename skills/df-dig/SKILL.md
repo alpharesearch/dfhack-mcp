@@ -172,14 +172,18 @@ surface profile east of the depot (elev 39 = in-game 38, y=120) says why:
 Measured profile (see references): x53-60=41, x61-67=39, x68-72=38, x73-191=37.
 
 
-Method, in order:
-1. **Read the surface along the intended line** (`surface_map` per row) - elevations, per column.
-2. **The route runs at the surface elevation.** Flat runs at the same elevation need digging
-   **only where the tile is rock at that elevation** - here x50-67 at elev 39 needed **0 tiles**.
-3. **Every 1-level step in the profile is one 3-wide ramp cut** at the lower elevation: x68
-   (39->38) and x73 (38->37) = `RAMP_DIG` 3 tiles each, 6 tiles total for the whole road.
-4. A 2-level cliff (x61: 41->39) is not on the route - ignore it; the route travels *at* 39.
-5. The natural plain at 37 already reaches the map edge: no designations past x73.
-So: order the **ramps**, not a tunnel; check for already-open ground first, and never
-designate over stuff.
+Method and the measured profile: [references/descent-notes.md](references/descent-notes.md).
 
+## 19. Dig needs material; a path in the air is BUILT - and both are allowed
+The player's rule: **you can dig a path, build a path, or use both at once**, and
+**dig only works where there is material to remove**. My `RAMP_DIG` designations at the x68
+and x73 steps were cancelled by the game because those tiles are `OpenSpace` - there was
+nothing to dig. Per tile, the decision is:
+
+| Tile at the target level | Action |
+|---|---|
+| wall / stone / soil (material) | **dig**: `DEFAULT_DIG`, `RAMP_DIG` to carve a ramp through it, `*_STAIR_DIG` for a shaft |
+| open air, no material | **build**: `place_building(building="Ramp"/..., material:"log"/"block"/"boulder")` - a construction queued for a builder. Ramps build **on floors**: a ramp in mid-air answers `construct: nil` |
+| floor / existing ramp / stairs | **nothing** - and never designate over it |
+
+Measured payoff on this fort: the wagon road needed **zero digging** - the hill already carries a 3-wide ramp chain, proven by `/wagon-path` (1,989 tiles, reaches x=191). Detail in references.

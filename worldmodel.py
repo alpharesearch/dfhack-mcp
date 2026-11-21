@@ -1237,6 +1237,39 @@ class WorldModel:
                 "reachable": (me is not None and me == ref),
                 "components_total": r["count"]}
 
+    WAGON_WALK = (".", "g", "s", "S", "/")   # floors, grass, smooth, constructed, RAMPS - no stairs
+
+    async def wagon_path(self, x: int, y: int, elev: int, no_stairs: bool = True) -> dict:
+        """Can a wagon get from here to the map edge? BFS over floors and ramps, diagonals
+        included, stairs excluded (wagons refuse them) - the depot rung as evidence, not a
+        presence check. Reports the reachable tile count, the edge tiles reached, and the
+        3-wide sample columns so a route can be judged as a road, not a goat track.
+        """
+        band, _ = await self._stack(30, 43)
+        walk = self.WAGON_WALK
+        start = (int(x), int(y), int(elev))
+        seen = {start}
+        stack = [start]
+        edges = []
+        while stack:
+            cx, cy, cz = stack.pop()
+            g = band.get((cx, cy), {}).get(cz, " ")
+            if g not in walk:
+                continue
+            if cx in (0, 191) or cy in (0, 191):
+                edges.append((cx, cy, cz))
+            nbs = [(cx+dx, cy+dy, cz) for dx, dy in
+                   ((1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1))]
+            nbs += [(cx, cy, cz+1), (cx, cy, cz-1)]      # ramps link levels; stairs are not usable
+            for n in nbs:
+                ng = band.get((n[0], n[1]), {}).get(n[2], " ")
+                if ng in walk and n not in seen:
+                    seen.add(n)
+                    stack.append(n)
+        return {"from": list(start), "wagon_reachable_tiles": len(seen),
+                "edge_tiles": edges[:12], "reaches_map_edge": bool(edges),
+                "stairs_allowed": not no_stairs}
+
     async def dig_reachable(self, x: int, y: int, elev: int,
                             from_x: int, from_y: int, from_elev: int) -> dict:
         """Can a dwarf actually work this tile? A wall tile is not walkable, so the test is:

@@ -172,3 +172,21 @@ elevation. Rules:
 ```
 x53-60 surface 41 | x61-67 surface 39 | x68-72 surface 38 | x73-191 surface 37 (plain -> edge)
 ```
+
+Measured on this fort, the payoff: the wagon road from the depot (in-game 38) needs **no
+digging at all**. The natural terrain is floors to x66, a 3-wide ramp chain at x67-69
+(`^^^`, `/./`), floors x69-71, ramps x72-73 (`///`), then the plain to the edge. Proven with
+`/wagon-path` (BFS over floors+ramps, diagonals, **stairs excluded**): **1,989 reachable
+tiles, reaching x=191 at y117-125** - the depot rung now has evidence, not a presence check.
+A construction I queued on an already-walkable floor was removed as wasted labour.
+
+Method, in order:
+1. **Read the surface along the intended line** (`surface_map` per row) - elevations, per column.
+2. **The route runs at the surface elevation.** Flat runs at the same elevation need digging
+   **only where the tile is rock at that elevation** - here x50-67 at elev 39 needed **0 tiles**.
+3. **Every 1-level step in the profile is one 3-wide ramp cut** at the lower elevation: x68
+   (39->38) and x73 (38->37) = `RAMP_DIG` 3 tiles each, 6 tiles total for the whole road.
+4. A 2-level cliff (x61: 41->39) is not on the route - ignore it; the route travels *at* 39.
+5. The natural plain at 37 already reaches the map edge: no designations past x73.
+So: order the **ramps**, not a tunnel; check for already-open ground first, and never
+designate over stuff.
