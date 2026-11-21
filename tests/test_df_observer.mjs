@@ -486,6 +486,44 @@ test('acceptance tiles_progress: finds monitored boxes in payload shape', () => 
 })
 
 // ---------------------------------------------------------------------------
+// supply priority: alcohol > meals > raw food (player rule 2026-11-21)
+test('supply: header ranks drink/meals/raw; alerts fire in that priority', () => {
+  const mk = (over = {}) => {
+    const model = freshModel()
+    model.ingestFast({
+      paused: false, generation: 1,
+      facts: { pop: 79, dwarves: 21, miners: 2, food: 14, drink: 0, wood: 0, stone: 136, metal: 0, barrels: 14,
+        pending_dig: 0, underground_floors: 4, water_tiles: 0, magma_tiles: 0 },
+      buildings: [], boxes: [], shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [],
+    })
+    model.ingestDeep({ rungs: [], next: null, piles: [], reports: [], crashlog: null, notes: [], status: over })
+    return model
+  }
+  const noDrink = mk({ alcohol: 0, meals: 5, raw_food: 20, seeds: 76 })
+  const a1 = noDrink.evaluate(noDrink.cfg)
+  assert.ok(a1.some((a) => a.key === 'crew-no-drink'), 'alcohol zero is the first alert')
+  assert.match(buildBriefing(noDrink.payload(), { maxTokens: 700 }).text, /drink 0 meals 5 raw 20 \(fort items\)/)
+  const noMeals = mk({ alcohol: 8, meals: 0, raw_food: 20, seeds: 76 })
+  const a2 = noMeals.evaluate(noMeals.cfg)
+  assert.ok(a2.some((a) => a.key === 'crew-no-meals'), 'with drink stored, meals zero is next in line')
+  assert.ok(!a2.some((a) => a.key === 'crew-no-drink'), 'no drink alert when alcohol exists')
+  const noRaw = mk({ alcohol: 8, meals: 4, raw_food: 0, seeds: 0 })
+  assert.ok(noRaw.evaluate(noRaw.cfg).some((a) => a.key === 'crew-no-raw'), 'raw + seeds zero is the last rung')
+  const okAll = mk({ alcohol: 8, meals: 4, raw_food: 20, seeds: 76 })
+  assert.ok(!okAll.evaluate(okAll.cfg).some((a) => String(a.key).startsWith('crew-no')), 'a supplied fort stays silent')
+  // an unprobed tick must not invent zeros
+  const bare = freshModel()
+  bare.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 21, dwarves: 21, miners: 1, food: 1, drink: 1, wood: 0, stone: 0, metal: 0, barrels: 0, pending_dig: 0 },
+    boxes: [], shafts: [], warnings: null, notes: [] })
+  bare.ingestDeep({ rungs: [], next: null, piles: [], reports: [], crashlog: null, notes: [] })
+  const b2 = bare.evaluate(bare.cfg)
+  assert.ok(!b2.some((a) => String(a.key).startsWith('crew-no')), 'no supply alert before the first probe')
+  assert.match(buildBriefing(bare.payload(), { maxTokens: 700 }).text, /supply \? \(deep probe pending\)/)
+  return 'drink>meals>raw order, per-level alerts, ? before the probe'
+})
+
+// ---------------------------------------------------------------------------
 // status probe (the game's own status bar): date, seeds, site, picks
 test('status probe: deep merge into facts, header carries date and seeds', () => {
   const model = freshModel()

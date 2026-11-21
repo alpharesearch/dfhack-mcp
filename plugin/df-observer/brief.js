@@ -40,8 +40,15 @@ function factsLine(payload) {
     ? `Y${f.date.year} ${(SEASONS[Math.floor(f.date.month / 3)] ?? '?').slice(0, 3)} M${f.date.month} d${f.date.day}`
     : (f.date ? `Y${f.date.year} month ? d${f.date.day}` : null)
   const seedsText = f.seeds == null ? null : `seeds ${num(f.seeds)}`
+  // Supply as the player ranks it: alcohol > prepared meals > raw food (fort-wide
+  // item counts from the status probe). Pile contents are reported per pile.
+  const supplyText = (f.alcohol == null && f.meals == null && f.raw_food == null)
+    ? 'supply ? (deep probe pending)'
+    : [`drink ${f.alcohol == null ? '?' : num(f.alcohol)}`,
+       `meals ${f.meals == null ? '?' : num(f.meals)}`,
+       `raw ${f.raw_food == null ? '?' : num(f.raw_food)}`].join(' ') + ' (fort items)'
   const parts = [dateText, popText, `miners ${num(f.miners)} of ${picksText(f)} picks`,
-    `food-on-piles ${num(f.food)}`, `drink-on-piles ${num(f.drink)}`, seedsText, `wood ${num(f.wood)}`, `stone ${num(f.stone)}`,
+    supplyText, seedsText, `wood ${num(f.wood)}`, `stone ${num(f.stone)}`,
     `metal ${num(f.metal)}`, `pending dig ${num(f.pending_dig)}`].filter(Boolean)
   const state = payload.online === false ? 'GAME OFFLINE' : (payload.paused ? 'PAUSED' : 'running')
   const who = payload.pauseSource ? ` (last pause: ${payload.pauseSource}${payload.pauseAtTick != null ? ` @tick ${payload.pauseAtTick}` : ''})` : ''
@@ -161,6 +168,7 @@ const SHRINK_LEVELS = [
     alerts: (p.alerts ?? []).slice(0, 8).map(shrinkCompactAlert) }),
   (p) => ({ ...p, facts: p.facts ? { pop: p.facts.pop, dwarves: p.facts.dwarves, miners: p.facts.miners, picks: p.facts.picks,
     seeds: p.facts.seeds, date: p.facts.date, site_id: p.facts.site_id,
+    alcohol: p.facts.alcohol, meals: p.facts.meals, raw_food: p.facts.raw_food,
     pending_dig: p.facts.pending_dig } : null, piles: (p.piles ?? []).slice(0, 4),
     boxes: (p.boxes ?? []).slice(0, 6),
     next: p.next ? { id: p.next.id, title: p.next.title,

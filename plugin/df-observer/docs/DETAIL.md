@@ -106,6 +106,9 @@ config object, so copy the keys you change.
 - **Ledger is durable** (`storageDomain` unit `df_observer`, per-record:
   `~/.dsh/storages/df_observer/todos/<id>.json`), restored at activation with
   ids that never collide with the seeds.
+- Supply in the header = **alcohol > meals > raw food** (the player's ranking),
+  as fort-wide item counts from the deep probe; alerts fire the most important
+  gap first, and stay silent (`supply ? (deep probe pending)`) before the probe.
 - `food-on-piles` / `drink-on-piles` label what the numbers are (item counts on
   the watched piles). The game's own Food/Drink bars are fort-wide meal supply -
   `Food None` on the bar and `food-on-piles 3` are both true.

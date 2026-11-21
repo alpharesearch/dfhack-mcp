@@ -422,3 +422,31 @@ Also proven live: an acceptance flip raises the whitelisted `dig_complete` alert
 (`A1` in the panel/briefing, with the evidence quoted), and `df_status
 scope=health` now renders notes - including the plugin's own diagnostics, which
 is how every failure above became visible.
+
+
+## 15. Supply ranking (player rule 2026-11-21: "drinks are more important than
+meals and meals are more important than raw food")
+
+The observer must not treat "food" as one number. Measured on this build:
+
+| measure | probe | note |
+|---|---|---|
+| alcohol | `#items.other.DRINK` | fort-wide items; this fort: **0** |
+| meals | `items.other.FOOD` whose `subtype.id` contains `MEAL` | this fort: **0** |
+| raw food | the rest of `items.other.FOOD` | this fort: **0** |
+| seeds | `#items.other.SEEDS` | 76 |
+
+All four ride the **same deep-tick Lua probe** (`OBS2 ... DRINK MEALS RAW`),
+so the cost stays one round-trip (~0.6 s).
+
+Alerts now follow the ranking (one at a time, the most important gap first):
+`crew-no-drink` (alcohol 0) → `crew-no-meals` (drinks stored, no meals) →
+`crew-no-raw` (no raw food and no seeds). No alert before the first probe:
+the header says `supply ? (deep probe pending)`.
+
+Two labels that keep the numbers honest, both measured:
+- The briefing's `drink/meals/raw` are **fort-wide item counts**. The game's
+  status-bar Food/Drink are its own fort-resource numbers - "Food None" and a
+  non-zero pile count are not a contradiction.
+- `food-on-piles` / per-pile counts come from the pile probe (items physically
+  on watched piles). They stay in the pile lines, never in the header.

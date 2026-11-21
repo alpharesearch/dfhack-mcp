@@ -136,6 +136,9 @@ export const BASIC_TODOS = [
     accept: { kind: 'buildings_kw', keyword: 'door', min: 1 }, cite: 'df-dig §16b (openings)' },
 ]
 
+/** Fields the status probe owns; they survive fast ticks (facts is replaced). */
+export const STATUS_KEYS = ['picks', 'site_id', 'seeds', 'date', 'alcohol', 'meals', 'raw_food']
+
 const LADDER_TODO_KEYS = new Set(['labors', 'entrance', 'stairwell', 'stockpile', 'meeting', 'refuse', 'farm', 'wood', 'drinks', 'depot'])
 
 /** Seed to-dos: the quickstart ladder (in order) plus the auto-created basics. */
@@ -359,7 +362,7 @@ export class FortModel {
       // The status-bar fields come from the deep probe; a fast tick replaces
       // `facts` with the server's own object, so re-attach what we probed.
       const carried = {}
-      for (const key of ['picks', 'site_id', 'seeds', 'date']) {
+      for (const key of STATUS_KEYS) {
         if (this.statusFacts[key] != null) carried[key] = this.statusFacts[key]
       }
       this.facts = Object.keys(carried).length ? { ...data.facts, ...carried } : data.facts
@@ -381,11 +384,11 @@ export class FortModel {
     if (st) {
       // The probe rides the deep tick; remember it so the next FAST tick (which
       // replaces `facts` wholesale) does not erase the status bar.
-      for (const key of ['picks', 'site_id', 'seeds', 'date']) {
+      for (const key of STATUS_KEYS) {
         if (st[key] != null) this.statusFacts[key] = st[key]
       }
       if (this.facts) {
-        for (const key of ['picks', 'site_id', 'seeds', 'date']) {
+        for (const key of STATUS_KEYS) {
           if (this.statusFacts[key] != null) this.facts[key] = this.statusFacts[key]
         }
       }
@@ -549,8 +552,24 @@ export class FortModel {
       && num(facts.miners) > num(facts.picks) && num(facts.pending_dig) > 0) {
       raise('crew', 'crew-picks', `picks ${facts.picks} < designated miners ${facts.miners} with pending dig ${facts.pending_dig} -> the extra miners starve at the face (df-dig §9)`, '')
     }
-    if (num(facts.pop) > 0 && num(facts.food) === 0) {
-      raise('crew', 'crew-food', `food 0 with pop ${facts.pop}`, '')
+    // Supply alerts follow the player's ranking (measured request 2026-11-21):
+    // alcohol > prepared meals > raw food. These are the FORT-WIDE item counts
+    // from the status probe - not the pile counts, which ride in the pile lines.
+    const dwarvesN = facts.dwarves == null ? null : num(facts.dwarves)
+    if (dwarvesN > 0) {
+      if (facts.alcohol != null && num(facts.alcohol) === 0) {
+        raise('crew', 'crew-no-drink',
+          `alcohol 0 with ${dwarvesN} dwarves: drink outranks meals and raw food - build the still (barrels to store it)`,
+          'y -> Craftsdwarf (Still); b -> craftsdwarf workshop')
+      } else if (facts.meals != null && num(facts.meals) === 0) {
+        raise('crew', 'crew-no-meals',
+          `no prepared meals (meals 0, raw ${num(facts.raw_food)}, ${dwarvesN} dwarves): meals outrank raw food - cook it`,
+          'b -> Craftsdwarf / Kitchen -> butcher + kitchen near the farm')
+      } else if (facts.raw_food != null && num(facts.raw_food) === 0 && num(facts.seeds) === 0) {
+        raise('crew', 'crew-no-raw',
+          `no raw food and no seeds (${dwarvesN} dwarves): the farm plot is the supply base`,
+          'dig a 5x5 soil room, 3x3 farm plot, irrigate')
+      }
     }
     // ---- dwarf deaths: `pop` counts pets/livestock too, so the alert reads the
     // dwarf number (measured: a 96->81 unit drop with the fort at 21 dwarves is
@@ -753,6 +772,9 @@ export class FortModel {
       facts: this.facts ? {
         pop: num(this.facts.pop), dwarves: this.facts.dwarves == null ? null : num(this.facts.dwarves),
         seeds: this.facts.seeds == null ? null : num(this.facts.seeds),
+        alcohol: this.facts.alcohol == null ? null : num(this.facts.alcohol),
+        meals: this.facts.meals == null ? null : num(this.facts.meals),
+        raw_food: this.facts.raw_food == null ? null : num(this.facts.raw_food),
         site_id: this.facts.site_id ?? null, date: this.facts.date ?? null,
         miners: num(this.facts.miners),
         picks: this.facts.picks === null || this.facts.picks === undefined ? null : num(this.facts.picks),

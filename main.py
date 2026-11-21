@@ -1003,7 +1003,15 @@ local ok_date, date = pcall(function()
   return dfhack.world.ReadCurrentYear() .. "-" .. dfhack.world.ReadCurrentMonth() .. "-" .. dfhack.world.ReadCurrentDay()
 end)
 local ok_seeds, seeds = pcall(function() return #df.global.world.items.other.SEEDS end)
-print("OBS2 PICKS " .. picks .. " SITE " .. (ok_site and site or "ERR") .. " DATE " .. (ok_date and date or "ERR") .. " SEEDS " .. (ok_seeds and seeds or "ERR"))
+-- Supply as the player ranks it: alcohol first, then prepared meals, then raw food.
+local drink, meals, raw = 0, 0, 0
+for _, d in ipairs(df.global.world.items.other.DRINK) do drink = drink + 1 end
+for _, it in ipairs(df.global.world.items.other.FOOD) do
+  local ok, sid = pcall(function() return tostring(it.subtype.id) end)
+  if ok and sid:find("MEAL") then meals = meals + 1 else raw = raw + 1 end
+end
+print("OBS2 PICKS " .. picks .. " SITE " .. (ok_site and site or "ERR") .. " DATE " .. (ok_date and date or "ERR")
+  .. " SEEDS " .. (ok_seeds and seeds or "ERR") .. " DRINK " .. drink .. " MEALS " .. meals .. " RAW " .. raw)
 """
 
 
@@ -1028,7 +1036,8 @@ def observe_parse_obs2(out: str) -> dict:
             except ValueError:
                 return None
         date = kv.get("DATE")
-        parsed = {"picks": num_of("PICKS"), "site_id": num_of("SITE"), "seeds": num_of("SEEDS")}
+        parsed = {"picks": num_of("PICKS"), "site_id": num_of("SITE"), "seeds": num_of("SEEDS"),
+                  "alcohol": num_of("DRINK"), "meals": num_of("MEALS"), "raw_food": num_of("RAW")}
         if date and date != "ERR" and len(date.split("-")) == 3:
             y, m, d = date.split("-")
             parsed["date"] = {"year": int(y), "month": int(m), "day": int(d)}
@@ -1037,7 +1046,8 @@ def observe_parse_obs2(out: str) -> dict:
         if kv.get("SITE") == "none":
             parsed["site_id"] = None
         return parsed
-    return {"picks": None, "site_id": None, "seeds": None, "date": None}
+    return {"picks": None, "site_id": None, "seeds": None, "alcohol": None, "meals": None,
+            "raw_food": None, "date": None}
 
 
 def observe_parse_piles(out: str) -> dict:
