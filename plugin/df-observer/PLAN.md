@@ -469,3 +469,20 @@ Live A/B, measured 2026-11-21 with the filter session running in the profile
 matches `poll_running_ms: 8000` (the earlier 8.0 s reading holds at 0.1.26).
 Paused cadence measured earlier at 60.0 s (`poll_paused_ms`).
 
+
+Live alert feed with plugin-run acceptance, measured 2026-11-21 (pile probe fixed):
+
+```
+A3 dig_complete: to-do #60 "Wake probe: a watched pile accepts stone and holds >=1 item"
+     -> done: pile 19 x30-33 y126-128 elev36 accepts stone, 13 items on it (accept: >= 1)
+A5 dig_complete: #72 stone pile for the dig face  -> pile 19, 13 items, 3 wheelbarrows
+A6 dig_complete: #71 general pile near the wagon  -> pile 20 elev38 accepts …
+A2 dig_complete: #20 felled wood reaches the wood pile -> pile 18 accepts wood, 2 items
+A1 crew x8: alcohol 0 with 21 dwarves: drink outranks meals and raw food   (acked -> repeats stop)
+```
+
+Two alerts already carried `(acked)` with `x1` - the panel Ack silenced their
+repeats; `df_alerts ack A1` did the same for the alcohol alert (repeats silenced
+while the condition stays). Pile health became visible only after 0.1.28: the
+server keys pile rows by id, and `Array.isArray(data.piles)` silently dropped
+them, so every pile read NO DATA while a direct `curl` showed the rows.

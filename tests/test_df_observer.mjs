@@ -486,6 +486,27 @@ test('acceptance tiles_progress: finds monitored boxes in payload shape', () => 
 })
 
 // ---------------------------------------------------------------------------
+// pile rows arrive keyed by id
+test('pile rows: object-keyed payload shape is accepted', () => {
+  const model = freshModel()
+  model.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 79, dwarves: 21, miners: 2, food: 0, drink: 0, wood: 2, stone: 13, metal: 0, barrels: 0, pending_dig: 0 },
+    boxes: [], shafts: [], warnings: null, notes: [] })
+  model.ingestDeep({ rungs: [], next: null, notes: [],
+    piles: { 18: { id: 18, found: 1, accepts: 'wood', total: 2, elev: 38, x0: 58, x1: 63, y0: 116, y1: 119 },
+             19: { id: 19, found: 1, accepts: 'stone', total: 13, elev: 36, x0: 30, x1: 33, y0: 126, y1: 128 } } })
+  assert.equal(model.piles.length, 2, 'both rows ingested')
+  const todo = { id: 60, accept: { kind: 'pile_category', category: 'stone', min_items: 1 } }
+  const res = runAcceptance(todo, model.snapshot())
+  assert.equal(res.ok, true, `stone pile verified: ${res.evidence}`)
+  assert.match(res.evidence, /accepts stone, 13 items/)
+  const missing = runAcceptance({ id: 61, accept: { kind: 'pile_category', category: 'gems', min_items: 1 } }, model.snapshot())
+  assert.equal(missing.ok, false)
+  assert.match(missing.evidence, /no pile accepts gems/, 'no gems pile is labelled with the ids covered')
+  return 'object-keyed pile rows ingest; acceptance reads them'
+})
+
+// ---------------------------------------------------------------------------
 // supply priority: alcohol > meals > raw food (player rule 2026-11-21)
 test('supply: header ranks drink/meals/raw; alerts fire in that priority', () => {
   const mk = (over = {}) => {

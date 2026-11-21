@@ -395,7 +395,11 @@ export class FortModel {
     }
     if (Array.isArray(data.rungs)) { this.rungs = data.rungs }
     if (data.next !== undefined) this.next = data.next
+    // The server keys pile rows by id ({"18": {...}}); accept both shapes -
+    // an Array.isArray() guard alone dropped every pile row (measured: the piles
+    // scope read NO DATA while curl showed rows).
     if (Array.isArray(data.piles)) this.piles = data.piles
+    else if (data.piles && typeof data.piles === 'object') this.piles = Object.values(data.piles)
     if (Array.isArray(data.reports)) this.reports = data.reports
     if (data.crashlog !== undefined) this.crashlog = data.crashlog
     if (Array.isArray(data.notes)) this.notes = data.notes
