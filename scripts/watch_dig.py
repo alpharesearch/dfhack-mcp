@@ -39,6 +39,30 @@ def post(path, body, timeout=30):
         return json.loads(r.read().decode())
 
 
+def solid_in_box(elev, box):
+    """Wall tiles remaining in the box, counted from the glyph map.
+
+    Designation count -> 0 is NOT proof of digging: the game also cancels invalid
+    designations. Tile state (`#` gone) is the proof, so the watcher reports both.
+    """
+    x0, y0, x1, y1 = box
+    import re
+    t = get("/world-map", {"e": elev, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                           "rle": "false", "max_tokens": 3000}, timeout=90)["text"]
+    n = 0
+    for l in t.splitlines():
+        if "|" not in l:
+            continue
+        y, row = l.split("|", 1)
+        try:
+            y = int(y.strip())
+        except ValueError:
+            continue
+        if y0 <= y <= y1:
+            n += row[: (x1 - x0 + 1)].count("#")
+    return n
+
+
 def pending(elev=None, box=None):
     """Designation tiles currently pending, optionally restricted to a box on one level."""
     if elev is None:
@@ -108,12 +132,24 @@ def main():
             except Exception:
                 pass
         stamp = int(time.time() - t0)
-        if n is not None and n != last:
-            print(f"[{stamp}s] pending dig ({scope}): {n}", flush=True)
-            last = n
-        if n == 0:
-            print(f"DIG COMPLETE after {stamp}s ({scope})", flush=True)
+        walls = None
+        if args.elev is not None and box:
+            try:
+                walls = solid_in_box(args.elev, box)
+            except Exception as e:
+                print(f"tile proof read failed: {e}", file=sys.stderr)
+        line = f"[{stamp}s] pending dig ({scope}): {n}" + (f" | wall tiles left: {walls}" if walls is not None else "")
+        if (n, walls) != last:
+            print(line, flush=True)
+            last = (n, walls)
+        if n == 0 and (walls is None or walls == 0):
+            print(f"DIG COMPLETE after {stamp}s ({scope}) - designations cleared and no wall "
+                  f"tiles left in the box", flush=True)
             return 0
+        if n == 0 and walls is not None and walls > 0:
+            print(f"DESIGNATIONS GONE but {walls} wall tiles remain in the box: the game "
+                  f"cancelled them, it did not dig them", flush=True)
+            return 3
         if time.time() - t0 > args.timeout:
             print(f"TIMEOUT after {args.timeout}s; pending dig: {n}", flush=True)
             return 2
