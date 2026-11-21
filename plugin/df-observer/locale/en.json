@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "title": "DF observer",
+    "description": "Watches your Dwarf Fortress through the DF MCP server and tells the agent what matters unprompted: bounded fort briefings, a to-do ledger with plugin-run acceptance tests, alerts that wake the agent, pause attribution, and a live panel with the ladder, to-dos, alerts and game health.",
+    "detail": "docs/DETAIL.md"
+  },
+  "ui": {
+    "title": "Fort observer",
+    "health.online": "running",
+    "health.paused": "paused",
+    "health.offline": "game offline",
+    "health.gen": "gen",
+    "health.tick": "tick",
+    "health.poll": "poll",
+    "health.pauseSource.plugin": "last pause: plugin",
+    "health.pauseSource.game-auto-or-player": "last pause: game/player",
+    "health.pauseSource.player-resume": "resumed by the player",
+    "ladder": "Ladder",
+    "ladder.next": "NEXT",
+    "todos": "To-dos",
+    "todos.open": "open",
+    "todos.done": "done",
+    "alerts": "Alerts",
+    "alerts.none": "no active alerts",
+    "alerts.ack": "Ack",
+    "alerts.acked": "acked",
+    "alerts.more": "more in df_alerts",
+    "notes": "Notes",
+    "collapsed": "Observer",
+    "empty": "Observer is idle: no game read yet.",
+    "box": "box",
+    "to_dig": "to_dig",
+    "dug": "dug",
+    "pending": "pending",
+    "noData": "NO DATA",
+    "pause.authority": "pause",
+    "session.folded": "session log folded",
+    "todo.why": "evidence"
+  }
+}

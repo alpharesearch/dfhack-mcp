@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "title": "DF 观察器",
+    "description": "通过 DF MCP 服务器监视你的《矮人要塞》，并主动把要点告诉智能体：简洁的堡垒简报、带插件自动验收测试的待办清单、唤醒智能体的警报、暂停来源标注，以及显示阶梯进度、待办、警报与游戏健康状态的实时面板。",
+    "detail": "docs/DETAIL.md"
+  },
+  "ui": {
+    "title": "堡垒观察器",
+    "health.online": "运行中",
+    "health.paused": "已暂停",
+    "health.offline": "游戏离线",
+    "health.gen": "世代",
+    "health.tick": "轮次",
+    "health.poll": "轮询",
+    "health.pauseSource.plugin": "上次暂停：插件",
+    "health.pauseSource.game-auto-or-player": "上次暂停：游戏/玩家",
+    "health.pauseSource.player-resume": "玩家已恢复",
+    "ladder": "阶梯",
+    "ladder.next": "下一步",
+    "todos": "待办",
+    "todos.open": "未完成",
+    "todos.done": "已完成",
+    "alerts": "警报",
+    "alerts.none": "没有活动警报",
+    "alerts.ack": "确认",
+    "alerts.acked": "已确认",
+    "alerts.more": "更多见 df_alerts",
+    "notes": "备注",
+    "collapsed": "观察器",
+    "empty": "观察器空闲：尚无游戏读取。",
+    "box": "区块",
+    "to_dig": "待挖",
+    "dug": "已挖",
+    "pending": "排队",
+    "noData": "无数据",
+    "pause.authority": "暂停权",
+    "session.folded": "会话日志已折叠",
+    "todo.why": "证据"
+  }
+}

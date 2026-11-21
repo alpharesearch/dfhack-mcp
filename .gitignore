@@ -221,3 +221,6 @@ vendor/**/dist/
 vendor/**/CMakeCache.txt
 vendor/**/CMakeFiles/
 vendor/**/*.egg-info/
+
+# dev-only dependency links inside the authored plugin workspace
+plugin/**/node_modules/

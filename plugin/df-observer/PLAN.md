@@ -244,3 +244,34 @@ What remains for the plugin:
   and `Config.auto_resume = false` disables it entirely (player decides).
 - Hard guard: the plugin will not pause while `pending_designations == 0` and nothing is moving -
   pausing an idle fort is the player's business, not the plugin's.
+
+
+---
+
+## 10. Implementation notes (forced changes, v0.1.0)
+
+Two plan-level additions were required to build P0+P1+panel in one install:
+
+1. **New MCP read (player-authorized 2026-11-21): `GET /observe`** in `main.py`,
+   schema `df-observer/v1`, HTTP-only (excluded from the MCP tool list with
+   `game_lua`). One request per poll tick answers: pause, generation, facts,
+   structured ladder rungs + NEXT, per-box survey simplified to
+   `to_dig/dug/pending` (tile categories), shaft columns (aquifer/water/magma
+   elevs from the cached hazard map), the batched pile probe, warnings, report
+   tails, and crash-log **file name/size/mtime only**. Every "no data" is a
+   labelled `notes` entry. Measured: full tick payload ~6.7 KB (~1,700 tokens)
+   and never enters the model's context - the plugin parses it.
+2. **Budget strategy for the injected state line** (PLAN §4.1 + §2 log-truth):
+   the briefing body and the `[df-observer] {...}` payload are budgeted
+   *together*: the builder prefers the richest payload level that fits
+   (`briefing_max_tokens`), trimming the human body only when no payload level
+   fits, with a hard floor (header + minimal payload, `overBudget` flagged).
+   Payload shrink ladder level 0 = complete state; levels 1-7 drop decoration
+   sections, then detail. The projection folds any payload (merge-on-present),
+   so the log always carries the ledger state - todos, alerts, dig events - and
+   briefings at Config 700 tokens measure ~600-950 in tests.
+
+Measured pile-probe fields (53.17-r1): accepted categories live in
+`b.settings.flags[<category name>]`; `b.flags` is `building_flags` (no
+`active`, no numeric indices in range); container limits in
+`b.storage.max_barrels/max_bins/max_wheelbarrows`; elevation `b.z - 129`.

@@ -1,0 +1,65 @@
+# @local/df-observer - one Host row; every tunable lives in its config.
+#
+# Overriding this entry in your own profile patch REPLACES the whole config
+# object: copy the keys you change. Elevations are IN-GAME panel numbers
+# (z = elev + 129). The plugin is read-only towards the game; the only
+# contemplated write (pause) is default OFF (`pause_authority: off`).
+#
+#  poll_running_ms / poll_paused_ms  adaptive interval (player decision):
+#      game running 5-15 s, game paused 60 s
+#  deep_every                        every N fast ticks also read ladder,
+#                                    piles, reports, crash-log names
+#  monitored_boxes                   [[x0,y0,x1,y1,elev], ...] surveyed on every
+#                                    fast tick: to_dig = rock+hidden,
+#                                    dug = floor+stairs+ramp
+#  pile_ids / shafts                 watched stockpile ids and shaft columns
+#                                    (water in a shaft column = the tripwire)
+#  game_dir                          game directory for the crash-log watch
+#                                    (names/sizes only; contents out of scope)
+#  briefing_max_tokens               hard cap on one injected briefing
+#  alert_wakes                       the ONLY kinds that wake the agent
+#  pause_authority                   off | events (default off: the game
+#                                    self-pauses; the plugin attributes pauses)
+#  auto_resume                       false (default): the plugin pauses only,
+#                                    never unpauses, and never over a player pause
+#  agents                            limit briefing/wake to these session ids
+#                                    (empty = every live root agent)
+- insert:
+    - id: df-observer
+      name: '@local/df-observer'
+      config:
+        server_url: http://127.0.0.1:8000
+        elev0: 0
+        elev1: 0
+        monitored_boxes:
+          - [27, 121, 42, 126, 36]
+          - [43, 122, 49, 124, 36]
+        pile_ids: [15, 17, 18, 19, 20, 24]
+        shafts:
+          - [50, 123]
+          - [43, 121]
+        reports: 4
+        crashlog_files: 6
+        game_dir: ''
+        poll_running_ms: 8000
+        poll_paused_ms: 60000
+        deep_every: 4
+        offline_grace_ms: 3600000
+        briefing_max_tokens: 700
+        briefing_mode: on
+        inject_min_spacing_ms: 30000
+        inject_max_spacing_ms: 600000
+        min_to_dig_delta: 3
+        alert_wakes: [water, dig_complete, game_crashed, game_offline]
+        wake_min_spacing_ms: 60000
+        pause_authority: off
+        pause_on: [water, overload]
+        auto_resume: false
+        overload_alerts: 6
+        overload_todos: 12
+        stall_ticks: 4
+        pile_full_items: 150
+        agents: []
+        brief_subagents: false
+        wake_enabled: true
+        panel_poll_ms: 5000

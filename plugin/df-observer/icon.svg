@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" role="img" aria-label="Watchful eye with radar arcs above a fortress stair, tunnel and stockpile">
+  <defs>
+    <clipPath id="dfObserverEye">
+      <path d="M5 16 Q18 5 31 16 Q18 27 5 16 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- mid-tone rounded panel so the icon reads on light and dark themes -->
+  <rect x="2" y="2" width="32" height="32" rx="8" fill="#2f3d49"/>
+
+  <!-- push / radar sweep signal -->
+  <path d="M22.5 8.2 A9 9 0 0 1 26.46 12.92" fill="none" stroke="#5fc9c2" stroke-width="1.9" stroke-linecap="round"/>
+  <path d="M24.25 5.6 A12.5 12.5 0 0 1 29.4 11.3" fill="none" stroke="#5fc9c2" stroke-width="1.9" stroke-linecap="round" opacity="0.72"/>
+
+  <!-- the watchful eye -->
+  <path d="M5 16 Q18 5 31 16 Q18 27 5 16 Z" fill="#eae6de"/>
+  <g clip-path="url(#dfObserverEye)">
+    <circle cx="18" cy="16" r="4.7" fill="#4fb3ac"/>
+    <circle cx="18" cy="16" r="2.2" fill="#16232b"/>
+  </g>
+
+  <!-- fortress below: stairwell, tunnel line, stockpile squares -->
+  <path d="M5.5 30.5 H10 V27.5 H13.5 V24.5 H16.5" fill="none" stroke="#b8c4ce" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="17.6" y="28.4" width="6.2" height="2.2" rx="1.1" fill="#b8c4ce"/>
+  <g fill="#d99a4b">
+    <rect x="25" y="24" width="2.6" height="2.6" rx="0.5"/>
+    <rect x="28.4" y="24" width="2.6" height="2.6" rx="0.5"/>
+    <rect x="25" y="27.4" width="2.6" height="2.6" rx="0.5"/>
+    <rect x="28.4" y="27.4" width="2.6" height="2.6" rx="0.5"/>
+  </g>
+</svg>
