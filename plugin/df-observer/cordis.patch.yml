@@ -52,7 +52,7 @@
         inject_min_spacing_ms: 30000
         inject_max_spacing_ms: 600000
         min_to_dig_delta: 3
-        alert_wakes: [water, dig_complete, game_crashed, game_offline]
+        alert_wakes: [water, dig_complete, tile_state_lost, game_crashed, game_offline]
         wake_min_spacing_ms: 60000
         pause_authority: off
         pause_on: [water, overload]

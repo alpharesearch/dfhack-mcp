@@ -86,7 +86,7 @@ export const Config = z.object({
   min_to_dig_delta: z.number().int().min(1).default(3),
 
   /** Alert kinds that WAKE the agent (player decision 2026-11-21: water, dig_complete, crash). */
-  alert_wakes: z.array(z.string()).default(['water', 'dig_complete', 'game_crashed', 'game_offline']),
+  alert_wakes: z.array(z.string()).default(['water', 'dig_complete', 'tile_state_lost', 'game_crashed', 'game_offline']),
   /** Minimum spacing between wakes for one agent. */
   wake_min_spacing_ms: z.number().int().min(10000).default(60000),
 

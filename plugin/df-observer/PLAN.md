@@ -545,3 +545,29 @@ Plugin rules that follow:
   tiles); `dug > 0` alone is a weak test - use it only for probe tunnels.
 - Stale designations on dug floors are noise: report them (`designated_on.floor > 0`) as a
   housekeeping alert, never as progress.
+
+### Measured from the live feed: NO DATA reopened done to-dos (flap), plus labelling noise
+Feed sample (`df_alerts list`):
+```
+A11-A14 todo_reopened: "... no pile accepts wood (probe covered ids none)"
+A15-A22 dig_complete  : to-do #20/#71-#73/#84-#86 "pile ... accepts wood/stone, N items on it"
+```
+Three defects, in severity order:
+
+1. **NO DATA was read as a fact.** `probe covered ids none` means the pile probe returned
+   nothing (the `/game-lua` call answers empty while the game is mid-tick). The plugin treated
+   that as *"no pile accepts wood"* and reopened completed to-dos - the exact violation of the
+   project's gate rule ("unknown is never a veto"). Rule: a test read that returns no data must
+   be recorded as **not checked** and must never change a to-do state. Only a positive read with
+   evidence may flip a state, in either direction.
+2. **Alert kinds are mislabelled.** Pile-acceptance and crew events all arrive as
+   `dig_complete`, so the feed cannot be filtered, and the suggested action text
+   ("verify the ceiling with cross-section") is wrong for a pile event. Kinds must match the
+   test that fired: `pile_categories`, `crew`, `dig_complete`.
+3. **Ledger duplicates.** #60/#71/#72/#73/#84/#85/#86 are the same three conditions (wood pile,
+   stone pile, general pile), and the ladder re-seed on each save-reload adds them again.
+   Seed must be idempotent: key to-dos by `(kind, params)` and merge, never append duplicates.
+
+Why it matters for play: the flap makes the model re-do work the ledger says is undone (dig
+orders, pile reconfiguration) while the fort is short of food and drink - and every reopen is
+followed by a re-complete alert, which is pure noise on top of the briefing budget.

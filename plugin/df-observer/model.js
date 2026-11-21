@@ -265,6 +265,7 @@ export const SUGGESTIONS = {
   water: 'stop the shaft/dig at this column: water follows the shaft down (df-dig §4, §12); drain first',
   damp_hot: 'these designations breach an aquifer/magma: clear them with NO_DIG before any dwarf digs (df-dig §1)',
   dig_complete: 'box is dug (to_dig 0, dug > 0): verify the ceiling with cross-section, re-survey before extending (df-dig §6)',
+  tile_state_lost: 'dug tiles DISAPPEARED: a designation went over existing floors/stairs - rebuild (stairs: up-down stair at the level below), then designate rock only',
   dig_stalled: 'designations drained with no dug change = the game cancelled the rest (no access/site): read dig_reachable, order middle-first (df-dig §5)',
   pile_full: 'pile at capacity: add tiles/bins or a feeder pile linked to the consumer (df-stockpile §5)',
   pile_holes: 'pile has container/hole problems or 0 accepted categories: run the checklist (df-stockpile §7)',
@@ -340,6 +341,8 @@ export class FortModel {
     this.seeded = false
     this.lastDeepTick = -Infinity
     this.statusFacts = {}
+    /** Last known `dug` per monitored box: a decrease = destroyed tiles. */
+    this.dugBaseline = new Map()
     /** Boxes the user registered via to-dos; they join every survey request. */
     this.extraBoxes = []
     /** Plugin-side diagnostics (transport, ledger, filter) merged into payloads. */
@@ -628,6 +631,26 @@ export class FortModel {
     if (num(facts.pop) > 0 && num(facts.drink) === 0 && num(facts.barrels) === 0) {
       // drink zero is the normal early state; only alert once per session for it
       raise('crew', 'crew-drink-early', `drink 0 (no barrels yet): the still rung stays open`, '')
+    }
+
+    // ---- dug state must never shrink: a DECREASE means tiles were destroyed
+    // (measured 2026-11-21: a whole-box DEFAULT_DIG designation went over floors
+    // and two stairs; the box's dug count is the thing that reveals it).
+    for (const b of this.boxes) {
+      if (!b || b.dug == null) continue
+      const key = boxKey(b)
+      const prev = this.dugBaseline.get(key)
+      if (prev === undefined) { this.dugBaseline.set(key, num(b.dug)); continue }
+      if (num(b.dug) < prev) {
+        const box = b.box ?? []
+        raise('tile_state_lost', `tile-loss-${key}`,
+          `box x${box[0]}-${box[2]} y${box[1]}-${box[3]} elev${b.elev}: dug ${prev} -> ${num(b.dug)} (-${prev - num(b.dug)}) - positive tile state was REMOVED (stairs/floors destroyed by a designation over existing stuff?)`,
+          `x${box[0]}-${box[2]} y${box[1]}-${box[3]} elev${b.elev}`,
+          'rebuild what was lost (stairs: designate up-down stairs at the level BELOW the floor); from now on designate rock tiles only - survey first (df-dig §5)')
+        this.dugBaseline.set(key, num(b.dug))
+      } else if (num(b.dug) > prev) {
+        this.dugBaseline.set(key, num(b.dug))
+      }
     }
 
     // ---- the game's own hints: quote them, do not paraphrase ----
