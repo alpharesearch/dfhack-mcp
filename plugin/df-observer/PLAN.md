@@ -635,3 +635,17 @@ Measured on the live payload (3,848 tokens): rule briefing **456**, filtered
 **225** (caps 260 and 340 land at the same body) → **231 tokens saved per
 injection**. A stale verdict is labelled by its tick ("No change at tick 11" on
 tick 13), never presented as fresh.
+
+Live proof of the idle-face rule (0.1.41, same session):
+
+```
+A3 dig_stalled [x45-66 y121-122 elev35] x4: to_dig 44, pending 0, dug 0 unchanged for 7 reads
+   - nothing queued and nothing dug (the plan is idle at this face)
+A2 dig_stalled [x27-42 y121-126 elev36] x4: to_dig 51, pending 0, dug 45 unchanged for 7 reads
+```
+
+The player then chose (2026-11-21): **`dig_stalled` joins the wake whitelist**, so a
+frozen face steers the play agent to queue the next designation - Config now
+defaults to `[water, dig_complete, dig_stalled, tile_state_lost, game_crashed,
+game_offline]`. One wake per alert lifetime (`wakeSent`), so a stall that keeps
+repeating (its evidence line changes every read) cannot spam the agent.

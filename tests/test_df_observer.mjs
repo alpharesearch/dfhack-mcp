@@ -82,7 +82,7 @@ test('config defaults and ranges', () => {
   assert.equal(baseCfg.poll_paused_ms, 60000)
   assert.equal(baseCfg.pause_authority, 'off')
   assert.equal(baseCfg.auto_resume, false)
-  assert.deepEqual(baseCfg.alert_wakes, ['water', 'dig_complete', 'tile_state_lost', 'game_crashed', 'game_offline'])
+  assert.deepEqual(baseCfg.alert_wakes, ['water', 'dig_complete', 'dig_stalled', 'tile_state_lost', 'game_crashed', 'game_offline'])
   assert.equal(baseCfg.overload_todos, 20, 'a normal embark ledger is not an overload')
   assert.throws(() => Config.parse({ poll_running_ms: 16000 }))
   assert.throws(() => Config.parse({ pause_authority: 'manual_suggestion' }))
