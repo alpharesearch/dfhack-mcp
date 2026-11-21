@@ -94,11 +94,11 @@ test('service module exports the service-class form', () => {
   assert.equal(typeof DFObserver, 'function')
   assert.deepEqual(DFObserver.inject, ['tools', 'agents', 'systemPrompt', 'sessionProjections', 'timer', 'commands', 'storageDomain'])
   assert.equal(DFObserver.Config, Config)
-  assert.equal(typeof DFObserver.prototype.panel, 'function')
+  assert.ok(!('panel' in DFObserver.prototype), 'no panel endpoint - the client cannot reach an @Remote surface (measured)')
   assert.equal(typeof DFObserver.prototype.ackAlert, 'function')
   // Remote markers attach at construction (per instance); the full activation
   // path is exercised by scratch/repro_df_observer.mjs and the live install.
-  return 'default export class + static inject/Config + panel/ackAlert endpoint methods'
+  return 'default export class + static inject/Config + the ackAlert session-command endpoint'
 })
 
 test('model seeds ladder + basics todos', () => {
@@ -678,12 +678,13 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
   return 'designation summary survives every lean level, under 260 chars'
 })
 
-test('the panel payload carries the designation scan (the panel is fed by panelPayload, not the wire)', () => {
+test('the panel has no unreachable Remote surface - it reads the projection wire', () => {
   const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
-  assert.match(index, /designations: compactDesignations\(live\.designations\)/, 'panelPayload includes the scan')
-  const brief = fs.readFileSync(path.join(pluginDir, 'brief.js'), 'utf8')
-  assert.match(brief, /export function compactDesignations/, 'and the helper is exported for it')
-  return 'panel feed includes the scan'
+  const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
+  assert.ok(!/panelPayload/.test(index), 'the dead panelPayload() surface is gone (measured: the client never receives it)')
+  assert.ok(!/remote\.${'dfObserver'}/.test(client), 'the client does not depend on an unresolvable remote namespace')
+  assert.match(index, /third-party bundle\n \*     CANNOT reach an `@Remote` surface/, 'and the header says what was measured')
+  return 'no phantom panel Remote; the wire is the panel feed'
 })
 
 test('panel rows: a trimmed alert renders no literal "undefined"', () => {

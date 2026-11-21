@@ -19,7 +19,9 @@
  *   - `ctx.sessionProjections` unit folds everything the model sees from
  *     committed session events (pure synchronous apply, reference-stable view);
  *   - `ctx.tools.register()` adds df_status / df_todo / df_alerts;
- *   - `@Remote` methods serve the panel (client half) read-only.
+ *   - the panel (client half) reads the projection wire: a third-party bundle
+ *     CANNOT reach an `@Remote` surface (`remote.dfObserver` never resolves), and
+ *     the Context-level lazy inject is the only safe way to touch optional faces.
  *
  * Hard boundaries (PLAN.md §5): read-only towards the game. Never designates,
  * builds, sets labours, runs commands, sends keys, digs, blueprints, or writes
@@ -31,7 +33,9 @@
 
 import { z } from 'zod'
 import { Service } from '@deepseek-ai/cordis'
-import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+// TypertRemoteService only: no @Remote endpoints are exposed - a third-party
+// bundle's client half cannot resolve them (measured).
+import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 import { ObserverTransport } from './observer.js'
@@ -154,34 +158,7 @@ export const Config = z.object({
 
 const BRIEF_SECTION_ORDER = 55
 
-/**
- * Mark one prototype method as a direct Remote endpoint without decorator
- * syntax: applies the protocol's `Remote(options)` decorator with a
- * ClassMethodDecoratorContext whose initializer runs on the instance being
- * constructed. Requires: called from inside the constructor (`this` = instance).
- */
-/**
- * Apply the `@Remote` marker to the PROTOTYPE at module load - the Node runtime
- * here has no decorator syntax, and the gateway's binding is read when the
- * service is CONSTRUCTED (`bindTypertRemote` in the base constructor), so a
- * marker applied later (in `[Service.init]`) is invisible to the Client.
- * We fabricate the standard ClassMethodDecoratorContext, take the initializer
- * the decorator schedules, and run it with `this` bound to an object whose
- * prototype is the class prototype - exactly what the real decorator does.
- */
-function markRemotePrototype(Class, method, options) {
-  const decorator = Remote(options)
-  let initializer = null
-  decorator(function () {}, {
-    kind: 'method',
-    name: method,
-    static: false,
-    private: false,
-    addInitializer(fn) { initializer = fn },
-  })
-  if (initializer === null) throw new Error(`df-observer: Remote marker for ${method} produced no initializer`)
-  initializer.call(Object.create(Class.prototype))
-}
+
 
 /**
  * The plugin service: owns the poller, the live model, the session projection,
@@ -238,10 +215,6 @@ export default class DFObserver extends TypertRemoteService {
     this.filterFallback = false
     this.filterPromptInstalled = false
     this.modelPollAnnounced = 0
-    // Remote endpoints, marked imperatively (Node runs this module without a
-    // decorator transform; the marker path below is exactly the @Remote form).
-    // markers live at module scope (see markRemotePrototype) - the gateway
-    // reads the prototype descriptor at construction time.
   }
 
   note(message) {
@@ -857,61 +830,6 @@ export default class DFObserver extends TypertRemoteService {
   }
 
   // ---------------------------------------------------------------------
-  // Panel Remote surface (read-only)
-  // ---------------------------------------------------------------------
-
-  panelPayload(sessionId) {
-    const live = this.model.payload()
-    const agent = sessionId ? this.ctx.agents.get(sessionId) : undefined
-    let state = null
-    if (agent && this.projection) {
-      try {
-        state = this.projection.stateOf(agent.session)
-      } catch {
-        state = null
-      }
-    }
-    const notes = this.noteLines.slice(-6).map((n) => n.message)
-    return {
-      tick: live.tick, observedAt: live.observedAt, online: live.online,
-      paused: live.paused, pauseSource: live.pauseSource, generation: live.generation,
-      facts: live.facts, rungs: live.rungs, next: live.next,
-      boxes: live.boxes, piles: live.piles, shafts: live.shafts, warnings: live.warnings,
-      // The panel is fed by THIS payload (from the live model), not by the briefing
-      // wire - measured: adding the scan to the wire did nothing for the panel.
-      designations: compactDesignations(live.designations),
-      todos: (state?.todos ?? live.todos).slice(0, 14),
-      alerts: (state?.alerts ?? live.alerts).filter((a) => !a.cleared).slice(0, 10),
-      digEvents: (state?.digEvents ?? live.digEvents).slice(0, 10),
-      pauseEvents: (state?.pauseEvents ?? live.pauseEvents).slice(0, 8),
-      crashlog: live.crashlog, notes: [...(live.notes ?? []), ...notes].slice(0, 10),
-      overload: live.overload,
-      pollIntervalMs: this.currentIntervalMs(),
-      filter: {
-        enabled: this.filterEnabled(),
-        session: this.filterSessionId,
-        live: !!this.filterAgent(),
-        verdictTick: this.filterVerdict?.tick ?? null,
-        significance: this.filterVerdict?.significance ?? null,
-        fallback: this.filterFallback,
-      },
-      config: {
-        pause_authority: this.config.pause_authority,
-        alert_wakes: this.config.alert_wakes,
-        briefing_mode: this.config.briefing_mode,
-        briefing_max_tokens: this.config.briefing_max_tokens,
-        poll_running_ms: this.config.poll_running_ms,
-        poll_paused_ms: this.config.poll_paused_ms,
-        stateVersion: STATE_VERSION,
-      },
-      sessionFolded: !!state,
-    }
-  }
-
-  panel(sessionId) {
-    return this.panelPayload(typeof sessionId === 'string' ? sessionId : undefined)
-  }
-
   ackAlert(id) {
     const alert = this.model.ackAlert(String(id))
     return { ok: !!alert, id, tick: this.model.tick }
