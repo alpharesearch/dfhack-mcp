@@ -613,6 +613,28 @@ test('GAME SAYS: the game reports are quoted in the briefing', () => {
 
 // ---------------------------------------------------------------------------
 // wake boundary: steer reaches a busy agent at its next step
+test('water growth in the band raises the whitelisted water alert', () => {
+  const model = freshModel()
+  const ingestWater = (tiles) => model.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 18, drink: 0, wood: 0, stone: 138,
+      metal: 0, barrels: 21, pending_dig: 12, water_tiles: tiles, magma_tiles: 0 },
+    buildings: [], boxes: [{ elev: 36, box: [27, 121, 42, 126], to_dig: 0, dug: 96, pending: 0 }],
+    shafts: [], warnings: { designated_tiles: 12, damp_tiles: 12, hot_tiles: 0 }, notes: [] })
+  ingestWater(1030); model.evaluate(model.cfg)
+  ingestWater(1091)
+  const hit = model.evaluate(model.cfg).find((a) => a.kind === 'water' && a.key === 'water-growth')
+  assert.ok(hit, 'the +61 flood raises the water alert')
+  assert.match(hit.evidence, /1030 -> 1091 \(\+61 tiles\)/, hit.evidence)
+  assert.ok(model.cfg.alert_wakes.includes('water'), 'water is on the wake whitelist')
+  assert.match(hit.suggested, /clear the DAMP designations/, 'the advice names the fix')
+  // growth stops -> the alert clears
+  ingestWater(1091); model.evaluate(model.cfg)
+  ingestWater(1091)
+  model.evaluate(model.cfg)
+  assert.ok(!model.alerts.find((a) => a.key === 'water-growth' && !a.cleared), 'a stable water level clears the flood alert')
+  return 'band water growth alerts and clears'
+})
+
 test('idle-plan stall: pending 0 with dug frozen raises dig_stalled after stall_ticks', () => {
   const model = freshModel()
   const box = { elev: 35, box: [45, 121, 66, 122], to_dig: 44, dug: 0, pending: 0 }

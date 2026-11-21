@@ -558,6 +558,24 @@ export class FortModel {
       }
     }
 
+    // ---- water GROWING in the monitored band (an aquifer breach floods) ----
+    // Measured: the designations at elev22-24 breached the aquifer and the band's
+    // water tiles went 1030 -> 1091 (+61). Shaft columns can stay dry while the
+    // fort floods elsewhere, so the band total gets its own alert.
+    const waterNow = num(this.facts.water_tiles)
+    const waterPrev = this.lastWaterTiles
+    this.lastWaterTiles = waterNow
+    if (waterPrev !== undefined && waterNow - waterPrev >= cfg.water_growth_min) {
+      raise('water', 'water-growth',
+        `water in the monitored band rose ${waterPrev} -> ${waterNow} (+${waterNow - waterPrev} tiles): an aquifer breach is flooding the works`,
+        `elev${cfg.elev0}-${cfg.elev1}`,
+        'stop digging into the aquifer: clear the DAMP designations (NO_DIG), and drain/pump before continuing (df-dig §4)')
+      this.lastWaterGrowth = this.tick
+    } else if (waterPrev !== undefined && this.lastWaterGrowth !== undefined && this.tick - this.lastWaterGrowth >= 2) {
+      const active = this.alerts.find((a) => a.key === 'water-growth' && !a.cleared)
+      if (active) { active.cleared = true; active.lastTick = this.tick }
+    }
+
     // ---- water in a monitored shaft column (water = stop, df-dig §4) ----
     for (const shaft of this.shafts) {
       const waters = shaft.water_elevs ?? []
