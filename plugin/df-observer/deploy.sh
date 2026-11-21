@@ -8,6 +8,7 @@
 #   ./plugin/df-observer/deploy.sh install   check, then dsh plugin --profile $PROFILE add <dir>
 #   ./plugin/df-observer/deploy.sh update    check, then remove + add (fresh module generation)
 #   ./plugin/df-observer/deploy.sh status    is the bundle in the profile's node_modules?
+#   ./plugin/df-observer/deploy.sh verify    live state of the plugin (mount, poll counters, storage)
 #   ./plugin/df-observer/deploy.sh server    restart the DF MCP server so /observe matches main.py
 #
 # After install/update: a NEW session in the running Harness exercises the
@@ -91,6 +92,20 @@ installed() {
   [[ -e "$HOME/.dsh/profiles/$PROFILE/node_modules/$PKG" ]]
 }
 
+verify() {
+  check
+  say "profile dependency"
+  grep -q "@local/df-observer" "$HOME/.dsh/profiles/$PROFILE/package.json" \
+    && echo "  in package.json: yes" || echo "  in package.json: NO - the plugin is NOT mounted (dsh plugin --profile $PROFILE add $DIR)"
+  say "live mount (Config entries for @local/df-observer): inspect via the Host Config provider, entry include:df-observer"
+  say "server + poll counters"
+  curl -s --max-time 10 "http://127.0.0.1:8000/get-status" | head -c 200; echo
+  curl -s --max-time 10 "http://127.0.0.1:8000/observe-stats" | head -c 160; echo
+  say "storage domain (durable ledger)"
+  ls -la "$HOME/.dsh/storages/" 2>/dev/null | grep -i "observer" || echo "  no df_observer storage file yet (created on the first ledger write)"
+  say "NOTE: for a linked bundle, a Host restart (the running 'dsh web') is the dependable way to load new code"
+}
+
 status() {
   if installed; then
     say "$PKG is in the $PROFILE profile: $(readlink -f "$HOME/.dsh/profiles/$PROFILE/node_modules/$PKG")"
@@ -136,6 +151,7 @@ case "${1:-check}" in
   install) install ;;
   update)  update ;;
   status)  status ;;
+  verify)  verify ;;
   server)  server ;;
-  *) echo "usage: $0 [check|install|update|status|server]"; exit 1 ;;
+  *) echo "usage: $0 [check|install|update|status|verify|server]"; exit 1 ;;
 esac
