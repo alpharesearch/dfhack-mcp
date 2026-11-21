@@ -175,8 +175,16 @@ export function runAcceptance(todo, snapshot) {
   const rungs = snapshot.rungs ?? []
   switch (accept.kind) {
     case 'tiles_progress': {
-      const box = boxes.find((b) => b.elev === accept.elev && b.x0 === accept.x0 && b.y0 === accept.y0
-        && b.x1 === accept.x1 && b.y1 === accept.y1)
+      // Payload boxes arrive as {elev, box:[x0,y0,x1,y1]}; accept names the
+      // corners. Compare the coordinates, not the shape they came in.
+      const coords = (b) => Array.isArray(b.box)
+        ? { x0: b.box[0], y0: b.box[1], x1: b.box[2], y1: b.box[3] }
+        : { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 }
+      const box = boxes.find((b) => {
+        if (b.elev !== accept.elev) return false
+        const c = coords(b)
+        return c.x0 === accept.x0 && c.y0 === accept.y0 && c.x1 === accept.x1 && c.y1 === accept.y1
+      })
       if (!box) return { ok: false, evidence: `no survey read for box x${accept.x0}-${accept.x1} y${accept.y0}-${accept.y1} elev${accept.elev} (no data, not a fact)` }
       const ok = box.to_dig === 0 && box.dug >= num(accept.min_dug, 1)
       return { ok, evidence: `x${box.box[0]}-${box.box[2]} y${box.box[1]}-${box.box[3]} elev${box.elev}: to_dig ${box.to_dig}, dug ${box.dug}, pending ${box.pending} (accept: to_dig==0 && dug>0)` }

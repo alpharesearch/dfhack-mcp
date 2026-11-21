@@ -435,6 +435,32 @@ test('tools: bounded outputs, add/done/ack embed foldable payloads', async () =>
 })
 
 // ---------------------------------------------------------------------------
+// tiles_progress matches boxes in the payload shape ({elev, box:[x0,y0,x1,y1]})
+test('acceptance tiles_progress: finds monitored boxes in payload shape', () => {
+  const model = new FortModel(Config.parse({}))
+  const ingest = (to_dig, dug) => model.ingestFast({
+    paused: false, generation: 1,
+    facts: { pop: 79, dwarves: 21, miners: 2, picks: 3, food: 10, drink: 0, wood: 0, stone: 136, metal: 0,
+      barrels: 14, pending_dig: 0 },
+    buildings: [], boxes: [{ elev: 36, box: [27, 121, 42, 126], to_dig, dug, pending: 0 }],
+    shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [],
+  })
+  const todo = { id: 19, accept: { kind: 'tiles_progress', elev: 36, x0: 27, y0: 121, x1: 42, y1: 126, min_dug: 10 } }
+  ingest(51, 45)
+  const mid = runAcceptance(todo, model.snapshot())
+  assert.equal(mid.ok, false)
+  assert.match(mid.evidence, /to_dig 51, dug 45/, `quotes the live numbers: ${mid.evidence}`)
+  ingest(0, 96)
+  const done = runAcceptance(todo, model.snapshot())
+  assert.equal(done.ok, true, 'to_dig 0 with dug >= min passes')
+  assert.match(done.evidence, /to_dig 0, dug 96/)
+  const other = runAcceptance({ id: 20, accept: { kind: 'tiles_progress', elev: 40, x0: 1, y0: 1, x1: 2, y1: 2 } }, model.snapshot())
+  assert.equal(other.ok, false)
+  assert.match(other.evidence, /no data, not a fact/, 'unmonitored box is labelled, never assumed')
+  return 'box shape handled; partial quotes numbers; completion passes; unmonitored labelled'
+})
+
+// ---------------------------------------------------------------------------
 // status probe (the game's own status bar): date, seeds, site, picks
 test('status probe: deep merge into facts, header carries date and seeds', () => {
   const model = freshModel()
