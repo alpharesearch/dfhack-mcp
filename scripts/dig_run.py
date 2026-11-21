@@ -42,45 +42,30 @@ def post(path, body, timeout=120):
 
 
 def box_state(elev, x0, x1, y0, y1):
-    """(walls, fog, floors, other) in the box. Fog is NOT freedom to call it done:
-    a box of unexplored rock has zero '#' walls, which is how the first version of this
-    script announced DUG COMPLETE at 0s. Completion means FLOORS with no walls and no fog."""
-    t = get("/world-map", {"e": elev, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
-                           "rle": "false", "max_tokens": 3000}, timeout=120)["text"]
-    wall = fog = floor = other = 0
-    for l in t.splitlines():
-        if "|" not in l:
-            continue
-        y, row = l.split("|", 1)
-        try:
-            y = int(y.strip())
-        except ValueError:
-            continue
-        if not (y0 <= y <= y1):
-            continue
-        cells = row[: (x1 - x0 + 1)]
-        wall += cells.count("#")
-        fog += cells.count("?")
-        floor += cells.count(".") + cells.count("=")
-        other += sum(1 for c in cells if c not in "#?.=")
-    return wall, fog, floor, other
+    """(rock+hidden, open, dug, other) in the box - from SURVEY categories, not map glyphs.
+
+    world_map paints overlays over the terrain ('d' for a designation, 'B' for a building,
+    region letters), so counting '#', '?' and '.' in that text measures the paint, not the
+    rock. That is what produced 'DUG COMPLETE after 0s' with 161 designations pending:
+    a fogged box has no '#' in the painted view. Survey reports tile categories, so trust
+    those - and completion is positive tile state (dug), never the absence of walls.
+    """
+    sv = get("/survey", {"elev": elev, "x0": x0, "y0": y0, "x1": x1, "y1": y1}, timeout=150)
+    c = sv.get("counts", {})
+    to_dig = c.get("rock", 0) + c.get("hidden", 0)
+    dug = c.get("floor", 0) + c.get("stairs", 0) + c.get("ramp", 0)
+    return to_dig, c.get("open", 0), dug, c.get("building", 0) + c.get("water", 0)
 
 
 def walls_in(elev, x0, x1, y0, y1):
-    t = get("/world-map", {"e": elev, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
-                           "rle": "false", "max_tokens": 3000}, timeout=120)["text"]
-    n = 0
-    for l in t.splitlines():
-        if "|" not in l:
-            continue
-        y, row = l.split("|", 1)
-        try:
-            y = int(y.strip())
-        except ValueError:
-            continue
-        if y0 <= y <= y1:
-            n += row[: (x1 - x0 + 1)].count("#")
-    return n
+    # Glyphs from world_map are PAINTED OVER with overlays (region letters, 'd' for
+    # designation, 'B' for building), so a fogged box can read as zero walls and zero fog.
+    # That is how this script announced DUG COMPLETE after 0s with 161 designations pending.
+    # Survey reports tile categories, not paint - trust it.
+    sv = get("/survey", {"elev": elev, "x0": x0, "y0": y0, "x1": x1, "y1": y1}, timeout=150)
+    c = sv.get("counts", {})
+    return c.get("rock", 0) + c.get("hidden", 0), c.get("open", 0), \
+        c.get("floor", 0) + c.get("stairs", 0) + c.get("ramp", 0)
 
 
 def pending_in(elev, x0, x1, y0, y1):
@@ -144,31 +129,33 @@ def main():
               f"{len(all_xy) - len(tiles)})", flush=True)
         r = post("/send-dig-command", {"designation": a.kind, "locations": tiles})
         print(f"designated {r.get('tiles')}/{len(tiles)} tiles at elev {a.elev} "
-              f"(ui {a.elev-1}) box x{a.x0}-{a.x1} y{a.y0}-{a.y1}", flush=True)
+              "box x{a.x0}-{a.x1} y{a.y0}-{a.y1}", flush=True)
 
     get("/world-cache-reset")
     t0 = time.time()
     last = None
     stall_at = None
     while True:
-        w, fog, floor, other = box_state(*box)
+        to_dig, open_, dug, other = box_state(*box)
+        w, fog, floor = to_dig, open_, dug
         pd = pending_in(*box)
         stamp = int(time.time() - t0)
-        if (w, fog, floor, pd) != last:
-            print(f"[{stamp}s] walls: {w} | fog: {fog} | floors+stairs: {floor} | "
-                  f"pending: {pd}", flush=True)
-            last = (w, fog, floor, pd)
+        if (to_dig, open_, dug, pd) != last:
+            print(f"[{stamp}s] to-dig(rock+fog): {to_dig} | open: {open_} | dug(floor/stair/ramp): "
+                  f"{dug} | pending: {pd}", flush=True)
+            last = (to_dig, open_, dug, pd)
             stall_at = stamp
-        if w == 0 and fog == 0:
-            print(f"DUG COMPLETE after {stamp}s - the box reads as floor/stair, no walls, "
-                  f"no fog ({floor} dug tiles)", flush=True)
+        # Completion is POSITIVE tile state: nothing left to dig AND dug tiles present.
+        if to_dig == 0 and dug > 0:
+            print(f"DUG COMPLETE after {stamp}s - {dug} tiles read as floor/stair/ramp and "
+                  f"nothing in the box is left to dig", flush=True)
             return 0
         if time.time() - t0 > a.timeout:
             print(f"TIMEOUT after {a.timeout}s: walls {w}, pending {pd}. "
                   f"Pending designations = the game has not made this reachable.", flush=True)
             return 2
-        if stall_at is not None and stamp - stall_at > 40 and w > 0 and pd == 0 and stamp > 90:
-            print(f"STALLED at {stamp}s: {w} wall tiles left and nothing designated - "
+        if stall_at is not None and stamp - stall_at > 40 and to_dig > 0 and pd == 0 and stamp > 90:
+            print(f"STALLED at {stamp}s: {to_dig} tiles left to dig and nothing designated - "
                   f"the game cancelled the rest (no access, invalid site, or hazard)", flush=True)
             return 2
         time.sleep(a.every)

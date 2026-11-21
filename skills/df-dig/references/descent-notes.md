@@ -205,3 +205,17 @@ ramp's *usable* tile is at the lower elevation and the slope shows above it; jud
 from one elevation alone will mislead you (mine did: I read `OpenSpace` at in-game 37, x68 and
 concluded the step needed a dug ramp - there was nothing to dig, and the slope was already
 there on the level below).
+
+## Third costume of the same lie: map glyphs are PAINTED OVER
+`dig_run.py` announced "DUG COMPLETE after 0s - walls 0, fog 0" on a box where **161
+designations were pending** and 138 of 174 tiles were fog. Cause: `world_map` renders region
+letters, `d` (designation) and `B` (building) **on top of** the terrain glyph, so a fogged,
+fully-designated box contains no `#` and no `?` in the text. Counting characters in a painted
+view measures the paint.
+
+Fix: the watcher reads `survey` categories (rock / hidden / floor / stairs / ramp / open /
+building / water / already_designated) - tile state, not paint - and completion requires
+**positive** evidence: nothing left to dig **and** dug tiles present. Never "no walls seen".
+Generalization for every tool: a verdict must be computed from a representation that can
+distinguish "empty" from "not shown". Absence in a painted, truncated, windowed, or filtered
+view is never a fact about the world.
