@@ -676,3 +676,25 @@ Lesson for the plugin's own defaults: the monitoring window must cover the
 levels the fort is *working on*, not just the embarking tunnel - so the
 stairwell and any adit are inside `elev0..elev1`, and every face the ledger
 watches joins `monitored_boxes` (the durable ledger keeps them across reloads).
+
+## 22. Acceptance (d) proven live, and the panel's blind chips
+
+The player paused the game; the next briefing header read **`PAUSED`** and the
+payload carried `paused: true, pauseSource: "game-auto-or-player"`, while
+`pauseAuthority: "off"` (the plugin wrote nothing - still zero
+`POST /set-pause-state`). `df_status scope=health` shows the attribution line:
+
+```
+tick 8 | PAUSED | gen 1 | last pause: game-auto-or-player @tick 8
+  pause event @tick 8: paused (game-auto-or-player)
+```
+
+Cadence proved itself in the same payload: `poll` moved **8000 -> 60000** the
+moment the game paused (the observer adapts to `poll_paused_ms`), and the filter
+reported the pause in its headline - plus it noticed `damp_hot` leaving the alert
+list when the designations were cleared.
+
+Panel defect found and fixed (0.1.45): the projection `stateSchema` did not
+declare `poll`, `pauseAuthority` or `filter`, so the folded state dropped them -
+the chips read `poll ?`, `pause ?` and the filter chip never rendered. The
+schema and payload are now asserted in sync by a test (42 checks).
