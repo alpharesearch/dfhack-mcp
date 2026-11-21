@@ -98,3 +98,19 @@ ROUGH/PINK TOURMALINE 5, ROUGH/SARD 3` and ladder `stone 91`. Consequences:
    box reads mostly fog until the miners get to it (`walls 29 | fog 944 | floors+stairs 52 |
    pending 2075`). That is normal - the reveal lags the plan. Do not order more dig than the
    crew can finish, and do not panic at a large pending count: it is a queue, not a failure.
+
+## Order space, not tiles: subtract what is already dug (measured)
+My "110 room grid" at elev 36 (in-game 35) overlapped **the room and tunnel I had already
+dug on that same level**: of 2,240 grid tiles, **51 were already floor/stair** and 2,189 were
+rock. Ordering a grid blindly therefore queued 51 useless dig designations (cleared after the
+fact with NO_DIG) and inflated the room count.
+
+Rules this adds:
+1. **Before ordering a complex, subtract existing dug space** (floor/stair tiles at that
+   elevation, from transitions) **and existing buildings** (stockpiles, furniture) - designating
+   on a floor is wasted labour and designating on a building tile is meaningless.
+2. **Count in rooms, not tiles.** Report "N room slots, M of them overlapping existing space",
+   because that is the unit the player sees and the unit the ladder measures.
+3. **A level accumulates plans.** Every earlier design on that elevation is part of the
+   terrain now - the same lesson as "your copy landed on top of my example", generalized:
+   mirroring, extending and gridding must all read the current dug footprint first.

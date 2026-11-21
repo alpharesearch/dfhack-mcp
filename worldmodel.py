@@ -46,6 +46,11 @@ GAME_Z_OFFSET = 128
 UI_Z_OFFSET = 129
 
 
+def dec_name(b, it):
+    """Cheap item label; the rollup needs a type, not a decode."""
+    return str(getattr(it, "type", "?"))
+
+
 def ui_elev(z: int) -> int:
     """The elevation number the player sees in the map panel for an RPC z."""
     return int(z) - UI_Z_OFFSET          # rpc_z = elevation + GAME_Z_OFFSET on this save
@@ -1254,6 +1259,65 @@ class WorldModel:
                 "reachable": bool(via), "from_component": ref,
                 "access_via": via[:4] or ["none"],
                 "note": "workable from a walkable neighbour in the dwarves' component"}
+
+
+    async def survey(self, elev: int, x0: int, y0: int, x1: int, y1: int) -> dict:
+        """Pre-flight check for a designation box: what is on every tile, and what is safe to
+        order. NEVER designate over stuff - floors, stairs, ramps, buildings, items, and
+        existing designations are not rock, and ordering them wastes labour (on a floor) or is
+        meaningless (on a building). Categories are counted, with samples, so a plan can be
+        filtered before a single designation is sent.
+        """
+        band, _ = await self._stack(min(elev - 6, 30), max(elev + 6, 43))
+        gen = await self._gen()
+        blocks = await self.cache.blocks(elev + GAME_Z_OFFSET, elev + GAME_Z_OFFSET + 1, gen)
+        bld: dict = {}
+        items: dict = {}
+        des: dict = {}
+        for b in blocks:
+            for bb in b.buildings:
+                for xx in range(bb.pos_x_min, bb.pos_x_max + 1):
+                    for yy in range(bb.pos_y_min, bb.pos_y_max + 1):
+                        bld[(xx, yy)] = str(bb.building_type)
+            for it in b.items:
+                pos = getattr(it, "pos", None)
+                if pos is not None:
+                    items.setdefault((int(pos.x), int(pos.y)), []).append(dec_name(b, it))
+            for i, d in enumerate(b.tile_dig_designation):
+                if int(d):
+                    des[(b.map_x + (i % 16), b.map_y + (i // 16))] = int(d)
+        cats: dict = {}
+        samples: dict = {}
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                g = band.get((x, y), {}).get(elev)
+                if g is None or g == "?":
+                    c = "hidden"          # '?' is fog - my first version let it fall to "other"
+                elif (x, y) in bld:
+                    c = "building"
+                elif g == "#":
+                    c = "rock"
+                elif g == "=":
+                    c = "stairs"
+                elif g == "/":
+                    c = "ramp"
+                elif g in ("~",):
+                    c = "water"
+                elif g in (".", "g", "s", "S", "b", "v"):
+                    c = "floor"
+                else:
+                    c = "other"
+                if (x, y) in des:
+                    c = "already_designated"
+                cats[c] = cats.get(c, 0) + 1
+                samples.setdefault(c, []).append((x, y, g, bld.get((x, y)), len(items.get((x, y), []))))
+        safe = cats.get("rock", 0) + cats.get("hidden", 0)
+        blocked = {k: v for k, v in cats.items() if k not in ("rock", "hidden")}
+        return {"elev": elev, "ui_elev": ui_elev(elev + GAME_Z_OFFSET),
+                "box": [x0, y0, x1, y1], "counts": cats,
+                "safe_to_designate": safe, "blocked": blocked,
+                "building_tiles": len(bld), "item_tiles": len(items),
+                "samples": {k: v[:4] for k, v in samples.items()}}
 
 
     async def hazard_map(self, e0: int | None = None, e1: int | None = None) -> dict:

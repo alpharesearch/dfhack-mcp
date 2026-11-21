@@ -966,6 +966,12 @@ async def magma_depth(x: int = Query(...), y: int = Query(...),
     """Distance down to magma from a dig point - the HOT warning as a number. The magma crust sits far below the fort band, so this scans downward in coarse windows and returns the first magma elevation and how many levels below your dig it is."""
     return await world.magma_depth_below(x, y, elev, e_min=e_min, step=step)
 
+@app.get("/survey", operation_id="survey")
+async def survey(elev: int = Query(...), x0: int = Query(...), y0: int = Query(...),
+                 x1: int = Query(...), y1: int = Query(...)):
+    """Pre-flight check before designating a box: what is on every tile. NEVER designate over stuff - floors, stairs, ramps, buildings, items and existing designations are not rock. Returns counts per category, safe_to_designate, the blocked set, and samples, so a plan gets filtered before a single designation is sent."""
+    return await world.survey(elev, x0, y0, x1, y1)
+
 @app.get("/depth-profile", operation_id="depth_profile")
 async def depth_profile(elev: int = Query(..., description="the elevation you plan to dig at"),
                         x0: int = Query(...), x1: int = Query(...),

@@ -129,7 +129,19 @@ def main():
         # band gets worked before the flanks - a courtesy to the pathfinder, not a gate.
         mid = (a.y0 + a.y1) // 2
         ys = sorted(range(a.y0, a.y1 + 1), key=lambda y: abs(y - mid))
-        tiles = [[x, y, a.elev + Z_OFF] for x in range(a.x0, a.x1 + 1) for y in ys]
+        all_xy = [(x, y) for x in range(a.x0, a.x1 + 1) for y in ys]
+        # NEVER designate over stuff: ask the server what is on each tile first and order
+        # only rock and fog. Floors/stairs/ramps/buildings/items/queued designations are
+        # skipped - 92 such tiles were littered on this fort before the rule existed.
+        sv = get("/survey", {"elev": a.elev, "x0": a.x0, "y0": a.y0, "x1": a.x1, "y1": a.y1})
+        samples = sv.get("samples", {})
+        skip = set()
+        for cat in ("floor", "stairs", "ramp", "building", "water", "already_designated", "other"):
+            for x, y, *_ in samples.get(cat, []):
+                skip.add((x, y))
+        tiles = [[x, y, a.elev + Z_OFF] for (x, y) in all_xy if (x, y) not in skip]
+        print(f"survey: {sv['counts']} -> ordering {len(tiles)} of {len(all_xy)} (skipped stuff: "
+              f"{len(all_xy) - len(tiles)})", flush=True)
         r = post("/send-dig-command", {"designation": a.kind, "locations": tiles})
         print(f"designated {r.get('tiles')}/{len(tiles)} tiles at elev {a.elev} "
               f"(ui {a.elev-1}) box x{a.x0}-{a.x1} y{a.y0}-{a.y1}", flush=True)

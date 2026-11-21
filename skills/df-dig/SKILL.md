@@ -41,6 +41,16 @@ Unexplored tiles **accept** designations (measured: 3 tiles at `hidden=True` cam
 dwarves dig it, revealing the map as they go. Do not gate designations on visibility or
 reachability; use those to *explain* a stall.
 
+**Never designate over stuff.** A designation belongs on **rock (or fog)** - not on floors,
+stairs, ramps, buildings, items, or tiles already designated. Ordering a floor wastes a
+miner; ordering a building tile is meaningless. So every designation pass starts with
+`survey?elev&x0&y0&x1&y1`, which counts each tile's category (rock / hidden / floor / stairs /
+ramp / building / water / already_designated) and reports `safe_to_designate` and `blocked`.
+`scripts/dig_run.py` filters through it before ordering. On this fort 92 tiles were littered
+with designations over dug floors and stairs before the rule existed - clean them with NO_DIG.
+Related: count plans **in rooms, not tiles**, and subtract the existing dug footprint first
+(§14 note in references).
+
 `m`-menu semantics (`send_dig_command`): `DEFAULT_DIG`, `UP_DOWN_STAIR_DIG`, `DOWN_STAIR_DIG`,
 `UP_STAIR_DIG`, `RAMP_DIG`, `CHANNEL_DIG`, `NO_DIG` to clear. Locations are `[x, y, z]` with
 `z = elev + 128`, and land **as given** on this build.
