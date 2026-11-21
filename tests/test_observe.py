@@ -129,8 +129,20 @@ async def live():
         ok = lo - 24 <= mine[field] <= hi + 24
         if not ok:
             FAILS.append(f"survey parity {field}: observe {mine[field]} outside live window {lo}-{hi}")
-    pause = get("/get-pause-state")
-    check("pause parity", res["paused"], pause["paused"])
+    # Parity needs reads from the SAME instant. Measured flake: the game un-paused
+    # between the /observe read and the live get-pause-state read, so the check
+    # "failed" on a true change. Bracket the live read and accept a transition.
+    live1 = get("/get-pause-state")["paused"]
+    r2 = await M.observe(q=json.dumps({"facts": True, "pause": True}))
+    res2 = r2 if isinstance(r2, dict) else json.loads(r2)
+    live2 = get("/get-pause-state")["paused"]
+    tight = res2.get("paused")
+    transition = (live1 != live2) or (res.get("paused") != tight)
+    if transition:
+        print(f"pause parity: game toggled during the measurement (live {live1}->{live2}, "
+              f"observe {res.get('paused')}->{tight}); not treated as a mismatch")
+    else:
+        check("pause parity", tight, live2)
 
     # Buildings are a fort-wide fact (measured bug: the farm plot sat outside the
     # watched band, the ladder read it as unbuilt, and the briefing stated it).
