@@ -921,19 +921,21 @@ for _, id in ipairs(want) do
   for _, sp in ipairs(df.global.world.buildings.other.STOCKPILE) do
     if sp.id == tonumber(id) then b = sp break end
   end
-  local rec = {id = tonumber(id), found = 0}
+  local rec = {id = tonumber(id), found = 0, counts = {}, accepts = "", wheelbarrows = -1, barrels = -1, bins = -1}
   if b ~= nil then
-    rec.found = 1; rec.x0 = b.x1; rec.x1 = b.x2; rec.y0 = b.y1; rec.y1 = b.y2
-    rec.elev = b.z - 129
+    rec.found = 1
+    -- One pile with an unreadable field must not kill the whole probe (measured:
+    -- the pile probe printed NO rows, and every pile then read NO DATA).
+    pcall(function() rec.x0 = b.x1; rec.x1 = b.x2; rec.y0 = b.y1; rec.y1 = b.y2; rec.elev = b.z - 129 end)
     local on = {}
     for _, c in ipairs(CATS) do
-      if b.settings.flags[c] == true then on[#on + 1] = c end
+      local ok, v = pcall(function() return b.settings.flags[c] end)
+      if ok and v == true then on[#on + 1] = c end
     end
     rec.accepts = table.concat(on, ",")
-    rec.wheelbarrows = b.storage.max_wheelbarrows
-    rec.barrels = b.storage.max_barrels
-    rec.bins = b.storage.max_bins
-    rec.counts = {}
+    pcall(function() rec.wheelbarrows = b.storage.max_wheelbarrows end)
+    pcall(function() rec.barrels = b.storage.max_barrels end)
+    pcall(function() rec.bins = b.storage.max_bins end)
   end
   piles[#piles + 1] = rec
 end
