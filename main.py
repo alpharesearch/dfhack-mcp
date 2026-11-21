@@ -985,30 +985,59 @@ def observe_pile_lua(pile_ids: list[int]) -> str:
 
 
 OBSERVE_PICKS_LUA = """
--- Picks are WEAPON items with subtype id ITEM_WEAPON_PICK (measured 53.17-r1:
--- the TOOL group holds wheelbarrows/scrolls, NOT picks).
-local in_play = 0
-local total = 0
+-- One probe for the status-bar facts (a Lua round-trip costs ~0.6 s, so the
+-- observer asks for everything it can get in a single call, deep ticks only).
+local picks = 0
 for _, it in ipairs(df.global.world.items.other.ANY_WEAPON) do
   local ok, key = pcall(function() return tostring(it.subtype.id) end)
   if ok and key == "ITEM_WEAPON_PICK" then
-    total = total + 1
+    picks = picks + 1
     local okp, pos = pcall(function() return it.pos end)
-    if okp and pos ~= nil then in_play = in_play + 1 end
   end
 end
-print("PICKS " .. in_play .. " TOTAL " .. total)
+local ok_site, site = pcall(function()
+  local s = dfhack.world.getCurrentSite()
+  return s == nil and "none" or tostring(s.id)
+end)
+local ok_date, date = pcall(function()
+  return dfhack.world.ReadCurrentYear() .. "-" .. dfhack.world.ReadCurrentMonth() .. "-" .. dfhack.world.ReadCurrentDay()
+end)
+local ok_seeds, seeds = pcall(function() return #df.global.world.items.other.SEEDS end)
+print("OBS2 PICKS " .. picks .. " SITE " .. (ok_site and site or "ERR") .. " DATE " .. (ok_date and date or "ERR") .. " SEEDS " .. (ok_seeds and seeds or "ERR"))
 """
 
 
-def observe_parse_picks(out: str):
+def observe_parse_obs2(out: str) -> dict:
+    """Parse the combined status-bar probe line. Missing fields stay None (labelled)."""
     for line in out.splitlines():
-        if line.strip().startswith("PICKS "):
-            try:
-                return int(line.split()[1])
-            except (IndexError, ValueError):
+        line = line.strip()
+        if not line.startswith("OBS2 "):
+            continue
+        parts = line.split()[1:]
+        kv: dict = {}
+        i = 0
+        while i + 1 < len(parts):
+            kv[parts[i]] = parts[i + 1]
+            i += 2
+        def num_of(key: str):
+            v = kv.get(key)
+            if v is None or v == "ERR":
                 return None
-    return None
+            try:
+                return int(v)
+            except ValueError:
+                return None
+        date = kv.get("DATE")
+        parsed = {"picks": num_of("PICKS"), "site_id": num_of("SITE"), "seeds": num_of("SEEDS")}
+        if date and date != "ERR" and len(date.split("-")) == 3:
+            y, m, d = date.split("-")
+            parsed["date"] = {"year": int(y), "season": int(m), "day": int(d)}
+        else:
+            parsed["date"] = None
+        if kv.get("SITE") == "none":
+            parsed["site_id"] = None
+        return parsed
+    return {"picks": None, "site_id": None, "seeds": None, "date": None}
 
 
 def observe_parse_piles(out: str) -> dict:
@@ -1244,15 +1273,15 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
         out["shafts"] = []
         notes.append("no shafts requested: monitored columns not checked")
 
-    picks = None
-    if req.get("picks", False):
+    obs2 = {"picks": None, "site_id": None, "seeds": None, "date": None}
+    if req.get("status_probe", False):
         try:
-            picks = observe_parse_picks(await LO._lua(OBSERVE_PICKS_LUA, settle=OBSERVE_LUA_SETTLE))
+            obs2 = observe_parse_obs2(await LO._lua(OBSERVE_PICKS_LUA, settle=OBSERVE_LUA_SETTLE))
         except LO.LuaOpError as e:
-            notes.append(f"picks probe unavailable: {e}")
-    out["picks"] = picks
-    if picks is None:
-        notes.append("picks probe produced no number: pick count UNKNOWN (not 0)")
+            notes.append(f"status probe unavailable: {e}")
+    out["status"] = obs2
+    if obs2["picks"] is None:
+        notes.append("status probe produced no pick count: picks UNKNOWN (not 0)")
 
     pile_ids = [int(i) for i in req.get("pile_ids", [])[:16]]
     if pile_ids:

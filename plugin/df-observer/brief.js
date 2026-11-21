@@ -34,9 +34,12 @@ function factsLine(payload) {
   const f = payload.facts
   if (!f) return 'FORT BRIEFING | facts: NO DATA this tick (labelled, not a fact)'
   const popText = f.dwarves == null ? `pop ${num(f.pop)} (dwarves ?)` : `dwarves ${num(f.dwarves)} (units ${num(f.pop)})`
-  const parts = [popText, `miners ${num(f.miners)} of ${picksText(f)} picks`,
-    `food ${num(f.food)}`, `drink ${num(f.drink)}`, `wood ${num(f.wood)}`, `stone ${num(f.stone)}`,
-    `metal ${num(f.metal)}`, `pending dig ${num(f.pending_dig)}`]
+  const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter']
+  const dateText = f.date ? `Y${f.date.year} ${(SEASONS[f.date.season] ?? '?').slice(0, 3)} d${f.date.day}` : null
+  const seedsText = f.seeds == null ? null : `seeds ${num(f.seeds)}`
+  const parts = [dateText, popText, `miners ${num(f.miners)} of ${picksText(f)} picks`,
+    `food ${num(f.food)}`, `drink ${num(f.drink)}`, seedsText, `wood ${num(f.wood)}`, `stone ${num(f.stone)}`,
+    `metal ${num(f.metal)}`, `pending dig ${num(f.pending_dig)}`].filter(Boolean)
   const state = payload.online === false ? 'GAME OFFLINE' : (payload.paused ? 'PAUSED' : 'running')
   const who = payload.pauseSource ? ` (last pause: ${payload.pauseSource}${payload.pauseAtTick != null ? ` @tick ${payload.pauseAtTick}` : ''})` : ''
   return `FORT BRIEFING (in-game elevations) | ${state}${payload.paused ? who : ''} | ${parts.join(' | ')}`
@@ -154,6 +157,7 @@ const SHRINK_LEVELS = [
     todos: (p.todos ?? []).slice(0, 20).map(shrinkCompactTodo),
     alerts: (p.alerts ?? []).slice(0, 8).map(shrinkCompactAlert) }),
   (p) => ({ ...p, facts: p.facts ? { pop: p.facts.pop, dwarves: p.facts.dwarves, miners: p.facts.miners, picks: p.facts.picks,
+    seeds: p.facts.seeds, date: p.facts.date, site_id: p.facts.site_id,
     pending_dig: p.facts.pending_dig } : null, piles: (p.piles ?? []).slice(0, 4),
     boxes: (p.boxes ?? []).slice(0, 6),
     next: p.next ? { id: p.next.id, title: p.next.title,

@@ -387,8 +387,8 @@ export default class DFObserver extends TypertRemoteService {
     }
     if (isDeep) {
       request.rungs = true
-      // The picks probe costs a Lua round-trip: pay for it on deep ticks only.
-      request.picks = true
+      // The status probe (picks/site/date/seeds) costs a Lua round-trip: deep ticks only.
+      request.status_probe = true
       request.pile_ids = cfg.pile_ids
       request.reports = cfg.reports
       request.crashlog_files = cfg.crashlog_files

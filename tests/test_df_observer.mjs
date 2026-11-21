@@ -435,6 +435,40 @@ test('tools: bounded outputs, add/done/ack embed foldable payloads', async () =>
 })
 
 // ---------------------------------------------------------------------------
+// status probe (the game's own status bar): date, seeds, site, picks
+test('status probe: deep merge into facts, header carries date and seeds', () => {
+  const model = freshModel()
+  model.ingestFast({
+    paused: false, generation: 1,
+    facts: { pop: 81, dwarves: 21, miners: 2, food: 11, drink: 0, wood: 0, stone: 136, metal: 0, barrels: 14,
+      pending_dig: 0, underground_floors: 4, water_tiles: 0, magma_tiles: 0 },
+    buildings: [], boxes: [], shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [],
+  })
+  model.ingestDeep({ rungs: [], next: null, piles: [], reports: [], crashlog: null, notes: [],
+    status: { picks: 3, site_id: 677, seeds: 76, date: { year: 100, season: 3, day: 28 } } })
+  const f = model.payload().facts
+  assert.equal(f.picks, 3, 'picks from the probe')
+  assert.equal(f.seeds, 76, 'seeds from the probe')
+  assert.equal(f.site_id, 677, 'site id from the probe')
+  assert.deepEqual(f.date, { year: 100, season: 3, day: 28 }, 'date from the probe')
+  const brief = buildBriefing(model.payload(), { maxTokens: 700 })
+  assert.match(brief.text, /Y100/, 'header carries the year')
+  assert.match(brief.text, /d28/, 'header carries the day')
+  assert.match(brief.text, /seeds 76/, 'header carries seeds')
+  assert.match(brief.text, /dwarves 21 \(units 81\)/, 'dwarf number, units labelled')
+  // no probe this tick: fields stay null, header stays honest
+  const bare = freshModel()
+  bare.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 5, dwarves: 5, miners: 1, food: 1, drink: 1, wood: 0, stone: 0, metal: 0, barrels: 0, pending_dig: 0 },
+    boxes: [], shafts: [], warnings: null, notes: [] })
+  bare.ingestDeep({ rungs: [], next: null, piles: [], reports: [], crashlog: null, notes: [] })
+  const bf = bare.payload().facts
+  assert.equal(bf.seeds, null, 'no probe -> seeds null, not 0')
+  assert.equal(bf.date, null, 'no probe -> date null')
+  return 'status probe merges into facts (picks/site/date/seeds); header shows them; absent probe stays null'
+})
+
+// ---------------------------------------------------------------------------
 // population drop alert
 test('pop_drop: fires with the numbers, baseline-first never fires', () => {
   const model = freshModel()

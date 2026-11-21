@@ -344,6 +344,15 @@ export class FortModel {
   /** Deep tick: rungs, piles, reports, crashlog (the 60 s cadence). */
   ingestDeep(data) {
     this.lastDeepTick = this.tick
+    // The status probe (one Lua round-trip, deep ticks only): picks, site id,
+    // date, seeds. An absent probe leaves the fields null - never 0.
+    const st = data.status ?? (data.picks != null ? { picks: data.picks } : null)
+    if (st && this.facts) {
+      if (st.picks != null) this.facts.picks = st.picks
+      if (st.site_id != null) this.facts.site_id = st.site_id
+      if (st.seeds != null) this.facts.seeds = st.seeds
+      if (st.date != null) this.facts.date = st.date
+    }
     if (Array.isArray(data.rungs)) { this.rungs = data.rungs }
     if (data.next !== undefined) this.next = data.next
     if (Array.isArray(data.piles)) this.piles = data.piles
@@ -665,6 +674,8 @@ export class FortModel {
       filter: this.filterState ?? null,
       facts: this.facts ? {
         pop: num(this.facts.pop), dwarves: this.facts.dwarves == null ? null : num(this.facts.dwarves),
+        seeds: this.facts.seeds == null ? null : num(this.facts.seeds),
+        site_id: this.facts.site_id ?? null, date: this.facts.date ?? null,
         miners: num(this.facts.miners),
         picks: this.facts.picks === null || this.facts.picks === undefined ? null : num(this.facts.picks),
         food: num(this.facts.food), drink: num(this.facts.drink), wood: num(this.facts.wood),
