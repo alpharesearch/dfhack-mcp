@@ -914,3 +914,15 @@ but its **promise never settles** for the client half, so `/df-panel` cannot dri
 the panel; the page says `panel data: wire only - ... no promise resolution in 15s`
 instead of pretending to be pending. The `/df-panel` command stays registered:
 agents can call it (it serves `panelPayload`), the client cannot await it.
+
+Measured caps for the FILTERED briefing on the live fort (18-row ledger, level-8 wire):
+
+| cap | tokens | panel gets |
+|---|---|---|
+| 340 | 288 | ids+states only (the cryptic rows) |
+| 360 | 346 | ids+states only - titles cost +50, prose floor is ~275 |
+| **420** | **407** | **titles on all 7 open rows** |
+| 460 | 437 | titles **and** the designation scan |
+
+The floor is the filter's own prose, so these caps are the honest price list for a
+readable panel: `filter_briefing_max_tokens: 420` in this profile.
