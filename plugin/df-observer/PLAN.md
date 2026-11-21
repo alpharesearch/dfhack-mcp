@@ -827,3 +827,34 @@ Later in the same session the player ordered a designation wave (warnings
 covered and the remaining clusters (the 4-tile shaft levels at elev22-24) are
 below the threshold. That is the intended behaviour: it names *unmeasured* work,
 not work in progress.
+
+## 28. The GUI moved to the right Sidebar (player request, 0.1.66)
+
+The panel is now a **right-Sidebar tab** (`kind: 'df-observer'`), opened from the
+guide page or by the **⤢** launcher on the dock chip; the dock keeps the compact
+chip (health/gen/tick/poll/pause + `▸` expand) as the glance surface.
+
+How a plugin gets a right-Sidebar tab (learned from
+`@deepseek-ai/dsh-client-ui-sidebar-browser/src/client/index.ts`, the shipped
+Browser tab, and the `SidebarRightTabDefinition` contract):
+
+1. `ctx.sidebarRightTabs.register({ id, kind, multiple, priority: 'extension', title, guide: [...] })`
+   - the tab *type*; `title` is captured into the layout record at open time;
+   - `guide: [{ id, order, title, description }]` puts an entry on the guide page.
+2. `ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({ name, key: id, locale }, Body))`
+   - the keyed body seat, `key` = the implementation id (not the kind).
+3. `ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({ name, key: id }, Title))`.
+4. Open it from a component: `ctx.sidebarRight.openTabIn(sessionId, kind)`
+   (`openTab(kind)` for the focused pane).
+
+Faces reached with the **lazy** `ctx.inject(['sidebarRight','sidebarRightTabs'], scope => …)`:
+the static `inject` list stays `['slots','uiConversation','remote','remote.commands','locale']`.
+A Context face named in the static list that cannot resolve aborts the whole client
+module row - the same class measured earlier with `remote.dfObserver` - so the panel
+still appears even where the right Sidebar package is absent.
+
+Verified in the live GUI (screenshot `right-panel-1.png`): tab **Fort observer**
+with `paused · gen 1 · tick 3 · poll 60s · pause off`, TO-DOS (11 open, 19 done) and
+ALERTS with coordinates `A27 crew [y -> Craftsdwarf (Still); …]`, `A26 damp_hot
+[x43-44 y121-122 elev22-24]` and Ack buttons - no literal `undefined` (0.1.64),
+sections render as their data arrives.
