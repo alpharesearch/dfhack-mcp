@@ -1060,7 +1060,7 @@ class WorldModel:
         water/magma, hidden, dig designation, construction material, item count, and the
         buildings whose footprint covers it. RFR's per-tile arrays are row-major within a
         block (index = (y%16)*16 + (x%16)); block origins are tile coords in map_x/map_y."""
-        z = int(elev) + self.z_offset
+        z = int(elev) + GAME_Z_OFFSET        # module constant: WorldModel has no z_offset
         gen = await self._gen()
         dec = await self._dec(gen)
         blocks = await self.cache.blocks(z, z + 1, gen, force=force)
@@ -1074,9 +1074,11 @@ class WorldModel:
                 tid = b.tiles[i]
                 out["tiletype"] = tid
                 out["tiletype_name"] = dec.tile_name(tid)
-                cls = dec.tile_class(tid)
-                out["class"] = cls[0] if cls else "?"
-                out["glyph"] = cls[1] if cls and len(cls) > 1 else "?"
+                cls = dec.tile_class(tid)          # TileClass, not a tuple
+                out["class"] = cls.key
+                out["glyph"] = cls.glyph
+                out["solid"] = cls.solid
+                out["walkable"] = cls.walkable
             if i < len(b.water):
                 out["water"] = b.water[i]
             if i < len(b.magma):
@@ -1089,22 +1091,32 @@ class WorldModel:
                     out["dig_designation"] = dname
             if i < len(b.construction_items):
                 ci = b.construction_items[i]
-                if ci.type or ci.index:
-                    out["construction"] = dec.mat_name(ci.type, ci.index)
-            out["items_here"] = sum(1 for it in b.items
-                                    if int(getattr(it, "x", -1)) == x and int(getattr(it, "y", -1)) == y)
-            here = []
+                if ci.mat_type or ci.mat_index:
+                    out["construction"] = dec.material_name(ci)
+            here_items = []
+            for it in b.items:
+                pos = getattr(it, "pos", None)
+                if pos is not None and int(pos.x) == x and int(pos.y) == y and int(pos.z) == z:
+                    here_items.append(dec.item_name(it.material))
+            if here_items:
+                out["items_here"] = here_items[:8]
+                out["items_here_count"] = len(here_items)
+            on_tile = []
             for bd in b.buildings:
-                bxx, byy = int(getattr(bd, "x", -9)), int(getattr(bd, "y", -9))
-                w = int(getattr(bd, "width", 1)) or 1
-                h = int(getattr(bd, "height", 1)) or 1
-                if bxx <= x < bxx + w and byy <= y < byy + h:
-                    bt = getattr(bd, "build_type", None)
-                    here.append(dec.building_name(int(getattr(bt, "building_type", 0)),
-                                                  int(getattr(bt, "building_subtype", -1)),
-                                                  int(getattr(bt, "building_custom", -1))))
-            if here:
-                out["buildings"] = here
+                xmin, xmax = int(bd.pos_x_min), int(bd.pos_x_max)
+                ymin, ymax = int(bd.pos_y_min), int(bd.pos_y_max)
+                if xmin <= x <= xmax and ymin <= y <= ymax:
+                    bt = getattr(bd, "building_type", None)
+                    entry = {"name": dec.building_name(bt) if bt is not None else "building?",
+                             "index": int(bd.index),
+                             "footprint": [xmin, ymin, xmax, ymax]}
+                    if bd.material.mat_type or bd.material.mat_index:
+                        entry["material"] = dec.material_name(bd.material)
+                    if bd.is_room:
+                        entry["is_room"] = True
+                    on_tile.append(entry)
+            if on_tile:
+                out["buildings"] = on_tile
             return out
         return {"x": x, "y": y, "elev": int(elev), "error": "block not in cache"}
 

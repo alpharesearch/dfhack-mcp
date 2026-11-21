@@ -86,8 +86,18 @@ async def _lua(expr: str, settle: float = 0.5) -> str:
 
 
 def _one(out: str) -> str:
-    lines = [l for l in out.splitlines() if l.strip()]
-    return lines[-1].strip() if lines else out
+    """Return OUR status line.
+
+    DFHack appends a Lua stack traceback after the printed text whenever the chunk
+    raised, so the *last* line is a traceback frame - parsing it made a failed
+    constructBuilding look like a success with game_type "?" (observed live). The
+    status line is found by prefix, and only then do we fall back to the last line.
+    """
+    lines = [l.strip() for l in out.splitlines() if l.strip()]
+    for l in lines:
+        if l.startswith("OK ") or l.startswith("FAIL ") or l in ("OK", "FAIL"):
+            return l
+    return lines[-1] if lines else out
 
 
 def resolve_building(dec, name: str):
@@ -129,9 +139,20 @@ async def place_building(dec, name: str, x: int, y: int, elev: int,
     if abstract:
         extra = "abstract=true, "
     elif items:
-        joined = ", ".join(str(int(i)) for i in items)
-        extra = f"items={{{joined}}}, "
+        # Measured: passing raw ids fails in constructWithItems with
+        # "Cannot write field vector<item*>.0: incompatible pointer type" - the list
+        # must hold item objects, so resolve each id with dfhack.items.findItem.
+        ids = ", ".join(str(int(i)) for i in items)
+        extra = f"items=resolve_items({{{ids}}}), "
     expr = f'''
+local function resolve_items(ids)
+  local out = {{}}
+  for _, id in ipairs(ids) do
+    local ok, it = pcall(function() return dfhack.items.findItem(id) end)
+    if ok and it then out[#out + 1] = it end
+  end
+  return out
+end
 local b = nil
 local ok, res = pcall(function()
   return dfhack.buildings.constructBuilding{{type={bt}, subtype={sub}, custom={cus},
