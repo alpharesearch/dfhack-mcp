@@ -81,3 +81,74 @@ unparseable, i.e. unknown. `watch_dig.py` and `watch_building.py` are the same p
 - Reachability is ours to compute (`reach-map`, `dig_reachable`): `getWalkableGroup` is
   uncallable over RPC, `canWalkBetween` throws for adjacent stair tiles and lies for
   same-level grass.
+## 9. Dig rates measured on this save (plan time with these, not guesses)
+| Crew | Work | Wall-clock |
+|---|---|---|
+| 4 miners | 37 tiles (tunnel band + chamber) | **61 s** |
+| 6 miners | 66 tiles (17x3 tunnel extension + 6x6 room) | **~120 s** |
+| 6 miners | 2 stair tiles per level, 5 levels (shaft 39 -> 35) | ~2 min |
+
+So ~0.5-0.6 tiles per miner per minute. A 60-tile room is minutes, not hours - **do not
+rush it with dig-now; the game is fast enough and the labour is the point**. Migrant waves
+change the crew mid-plan, so re-read `miners` each phase.
+
+**Picks are the real gate on miner count**: the embark ships 3 picks, so more than ~3
+simultaneous miners get starved of tools, and picks wear out - the ladder's metal/forge
+rungs are the long-term fix. Assign `MINE` broadly, expect the effective crew to be
+pick-limited.
+
+## 10. Designation kinds, what they are for, and their acceptance facts
+| Kind (`m`-menu) | Use | Measured behaviour |
+|---|---|---|
+| `DEFAULT_DIG` | tunnels, rooms, adits | accepted in fog; 37/57 then 21/21 accepted on this map; unexplored ones land and queue |
+| `UP_DOWN_STAIR_DIG` | shafts through a level | accepted 4/4 and 2/2; digs `StoneStairUD` and reveals the level below |
+| `DOWN_STAIR_DIG` / `UP_STAIR_DIG` | shaft top / bottom | top = down-stairs, bottom = up-stairs, middle = up-down |
+| `RAMP_DIG` | slopes: wagon paths, water work, stair-adjacent floors | needed for any 3-wide wagon route; ramps link z to z+1 at the same column |
+| `CHANNEL_DIG` | 3x3 pit: entrance cut, cistern, drop shafts | channel = open above and below; the ladder suggests it for a flat-ground entrance |
+| `NO_DIG` | clear a box | the fix for a damp line (cleared 152 tiles) and for designations on the wagon (30) |
+
+There is **no remove-boulder kind** in this RPC enum: `SendDigCommand` exposes only the
+seven above. Boulder removal is a separate designation bit (`remove_boulder`), so it needs
+a typed op (planned) - meanwhile boulders come to you as **mining output**: digging the
+elev-39 band yielded 8 boulders, and `stone` climbed 0 -> 8 -> 17 -> 28 -> 53 as digging
+proceeded. Expect a stone stockpile and a mason, not a quarry designation.
+
+## 11. Reading strata from the dig (geology you can trust)
+- Wall/floor **names are the stratum**: `StoneWall`/`StoneFloor*` = common stone, `MineralWall`/
+  `MineralStairUD` = **mineral vein band** (our shaft passed into minerals at elev 36 - that
+  is your future smelting feed), `SoilFloor*`/`GrassDryFloor*` = soil/grass (farm plots),
+  `MFloor*`/`MineralFloor*` = mineral floor.
+- Material counts after digging tell you the yield; `BOULDER/SANDSTONE`-type rollups in
+  `world-objects` are the boulder ledger.
+- The **aquifer band** is a stratum fact (elev 33-34 here), the **surface elevation** is a
+  per-column fact (`surface_map`), and the two together decide where a legal tunnel level is.
+
+## 12. Water work (the flood you must plan around)
+- Rivers/lakes appear as standing `water` at the surface (this map: elev 35-36, x54-186 -
+  **east of** our fort; tunnelling west is safe, tunnelling east into it is not).
+- `hazards` counts a tile DAMP when its column carries aquifer or water at/above the dig
+  level; that is the game's designation-time warning, tile by tile.
+- Rules: never breach water from above (channel into it, and the fort floods); a cistern is
+  `CHANNEL_DIG` under water; pumps/mechanisms are a much longer chain (metal + mechanics),
+  so **route around** first, then under/over deliberately.
+- After any water breach, `hazards` and `world-map` show `~` spreading - treat new water
+  tiles as an incident, not scenery.
+
+## 13. Cave-ins and support - NOT yet verified here
+Large open mined areas can collapse; the usual player mitigation is support (a pillar, a
+wall, built floors) inside big halls. **We have not measured the threshold on this build**,
+so: keep rooms at the sizes the ladder recommends (6x6, 5x5 soil room), leave a support
+tile in larger halls, and test the rule before trusting it. Do not cite a number you have
+not observed.
+
+## 14. Sequence for a new fort (the ladder, in dig terms)
+1. Entrance: 3-wide tunnel with depth >=2, dry, from the wagon side - `tunnel-sites`, then
+   designate in fog.
+2. Shaft: up-down stairs down 2-4 levels from the entrance (one revealed level at a time).
+3. General stockpile (exclude corpses/refuse/stone/gems/wood) in the first room.
+4. Meeting area on the 2nd level below ground (zone, 5x5-7x7) - not at the entrance.
+5. Refuse pile OUTSIDE on the surface (miasma rule).
+6. Farm: 5x5 room on SOIL (3x3 plot) - find soil by the stratum names, depth >=2.
+7. Workshops/furniture need a stone+wood economy: hauling routes, then mason/carpenter.
+Each step ends with a **re-survey**: `world-cache-reset` + `depth-profile` + `hazards` on
+the new box, because the dig revealed ground you can now plan on.
