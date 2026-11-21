@@ -743,6 +743,45 @@ test('water growth in the band raises the whitelisted water alert', () => {
   return 'band water growth alerts and clears'
 })
 
+test('stall advice names the aquifer when the stalled face sits in one', () => {
+  const model = freshModel()
+  const box = { elev: 25, box: [43, 121, 44, 122], to_dig: 4, dug: 0, pending: 0 }
+  const ingest = () => model.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 20, drink: 0, wood: 0, stone: 141, metal: 0, barrels: 18, pending_dig: 103 },
+    buildings: [], boxes: [{ ...box }],
+    shafts: [{ x: 43, y: 121, aquifer_elevs: [23, 24, 25], water_elevs: [], magma_elevs: [] },
+      { x: 44, y: 121, aquifer_elevs: [23, 24, 25], water_elevs: [], magma_elevs: [] }],
+    warnings: { designated_tiles: 4, damp_tiles: 4, hot_tiles: 0 }, notes: [] })
+  ingest(); model.evaluate(model.cfg)
+  let hit = null
+  for (let i = 1; i <= model.cfg.stall_ticks; i += 1) {
+    ingest()
+    hit = model.evaluate(model.cfg).find((a) => a.kind === 'dig_stalled' && a.evidence.includes('elev25'))
+  }
+  assert.ok(hit, 'the idle face raises the stall alert')
+  // The game's DAMP rule is an aquifer layer at/ABOVE the dig level: for the
+  // elev25 face that is elev 25 (23-24 are below it and are not the flood risk).
+  assert.match(hit.suggested, /aquifer at elev 25 in this box's monitored columns/, hit.suggested)
+  assert.ok(!/23\/24/.test(hit.suggested), 'layers below the face are not named as the flood risk')
+  assert.match(hit.suggested, /clear the DAMP designations/, 'the advice orders the safe step first')
+  // a dry face keeps the plain advice
+  const dry = freshModel()
+  const dryBox = { elev: 35, box: [45, 121, 66, 122], to_dig: 20, dug: 24, pending: 0 }
+  const dryIngest = () => dry.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 20, drink: 0, wood: 0, stone: 141, metal: 0, barrels: 18, pending_dig: 0 },
+    buildings: [], boxes: [{ ...dryBox }],
+    shafts: [{ x: 50, y: 121, aquifer_elevs: [23, 24, 25], water_elevs: [], magma_elevs: [] }],
+    warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [] })
+  dryIngest(); dry.evaluate(dry.cfg)
+  let h2 = null
+  for (let i = 1; i <= dry.cfg.stall_ticks; i += 1) {
+    dryIngest()
+    h2 = dry.evaluate(dry.cfg).find((a) => a.kind === 'dig_stalled' && a.evidence.includes('elev35'))
+  }
+  assert.ok(h2 && !/aquifer at elev/.test(h2.suggested), 'a face with no aquifer column in its box keeps the plain advice')
+  return 'stall advice carries the shaft hazard, only where it applies'
+})
+
 test('idle-plan stall: pending 0 with dug frozen raises dig_stalled after stall_ticks', () => {
   const model = freshModel()
   const box = { elev: 35, box: [45, 121, 66, 122], to_dig: 44, dug: 0, pending: 0 }

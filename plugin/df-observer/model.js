@@ -37,6 +37,21 @@ export const STATE_FIELDS = [
   'overload', 'briefings',
 ]
 
+/** If any monitored column inside this box has the aquifer at/below the face's
+ * elevation, name it - a stall is not a licence to dig into water. */
+function faceAquiferNote(shafts, box) {
+  const [x0, y0, x1, y1, elev] = [box.box[0], box.box[1], box.box[2], box.box[3], box.elev]
+  const inBox = (shafts ?? []).filter((s) => s.x >= x0 && s.x <= x1 && s.y >= y0 && s.y <= y1)
+  // The game's own DAMP rule (measured in main.py): an aquifer layer at/ABOVE the
+  // dig elevation is the flood risk - in-game elevations increase upward, so the
+  // comparison is >=, not <=.
+  const hits = inBox.filter((s) => (s.aquifer_elevs ?? []).some((e) => Number(e) >= Number(elev)))
+  if (!hits.length) return null
+  const elevs = [...new Set(hits.flatMap((s) => s.aquifer_elevs.map(Number)))].sort((a, b) => a - b)
+  const atOrAbove = elevs.filter((e) => e >= Number(elev))
+  return `aquifer at elev ${atOrAbove.join('/') || elevs.join('/')} in this box's monitored columns (x${hits.map((s) => s.x).join(',')} y${hits.map((s) => s.y).join(',')}): water follows the dig - clear the DAMP designations / drain before queueing here (df-dig §1, §4)`
+}
+
 function num(value, fallback = 0) {
   const n = Number(value)
   return Number.isFinite(n) ? n : fallback
@@ -554,10 +569,14 @@ export class FortModel {
             : `${coord}: to_dig ${box.to_dig}, pending 0, dug ${box.dug} unchanged for ${stagnant} reads - nothing queued and nothing dug (the plan is idle at this face)`
           this.digEvents.push({ tick: this.tick, kind: 'stalled', box: box.box, elev: box.elev, evidence: ev })
           this.trim('digEvents', 40)
+          const hazard = faceAquiferNote(this.shafts, box)
           raise('dig_stalled', `stall-${key}`, ev, coord,
-            drained
+            (drained
               ? 'no access to the rest: read dig_reachable from a dwarf-occupied tile, order the band middle-first (df-dig §5)'
               : 'queue the next face: survey it, designate ROCK tiles only (never over floors/stairs), middle-first so each dug tile is the next access (df-dig §5)')
+              // Measured: the generic advice pushed a play agent to queue the
+              // elev25 face, which the shaft data says is INSIDE the aquifer.
+              + (hazard ? ` - ${hazard}` : ''))
         }
         this.lastBoxState.set(key, { ...prev, to_dig: box.to_dig, dug: box.dug, pending: box.pending, stagnant })
       } else {
