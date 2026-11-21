@@ -78,11 +78,28 @@ def main():
     ap.add_argument("--min-depth", type=int, default=2)
     ap.add_argument("--every", type=int, default=15)
     ap.add_argument("--per-step", type=int, default=900)
+    ap.add_argument("--reveal-timeout", type=int, default=300,
+                    help="how long to wait for the next column to become visible")
     a = ap.parse_args()
     dx, dy = STEP[a.dir]
     x = a.x
     built = 0
     for step in range(a.len):
+        # A dug tile is discovered, but its neighbours become visible only when a dwarf
+        # walks/looks there - so the next column can lag the dig by a few ticks. Wait for
+        # it instead of treating the lag as a dead end.
+        tw = time.time()
+        while True:
+            states = [get("/tile-at", {"x": x, "y": y, "elev": a.elev}) for y in range(a.y0, a.y1 + 1)]
+            if all(not st.get("hidden") for st in states):
+                break
+            if time.time() - tw > a.reveal_timeout:
+                print(f"step {step+1} at x{x}: still unexplored after {a.reveal_timeout}s - "
+                      f"the miners have not looked that way; open a wider heading or "
+                      f"designate the visible tile only", flush=True)
+                return 3
+            time.sleep(10)
+            get("/world-cache-reset")
         tiles = [[x, y, a.elev + Z_OFF] for y in range(a.y0, a.y1 + 1)]
         bad = None
         for tx, ty, _ in tiles:
