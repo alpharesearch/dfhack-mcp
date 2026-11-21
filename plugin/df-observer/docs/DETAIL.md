@@ -124,4 +124,6 @@ config object, so copy the keys you change.
   wheelbarrows/scrolls); the picks probe reads that.
 
 - Reinstalling a linked bundle at the SAME version reuses the loaded module in a
-  live profile: bump `version` when the code changes (measured 0.1.0 -> 0.1.1).
+  live profile; bumping `version` helps (measured 0.1.0 -> 0.1.1) but is NOT
+  dependable (measured 0.1.18 -> 0.1.20 kept running 0.1.18). A Host restart is
+  the sure way to load new code for a linked bundle.

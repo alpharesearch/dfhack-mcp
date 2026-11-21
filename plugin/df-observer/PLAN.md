@@ -348,11 +348,23 @@ the installed web profile, that path does not exist for third-party bundles:
   briefing cadence (`inject_max_spacing_ms`), not per poll - by design, since
   the log is the truth the panel may show.
 
-Staleness (measured): a linked reinstall of the SAME version reuses the loaded
-module in a live profile - the reinstall reports `application: applied` and the
-plugin re-activates, but the code is the old module. Each deploy that changes
-code must therefore bump `version` (0.1.0 -> 0.1.1 measured: after the bump the
-new command registered and the new payload fields appeared).
+Staleness (measured, twice, in both directions):
+
+- A linked reinstall at the SAME version reuses the loaded module (`application:
+  applied`, plugin re-activates, code stays old). Bumping `version` fixed it
+  0.1.0 -> 0.1.1 (new command registered, new payload fields appeared).
+- It is NOT reliable: after 0.1.18 -> 0.1.19 -> 0.1.20 the running code was
+  still 0.1.18 - proved by the plugin's own note quoting the retired domain name
+  `dfObserver` (0.1.19+ sends `df_observer`). pnpm says "Already up to date"
+  for a link spec, and the live recomposition reused the module.
+- Therefore: for a linked bundle, a **Host restart** is the dependable way to
+  load new code. `plugin_manager` (which records the bundle version) is the
+  supported install route; the CLI `dsh plugin --profile web add <dir>` writes
+  the dependency but carries no version metadata.
+- Measured failure mode of the CLI + manager combo: `remove` then a failed
+  install leaves `@local/df-observer` OUT of the profile's `package.json`
+  dependencies - the plugin is then not mounted at all (no config entries, no
+  row, no tools, poller stops), while a retry says `application: applied`.
 
 
 ## 13. The game's own status bar in the briefing (player request 2026-11-21, live-verified)
