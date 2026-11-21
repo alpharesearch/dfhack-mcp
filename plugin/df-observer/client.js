@@ -46,6 +46,7 @@ window.__ModuleLoader__.load({
       'alerts.ack': 'Ack',
       'alerts.acked': 'acked',
       'notes': 'Notes',
+      'gameSays': 'Game says',
       'collapsed': 'Observer',
       'empty': 'Observer is idle: no game read yet.',
       'box': 'box',
@@ -76,6 +77,7 @@ window.__ModuleLoader__.load({
       'alerts.ack': '确认',
       'alerts.acked': '已确认',
       'notes': '备注',
+      'gameSays': '游戏提示',
       'collapsed': '观察器',
       'empty': '观察器空闲：尚无游戏读取。',
       'box': '区块',
@@ -216,6 +218,14 @@ window.__ModuleLoader__.load({
                     onClick: () => { void ctx.remote.commands.execute(sessionId, `/df-ack ${a.id}`, []).then(() => { }) },
                   }, a.acked ? t('alerts.acked') : t('alerts.ack'))))
                 : h('div', { style: S.note }, t('alerts.none'))),
+            (snap.reports ?? []).length
+              ? h('div', { style: S.secBody },
+                  h('div', { style: S.secTitle }, t('gameSays')),
+                  (snap.reports ?? []).slice(-4).reverse().map((r, i) =>
+                    h('div', { key: i, style: S.note },
+                      r?.year != null ? `Y${r.year} ` : '',
+                      String(r?.text ?? '').slice(0, 140))))
+              : null,
             (snap.notes ?? []).length
               ? h('div', { style: S.sec },
                 h('div', { style: S.secTitle }, t('notes')),
