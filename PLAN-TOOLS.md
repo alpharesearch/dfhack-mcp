@@ -563,3 +563,19 @@ So the player-shaped plan is: sink a shaft and let each dug level reveal the nex
 The shaft head is designated live at **x50-51, y123, elev 39** (2 tiles, DAMP 0 HOT 0),
 and the plan's tunnel target once the shaft reaches a deep dry level is the ranked
 `tunnel-sites` line **elev 36 x48-63 y107-109 (depth >=5, dry)**.
+
+### Roof rule corrected: fog above is normal, an explored void above is the hazard
+My first `dig_adit.py` refused the first column because "4 hidden levels above - unknown
+roof". That rule is wrong: **inside a mountain the rock above a deep dig is unexplored by
+definition** - the player's own room at elev 34 has fog above it, and a rule demanding an
+explored roof forbids all deep mining. The layer's `overburden`/depth (from the local
+surface) is what guarantees "mountain on top".
+
+Correct rule now in `dig_adit.py`, per column, before designating:
+- explored (not hidden) tile at the dig level,
+- diggable (not open air),
+- `overburden >= --min-depth` (the mountain-on-top test),
+- DAMP-free in the column at/above (aquifer/standing water),
+- **refuse only if the tile at elev+1 is explored and open** - that is breaching a void or
+  an underground pool, the genuine roof hazard,
+- fog above is a reported note, not a refusal.

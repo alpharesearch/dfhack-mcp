@@ -96,9 +96,17 @@ def main():
             if ob.get("overburden", 0) < a.min_depth:
                 bad = f"x{tx},y{ty} overburden {ob.get('overburden')} < {a.min_depth} - surface cut"
                 break
-            if ob.get("overburden_unknown"):
-                bad = f"x{tx},y{ty} has {ob['overburden_unknown']} hidden levels above - unknown roof"
+            # Fog ABOVE is normal inside a mountain - the rock over a deep dig is
+            # unexplored by definition, and the player's own room has fog above it. The
+            # roof hazard that matters is an EXPLORED VOID directly above: digging up into
+            # a cavern (or an underground pool) breaches it.
+            above = get("/tile-at", {"x": tx, "y": ty, "elev": a.elev + 1})
+            if not above.get("hidden") and above.get("class") == "open":
+                bad = f"x{tx},y{ty} has open space directly above (elev {a.elev+1}) - breaching a void/cavern"
                 break
+            if above.get("hidden"):
+                print(f"  note: x{tx},y{ty} roof is fog (unexplored) - depth {ob.get('overburden')} "
+                      f"from the local surface is the mountain-on-top guarantee", flush=True)
         if bad:
             print(f"step {step+1} at x{x}: refused - {bad}", flush=True)
             return 3
