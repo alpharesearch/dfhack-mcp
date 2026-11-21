@@ -529,7 +529,9 @@ export default class DFObserver extends TypertRemoteService {
         .catch((e) => this.note(`ledger write failed: ${e?.message ?? e}`))
     }
     this.model.onBoxWatch = (box) => {
-      const key = `${box[4]}:${box[0]},${box[1]},${box[2]},${box[3]}`
+      // Storage keys must match /^[a-zA-Z0-9_-]+$/ (measured: the ':'/',' key was
+      // rejected, so watched boxes were never persisted - "0 watched boxes").
+      const key = `box-${box[4]}-${box[0]}-${box[1]}-${box[2]}-${box[3]}`
       void domain.table('boxes').put(key, JSON.parse(JSON.stringify(box)))
         .catch((e) => this.note(`box write failed: ${e?.message ?? e}`))
     }

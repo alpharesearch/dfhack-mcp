@@ -632,6 +632,18 @@ test('tool answers stamp the age of the newest game read', async () => {
   return 'read age stamped in the header line'
 })
 
+test('ledger + box storage keys are path-safe', () => {
+  const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  // The todo key: String(id) - numeric, safe.
+  assert.ok(/table\('todos'\)\.put\(String\(todo\.id\)/.test(index), 'todo keys are numeric ids')
+  // The box key: built from elev + coords, and it must not use ':' or ','.
+  const m = index.match(/const key = (`[^`]+`)\n\s*void domain\.table\('boxes'\)\.put/)
+  assert.ok(m, 'the watched-box key template found')
+  const shape = m[1].replace(/\$\{[^}]*\}/g, '1').replace(/`/g, '')
+  assert.ok(/^[a-zA-Z0-9_-]+$/.test(shape), `box key shape must match the storage pattern /^[a-zA-Z0-9_-]+$/ (saw ${shape})`)
+  return 'todo ids numeric; box keys path-safe (measured: the ":"/"," key was rejected)'
+})
+
 test('designations: carried when the server sends them, labelled when it does not', async () => {
   const model = freshModel()
   const defsOf = () => toolDefinitions({ model, projection: null, config: model.cfg, sessionFilter: () => true })
