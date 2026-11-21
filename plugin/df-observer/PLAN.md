@@ -353,3 +353,26 @@ module in a live profile - the reinstall reports `application: applied` and the
 plugin re-activates, but the code is the old module. Each deploy that changes
 code must therefore bump `version` (0.1.0 -> 0.1.1 measured: after the bump the
 new command registered and the new payload fields appeared).
+
+
+## 13. The game's own status bar in the briefing (player request 2026-11-21, live-verified)
+
+The player showed the status bar - `Pop 21 | mood 2,2,9,8 | Food None Drink None
+Seeds ~70 | 20th Timber Late Autumn Year 100` - and asked for it in the update.
+Measured what this build can actually give (Lua probes, 53.17-r1):
+
+| field | source | status |
+|---|---|---|
+| dwarves | `FortFacts.units` race == dwarf, non-hostile | **in the header** as `dwarves 21 (units 79)` |
+| date | `dfhack.world.ReadCurrentYear/Month/Day` | **in the header** as `Y100 Win M9 d18`; season = `floor(month/3)` (measured: month 9 -> Winter; a `season` key was a bug) |
+| seeds | `#df.global.world.items.other.SEEDS` | **in the header** |
+| picks | weapon items `ITEM_WEAPON_PICK` (the TOOL group holds wheelbarrows/scrolls) | **in the header**, `? (probe has no data)` before the first deep tick |
+| site id | `dfhack.world.getCurrentSite().id` (677) | in facts; **name is NOT renderable** - `dfhack.language` is nil in this Lua env |
+| mood | `u.mood` is -1 for every unit here; no `dfhack.units` mood helper exists | **not probeable in this build** - labelled, never guessed |
+
+Mechanics: one combined Lua probe (`OBSERVE_PICKS_LUA` -> `OBS2 PICKS .. SITE ..
+DATE .. SEEDS ..`) on **deep ticks only** - a Lua round-trip costs ~0.6 s and
+must not be paid every 8 s. The probed fields live in `model.statusFacts` and
+are re-attached on every fast tick, because `ingestFast` replaces `facts` with
+the server's object (measured: the header lost date/seeds on the tick after the
+probe).

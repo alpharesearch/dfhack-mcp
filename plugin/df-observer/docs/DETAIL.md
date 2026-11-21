@@ -103,6 +103,12 @@ config object, so copy the keys you change.
   log-folded ledger entries for the current session.
 
 
+- **Header = the game's status bar, as far as this build allows**: dwarf count
+  (`dwarves 21 (units 79)` - the unit count includes pets and livestock), date
+  (`Y100 Win M9 d18`), seeds, picks. The site's *name* needs the language module
+  (absent in the game's Lua env) and mood needs unit-thoughts; both are labelled
+  as not probeable, never invented.
+
 ## Verified platform facts (measured, this install)
 
 - A third-party bundle CANNOT add its own `ctx.remote` namespace on the web
