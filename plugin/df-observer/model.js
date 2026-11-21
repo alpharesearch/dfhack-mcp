@@ -312,6 +312,9 @@ export class FortModel {
     this.statusFacts = {}
     /** Boxes the user registered via to-dos; they join every survey request. */
     this.extraBoxes = []
+    /** Plugin-side diagnostics (transport, ledger, filter) merged into payloads. */
+    this.notesSource = null
+    this.pluginNotes = () => (this.notesSource ? this.notesSource() : [])
     /** Next free to-do id (shared by seeds and user adds). */
     this.nextTodoId = 1
     /** Set by the plugin: called on every ledger mutation so the record persists. */
@@ -777,7 +780,7 @@ export class FortModel {
       digEvents: this.digEvents.slice(0, 24),
       pauseEvents: this.pauseEvents.slice(0, 12),
       overload: this.overload,
-      notes: this.notes.slice(0, 16),
+      notes: [...this.notes.slice(0, 12), ...this.pluginNotes()].slice(0, 16),
     }
   }
 }

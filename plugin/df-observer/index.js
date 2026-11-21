@@ -188,6 +188,7 @@ export default class DFObserver extends TypertRemoteService {
     super(ctx, 'dfObserver')
     this.config = config
     this.model = new FortModel(config)
+    this.model.notesSource = () => this.noteLines.map((n) => `plugin: ${n.message}`)
     this.transport = new ObserverTransport({
       base: config.server_url, timeoutMs: 30000,
       offlineGraceMs: config.offline_grace_ms,
