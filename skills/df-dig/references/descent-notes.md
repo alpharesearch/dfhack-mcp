@@ -219,3 +219,18 @@ building / water / already_designated) - tile state, not paint - and completion 
 Generalization for every tool: a verdict must be computed from a representation that can
 distinguish "empty" from "not shown". Absence in a painted, truncated, windowed, or filtered
 view is never a fact about the world.
+
+## Designations drain away when the crew cannot work them (measured on the fresh embark)
+Ordered 161 tiles (tunnel + 6x6 room) at in-game 38 with 5 miners designated. Over 150 s:
+`dug 15 -> 16`, `to-dig 52 -> 151` (the reveal exposing more rock), `pending 100 -> 0`.
+Nothing dug, and the designations were gone. Two facts explain it:
+1. **Picks are the limit.** Inventory read: 31 weapons, of which **3 are picks** (mode 3 -
+   stored in the wagon). Five designated miners, three picks: two can never start, and the
+   queue moves at pick speed (~1-2 tiles/min for the crew), not miner speed.
+2. **Unreachable flanks are cancelled silently.** The 6x6 room (x38-43) and the far west of
+   the tunnel sit beyond rock that is not yet dug, so the game took those designations back.
+   A designation that cannot be walked to is not a queued job - it is a number in a view.
+So the scale rule: **order the nearest segment first, at pick-limited size** (a 10x3 tunnel
+run for 3 picks), let it complete and become the access point, then order the next segment.
+This is §5 (middle-first) generalized: order from the *worked* end, and size each order to
+what the crew can reach and equip.
