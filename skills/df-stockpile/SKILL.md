@@ -91,3 +91,5 @@ labour of the fort. General pile at the wagon (`x52-57, y116-120, in-game 38`), 
 on the road side (`x56-59, y121-122, in-game 38`), refuse/corpse pile outdoors on the
 plain (`x73-78, y116-122, in-game 36`), stone pile next to the dig face and later the
 mason. Keep piles off walls/ramps (survey first) and never overlap a building footprint.
+
+Measured pile notes (sizes, coverage, loose-item tiles, order-the-room-first): [references/pile-notes.md](references/pile-notes.md)
