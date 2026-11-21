@@ -11,7 +11,18 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import main as M                                              # noqa: E402
-from tests.test_worldmodel import live_game                  # noqa: E402
+
+
+def live_game():
+    """Readiness = the MCP SERVER answers connected=true. (tests.test_worldmodel.live_game
+    opens its own RPC connection; DFHack serves one client, so with the server running
+    that probe must fail. The server is the observer''s channel, so gate on it.)"""
+    import json, urllib.request
+    try:
+        d = json.loads(urllib.request.urlopen("http://127.0.0.1:8000/get-status", timeout=10).read().decode())
+        return bool(d.get("connected"))
+    except Exception:
+        return False
 
 FAILS = []
 
@@ -94,7 +105,8 @@ async def live():
     for b in res["boxes"]:
         check(f"box {b['box']} has to_dig+dug",
               all(k in b for k in ("to_dig", "dug", "pending", "elev")), True)
-        check(f"box {b['box']} total tiles = 96", b["total_tiles"], (b["box"][1] and 16 * 6))
+        x0, y0, x1, y1 = b["box"]
+        check(f"box {b['box']} total tiles", b["total_tiles"], (x1 - x0 + 1) * (y1 - y0 + 1))
     check("shafts answered", len(res["shafts"]), 2)
     check("no piles requested -> note", any("no pile_ids" in n for n in res["notes"]), True)
     check("warnings block", isinstance(res["warnings"], dict) and "designated_tiles" in res["warnings"], True)

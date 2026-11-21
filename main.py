@@ -907,7 +907,9 @@ OBSERVE_GAME_DIR = os.getenv("DFHACK_GAME_DIR", "")
 
 OBSERVE_PILE_LUA_TEMPLATE = r"""
 local want = string.split("__IDS__", " ")
-local cats = {"stone", "wood", "food", "refuse", "furniture", "corpses", "cloth", "bars_blocks", "gems", "leather", "metal"}
+local CATS = {"ammo","animals","armor","bars_blocks","cloth","coins","corpses","finished_goods",
+  "food","furniture","gems","leather","refuse","sheet","stone","weapons","wood"}
+local CATCOUNTS = {"stone","wood","food","refuse","furniture","corpses","cloth","bars_blocks","gems","leather","metal"}
 local piles = {}
 for _, id in ipairs(want) do
   local b = nil
@@ -916,16 +918,13 @@ for _, id in ipairs(want) do
   end
   local rec = {id = tonumber(id), found = 0}
   if b ~= nil then
-    rec.found = 1; rec.b = b; rec.x0 = b.x1; rec.x1 = b.x2; rec.y0 = b.y1; rec.y1 = b.y2
+    rec.found = 1; rec.x0 = b.x1; rec.x1 = b.x2; rec.y0 = b.y1; rec.y1 = b.y2
     rec.elev = b.z - 129
     local on = {}
-    for _, c in ipairs({"ammo", "animals", "armor", "bars_blocks", "cloth", "coins", "corpses",
-      "finished_goods", "food", "furniture", "gems", "leather", "refuse", "sheet", "stone",
-      "weapons", "wood"}) do
+    for _, c in ipairs(CATS) do
       if b.settings.flags[c] == true then on[#on + 1] = c end
     end
     rec.accepts = table.concat(on, ",")
-    rec.active = b.flags.active and 1 or 0
     rec.wheelbarrows = b.storage.max_wheelbarrows
     rec.barrels = b.storage.max_barrels
     rec.bins = b.storage.max_bins
@@ -943,7 +942,7 @@ for _, it in ipairs(df.global.world.items.other.IN_PLAY) do
          and pos.x >= rec.x0 and pos.x <= rec.x1
          and pos.y >= rec.y0 and pos.y <= rec.y1 then
         rec.counts.total = (rec.counts.total or 0) + 1
-        for _, c in ipairs(cats) do
+        for _, c in ipairs(CATCOUNTS) do
           if tn == c then rec.counts[c] = (rec.counts[c] or 0) + 1 end
         end
       end
@@ -955,7 +954,7 @@ for _, rec in ipairs(piles) do
   if rec.found == 1 then
     table.insert(parts, {"x0", rec.x0}); table.insert(parts, {"x1", rec.x1})
     table.insert(parts, {"y0", rec.y0}); table.insert(parts, {"y1", rec.y1})
-    table.insert(parts, {"elev", rec.elev}); table.insert(parts, {"active", rec.active})
+    table.insert(parts, {"elev", rec.elev})
     table.insert(parts, {"wheelbarrows", rec.wheelbarrows})
     table.insert(parts, {"barrels", rec.barrels}); table.insert(parts, {"bins", rec.bins})
     table.insert(parts, {"accepts", rec.accepts})
@@ -1109,7 +1108,7 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
 
     if req.get("pause", True):
         try:
-            out["paused"] = bool((await GetPauseState()).paused)
+            out["paused"] = bool((await GetPauseState()).Value)
         except (DFHackError, DFHackTransportError) as e:
             out["paused"] = None
             notes.append(f"pause state unavailable: {e}")
@@ -1128,7 +1127,7 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
             gen = await world._gen()
             dec = await world._dec(gen)
             levels = await world.levels(int(e0), int(e1))
-            facts = WM.FortFacts(levels, await LO.load_units(dec, gen, world._state), dec)
+            facts = WM.FortFacts(levels, await WM.load_units(dec, gen, world._state), dec)
             await world.annotate_depth(facts)
         except Exception as e:                  # cache/RFR/lua failures label, not crash
             notes.append(f"facts unavailable: {e}")
@@ -1211,8 +1210,12 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
     pile_ids = [int(i) for i in req.get("pile_ids", [])[:16]]
     if pile_ids:
         try:
-            out["piles"] = observe_parse_piles(await LO._lua(observe_pile_lua(pile_ids),
-                                                              settle=OBSERVE_LUA_SETTLE))
+            parsed = observe_parse_piles(await LO._lua(observe_pile_lua(pile_ids),
+                                                        settle=OBSERVE_LUA_SETTLE))
+            out["piles"] = parsed
+            missing = [i for i in pile_ids if i not in parsed]
+            if missing:
+                notes.append(f"pile probe printed no row for ids {missing}: pile health unknown")
         except LO.LuaOpError as e:
             out["piles"] = None
             notes.append(f"pile probe unavailable: {e}")
