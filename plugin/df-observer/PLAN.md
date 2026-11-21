@@ -450,3 +450,14 @@ Two labels that keep the numbers honest, both measured:
   non-zero pile count are not a contradiction.
 - `food-on-piles` / per-pile counts come from the pile probe (items physically
   on watched piles). They stay in the pile lines, never in the header.
+
+Live A/B, measured 2026-11-21 with the filter session running in the profile
+(`filter: live (verdict tick ?)` + note `filter session live: df-observer-filter-mwqoozgw`):
+
+| mode | tokens per injection |
+|---|---|
+| rule mode (compact rules, 700 cap) | **649** |
+| filtered @340 cap (current default) | **315** |
+| filtered @260 cap | 174 (body squeezed - too lean) |
+
+= **334 tokens saved per injection** with the filter live.

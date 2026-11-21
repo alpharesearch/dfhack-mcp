@@ -234,6 +234,7 @@ function statusBody(state, scope, config) {
   if (scope === 'summary') {
     const lines = [
       `tick ${state.tick} | ${state.online === false ? 'GAME OFFLINE' : state.paused ? 'paused' : 'running'}${state.pauseSource ? ` (last pause: ${state.pauseSource})` : ''} | gen ${state.generation ?? '?'}`,
+      `filter: ${state.filter?.enabled ? (state.filter.live ? `live (verdict tick ${state.filter.verdictTick ?? '?'})` : 'enabled, no verdict yet') : 'off'} | rules_mode ${state.filter?.rules_mode ?? config.rules_mode}`,
       facts ? `${facts.dwarves == null ? `pop ${num(facts.pop)} (dwarves ?)` : `dwarves ${num(facts.dwarves)} (units ${num(facts.pop)})`} miners ${num(facts.miners)}/${facts.picks == null ? '? (deep probe has no data)' : num(facts.picks)} picks | food ${num(facts.food)} drink ${num(facts.drink)} (ON WATCHED PILES, not the game's fort-wide Food/Drink bars) wood ${num(facts.wood)} stone ${num(facts.stone)} | pending dig ${num(facts.pending_dig)}`
         : 'facts: NO DATA this tick',
       ...(state.boxes ?? []).map((b) => `elev${b.elev} x${b.box[0]}-${b.box[2]} y${b.box[1]}-${b.box[3]}: to_dig ${b.to_dig} dug ${b.dug} pending ${b.pending}`),
