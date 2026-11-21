@@ -133,3 +133,19 @@ Consequences for design and tools:
    both rows (32 tiles across four levels), and doors go in the 1-wide passage.
 4. Water is the worst case of this rule: a diagonal gap into an aquifer-touched area is a leak,
    not a technicality.
+
+## Verification after a write needs a FRESH read path (measured)
+Sent 1,592 `NO_DIG` clears map-wide; my verification read 1,592 designations "remaining" -
+because `cache.blocks(lo, hi, gen)` was keyed on a generation that **does not change when
+designations are written**. The RFR generation moves for big state changes, not for every
+designation, so a cache keyed on it serves pre-write data.
+
+Proof of the fix: after `world-cache-reset` **and a new WorldModel instance**, the full-map
+scan read 0 designations, and the server's `world-objects` showed no dig clusters on any
+elevation. Rules:
+1. After ordering/clearing designations, verify with a fresh model (or a cache keyed on a
+   mutation counter the server bumps itself), not the same cached window.
+2. A "0 remaining" from a stale cache is as dangerous as a "complete" from designation counts -
+   both are absence read from the wrong snapshot.
+3. Cheap cross-check: `world-objects` per elevation reports dig clusters; if it lists none,
+   the dig queue is empty regardless of what a cached array says.
