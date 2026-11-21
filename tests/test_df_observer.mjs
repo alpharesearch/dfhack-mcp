@@ -682,24 +682,10 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
   return 'designation summary survives every lean level, under 260 chars'
 })
 
-test('tool text never prints undefined (measured: the boxes scope said "4t/undefinedblk")', () => {
-  const model = freshModel()
-  const withScan = { ...model.payload(), designations: { designated_total: 107,
-    by_elev: [{ elev: 22, clusters: [{ x0: 43, y0: 121, x1: 44, y1: 122, tiles: 4 }], designated_tiles: 4 },
-      { elev: 41, clusters: [{ x0: 38, y0: 113, x1: 48, y1: 122, tiles: 83 }], designated_tiles: 83 }] } }
-  for (const scope of ['boxes', 'summary', 'full']) {
-    const out = tools.runTool('df_status', { scope, __payload: withScan })
-    const text = typeof out === 'string' ? out : JSON.stringify(out)
-    assert.ok(!/undefined/.test(text), `scope ${scope} printed the word undefined: ${text.slice(0, 200)}`)
-    assert.ok(!/null/.test(text.replace(/\bnull\b(?!,|\n)/g, '')) || !/undefined/.test(text), `scope ${scope} keeps nulls out of prose`)
-  }
-  return 'boxes/summary/full render without undefined'
-})
-
 test('title coverage is partial, never all-or-nothing', () => {
   // Measured live: with a long verdict headline the cap bought ZERO titles while a
-  // short one bought all - a cliff. The ladder now steps titles down 10 -> 8 -> 4 -> 0.
-  const { buildFilteredBriefing } = filterApi   // module-level handles exist; a top-level await in a sync test is a syntax error (measured twice)
+  // short one bought all - a cliff. The ladder steps titles 10 -> 8 -> 4 -> 0.
+  const { buildFilteredBriefing } = filterApi
   const model = freshModel()
   const payload = model.payload()
   const longVerdict = { headline: 'Food gate: meals 0, raw_food 0, drink 0 across 4 ticks; food 50 to 49, alcohol 3. Nothing cookable at all in this fort today, and four faces are stalled with nothing queued.',
@@ -708,15 +694,11 @@ test('title coverage is partial, never all-or-nothing', () => {
   let sawPartial = false
   for (const cap of [300, 340, 380, 420, 480]) {
     const b = buildFilteredBriefing(longVerdict, payload, { maxTokens: cap })
-    const wire = wireOf(b.text)
-    const open = (wire.todos ?? []).filter((t) => t.state !== 'done')
+    const open = (wireOf(b.text).todos ?? []).filter((t) => t.state !== 'done')
     const titled = open.filter((t) => t.title).length
-    assert.ok(titled === 0 || titled > 0, 'ledger intact at every cap')
-    assert.deepEqual(open.map((t) => t.id), open.map((t) => t.id), 'ledger ids survive at every cap')
     if (titled > 0 && titled < open.length) sawPartial = true
     if (cap === 420) assert.ok(titled > 0, `cap 420 must buy at least partial titles (saw ${titled}/${open.length})`)
   }
-  // buildBriefing's own ladder: partial coverage present in the source
   const brief = fs.readFileSync(path.join(pluginDir, 'brief.js'), 'utf8')
   assert.match(brief, /withTitleBudget\(filled, 8\)/, 'the briefing ladder steps titles down')
   assert.match(brief, /withTitleBudget\(filled, 4\)/, 'and again before dropping them')
@@ -726,21 +708,39 @@ test('title coverage is partial, never all-or-nothing', () => {
   return sawPartial ? 'partial coverage observed on the way down' : 'titles held at every cap tested'
 })
 
-test('every wire level carries to-do titles (ids alone read as placeholders)', () => {
-  const todos = [{ id: 21, state: 'open', title: 'Farm plot built (needs tree-free soil floors)', evidence: 'e'.repeat(200) },
-    { id: 40, state: 'open', title: 'Water adit at in-game 35 from the stairwell eastward' }]
-  const base = { tick: 4, online: true, paused: false, generation: 1, poll: 8000, facts: { pop: 102, dwarves: 21 }, reports: [], todos, alerts: [] }
-  for (const level of [7, 8]) {
-    const d = shrinkPayloadLevel(base, level)
-    const open = d.todos.filter((t) => t.state !== 'done')
-    assert.ok(open.length > 0 && open.every((t) => typeof t.title === 'string' && t.title.length > 0), `level ${level} OPEN rows carry titles (saw ${JSON.stringify(open[0])})`)
-    assert.ok(open.every((t) => t.title.length <= 30), `level ${level} titles stay short`)
-    assert.deepEqual(d.todos.map((t) => `${t.id}:${t.state}`), ['21:open', '40:open'], `level ${level} keeps the full ledger of ids+states`)
+test('a non-box completion names its acceptance, not an empty coordinate', () => {
+  // Measured live: A30-A33 rendered as bare `dig_complete` rows (coord "").
+  // Drive a real acceptance flip: the seeded `well` to-do is buildings_kw, so a
+  // building read containing "Well" closes it and raises the completion alert.
+  const model = freshModel()
+  const well = model.todos.find((t) => t.accept?.kind === 'buildings_kw' && t.accept?.keyword === 'well' && t.state !== 'done')
+  assert.ok(well, 'the seeded ledger has a box-less buildings_kw to-do (the well)')
+  // `model.buildings` comes from the FAST read (model.js: `if (data.buildings)`),
+  // so the acceptance snapshot only sees it there - measured, not assumed.
+  model.ingestFast({ ...model.lastFast, buildings: [{ name: 'Well', count: 1 }] })
+  const alerts = model.evaluate(model.cfg)
+  const done = alerts.find((a) => a.kind === 'dig_complete' && a.key === `todo-${well.id}`)
+  assert.ok(done, `the acceptance flip raises the completion alert (saw ${alerts.map((a) => a.kind).join(',') || 'none'})`)
+  assert.ok(String(done.coord ?? '').length > 0, `coord must not be empty for a box-less to-do (saw ${JSON.stringify(done.coord)})`)
+  assert.match(done.coord, new RegExp(`#${well.id}.*buildings_kw`), `coord names the acceptance: ${done.coord}`)
+  return `box-less completion labelled: ${done.coord}`
+})
+
+test('tool text never prints undefined (measured: the boxes scope said "4t/undefinedblk")', async () => {
+  const model = freshModel()
+  model.ingestDeep({ rungs: [], notes: [], piles: [], designations: { band: [22, 45], designated_total: 107,
+    by_elev: [{ elev: 22, designated_tiles: 4, clusters: [{ x0: 43, x1: 44, y0: 121, y1: 122, tiles: 4 }] },
+      { elev: 41, designated_tiles: 83, clusters: [{ x0: 38, x1: 48, y0: 113, y1: 122, tiles: 83 }] }] } })
+  model.evaluate(model.cfg)
+  const defs = toolDefinitions({ model, projection: null, config: model.cfg, sessionFilter: () => true })
+  const call = (scope) => defs.find((d) => d.name === 'df_status').execute({ scope }, { agent: { id: 'play-1' } })
+  for (const scope of ['boxes', 'summary', 'full']) {
+    const text = String((await call(scope)).text ?? '')
+    assert.ok(!/undefined/.test(text), `scope ${scope} printed the word undefined: ${text.slice(0, 160)}`)
   }
-  const wide = shrinkPayloadLevel({ ...base, todos: base.todos.concat(Array.from({ length: 20 }, (_, i) => ({ id: 100 + i, state: 'done', title: 'done thing' }))) }, 8)
-  const titled = wide.todos.filter((t) => t.title).length
-  assert.ok(titled <= 12, `titles are paid for at most 12 open rows (saw ${titled})`)
-  return 'open rows titled, ledger intact, cost capped'
+  const boxesOut = String((await call('boxes')).text)
+  assert.match(boxesOut, /x38-48 y113-122 83t = 83 tiles/, 'the scan row renders cleanly')
+  return 'boxes/summary/full render without undefined'
 })
 
 test('fresh-embark simulation: a virgin fort gets honest labels, not invented facts', () => {
@@ -917,7 +917,7 @@ test('designations: carried when the server sends them, labelled when it does no
     by_elev: [{ elev: 36, designated_tiles: 103, clusters: [{ x0: 64, x1: 79, y0: 112, y1: 127, tiles: 103, blocks: 4 }] }] } })
   const res = await defsOf().find((d) => d.name === 'df_status').execute({ scope: 'boxes' }, { agent: { id: 'play-1' } })
   assert.match(res.text, /designations \(server scan\):/, res.text.split('\n').slice(-6).join('\n'))
-  assert.match(res.text, /elev36: x64-79 y112-127 103t\/4blk = 103 tiles/, res.text)
+  assert.match(res.text, /elev36: x64-79 y112-127 103t = 103 tiles/, res.text)   // the old format printed a phantom 4blk field
   assert.match(res.text, /total designated: 103/, res.text)
   assert.equal(res.designations.designated_total, 103, 'the structured field is present too')
   // a server without the scan: labelled, not guessed

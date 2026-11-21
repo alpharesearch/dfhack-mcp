@@ -832,7 +832,12 @@ export class FortModel {
         if (nextState === 'done') {
           this.digEvents.push({ tick: this.tick, kind: 'todo_done', todo: todo.id, title: todo.title, evidence })
           this.trim('digEvents', 40)
-          raise('dig_complete', `todo-${todo.id}`, `to-do #${todo.id} "${todo.title}" -> done: ${evidence}`, todo.box ? `x${todo.box[0]}-${todo.box[2]} y${todo.box[1]}-${todo.box[3]} elev${todo.box[4]}` : '', todoAdvice(todo))
+          // A box to-do names its box; a rung/pile/building to-do has no box, and
+          // an empty coord rendered as a bare "dig_complete" row in the panel
+          // (measured: A30-A33). Label the acceptance family instead.
+          raise('dig_complete', `todo-${todo.id}`, `to-do #${todo.id} "${todo.title}" -> done: ${evidence}`,
+            todo.box ? `x${todo.box[0]}-${todo.box[2]} y${todo.box[1]}-${todo.box[3]} elev${todo.box[4]}`
+              : `#${todo.id} ${todo.accept?.kind ?? 'acceptance'}`, todoAdvice(todo))
         } else if (wasDone) {
           raise('todo_reopened', `todo-reopen-${todo.id}`, `to-do #${todo.id} "${todo.title}" reopened: ${evidence}`, '')
         }

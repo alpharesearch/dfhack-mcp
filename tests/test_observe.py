@@ -131,6 +131,17 @@ async def live():
             FAILS.append(f"survey parity {field}: observe {mine[field]} outside live window {lo}-{hi}")
     pause = get("/get-pause-state")
     check("pause parity", res["paused"], pause["paused"])
+
+    # Buildings are a fort-wide fact (measured bug: the farm plot sat outside the
+    # watched band, the ladder read it as unbuilt, and the briefing stated it).
+    check("buildings scope", res.get("buildings_scope"), "map-wide")
+    wide = {b["name"]: b["count"] for b in res.get("buildings", [])}
+    band = {b["name"]: b["count"] for b in res.get("buildings_band_only", [])}
+    check("map-wide is not smaller than the band view", sum(wide.values()) >= sum(band.values()), True)
+    rungs = {r["id"]: r["done"] for r in res.get("rungs", [])}
+    for name, rung in (("Farm Plot", "farm"), ("Still", "drinks"), ("Trade Depot", "depot")):
+        if wide.get(name, 0) > 0:
+            check(f"rung {rung} is done because {name} exists on the map", rungs.get(rung), True)
     print("live payload size:", len(json.dumps(res)), "bytes")
     return True
 
