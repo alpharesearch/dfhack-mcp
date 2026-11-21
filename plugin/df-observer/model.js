@@ -186,6 +186,9 @@ export function runAcceptance(todo, snapshot) {
         return c.x0 === accept.x0 && c.y0 === accept.y0 && c.x1 === accept.x1 && c.y1 === accept.y1
       })
       if (!box) return { ok: false, evidence: `no survey read for box x${accept.x0}-${accept.x1} y${accept.y0}-${accept.y1} elev${accept.elev} (no data, not a fact)` }
+      if (box.to_dig == null || box.dug == null) {
+        return { ok: false, evidence: `box x${accept.x0}-${accept.x1} y${accept.y0}-${accept.y1} elev${accept.elev}: NO DATA yet (watched, awaiting its first survey read - not a fact)` }
+      }
       const ok = box.to_dig === 0 && box.dug >= num(accept.min_dug, 1)
       return { ok, evidence: `x${box.box[0]}-${box.box[2]} y${box.box[1]}-${box.box[3]} elev${box.elev}: to_dig ${box.to_dig}, dug ${box.dug}, pending ${box.pending} (accept: to_dig==0 && dug>0)` }
     }
@@ -309,6 +312,8 @@ export class FortModel {
     this.statusFacts = {}
     /** Boxes the user registered via to-dos; they join every survey request. */
     this.extraBoxes = []
+    /** Next free to-do id (shared by seeds and user adds). */
+    this.nextTodoId = 1
     /** Set by the plugin: called on every ledger mutation so the record persists. */
     this.onLedgerWrite = null
     this.onBoxWatch = null
@@ -389,7 +394,13 @@ export class FortModel {
     if (data.crashlog !== undefined) this.crashlog = data.crashlog
     if (Array.isArray(data.notes)) this.notes = data.notes
     if (!this.seeded && this.rungs.length) {
-      this.todos = seedTodos(this.rungs, this.cfg)
+      const seeded = seedTodos(this.rungs, this.cfg)
+      // Re-key seeds past anything already registered (a restore can beat the
+      // first ladder read).
+      const offset = Math.max(0, ...this.todos.map((t) => t.id))
+      this.todos = [...this.todos, ...seeded.map((t) => ({ ...t, id: t.id + offset }))]
+      this.nextTodoId = Math.max(this.nextTodoId, ...this.todos.map((t) => t.id)) + 1
+      this.trim('todos', 80)
       this.seeded = true
     }
   }
@@ -633,6 +644,7 @@ export class FortModel {
       known.set(rec.id, { ...rec })
     }
     this.todos = [...known.values()].sort((a, b) => a.id - b.id)
+    this.nextTodoId = Math.max(this.nextTodoId, ...this.todos.map((t) => t.id)) + 1
     this.trim('todos', 80)
   }
 
@@ -646,7 +658,11 @@ export class FortModel {
   }
 
   addTodo({ title, accept, box }) {
-    const id = this.todos.length ? Math.max(...this.todos.map((t) => t.id)) + 1 : 1
+    // A counter shared with seeding: ids never collide, even when a to-do is
+    // added before the first ladder read (measured: that gave id 1, clashing
+    // with the seeded ledger).
+    const id = Math.max(this.nextTodoId, this.todos.length ? Math.max(...this.todos.map((t) => t.id)) + 1 : 1)
+    this.nextTodoId = id + 1
     const todo = { id, title, origin: 'model', state: 'open', accept: accept ?? { kind: 'manual' }, evidence: 'not checked yet', statusTick: this.tick }
     if (box) todo.box = box
     if (accept?.kind === 'tiles_progress' && box) todo.box = box
