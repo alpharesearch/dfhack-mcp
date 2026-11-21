@@ -10,7 +10,7 @@ import pathlib
 import struct
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "dfhack-client-python" / "src"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "vendor" / "dfhack-client-python" / "src"))
 from dfhack_client_python.py_export.CoreProtocol_pb2 import (  # noqa: E402
     CoreBindRequest, CoreBindReply, StringMessage,
 )

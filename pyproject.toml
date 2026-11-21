@@ -16,4 +16,4 @@ dependencies = [
 [tool.uv.sources]
 # editable: the transport is patched in place (auto-reconnect), so the venv links the
 # source tree instead of snapshotting a copy at install time.
-dfhack-client-python = { path = "../dfhack-client-python", editable = true }
+dfhack-client-python = { path = "vendor/dfhack-client-python", editable = true }

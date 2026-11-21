@@ -43,19 +43,23 @@ s.sendall(b"DFHack?\n" + struct.pack("<i", 1))
 print(s.recv(12))              # b'DFHack!\n\x01\x00\x00\x00'
 ```
 
-## 3. `dfhack-client-python` is NOT on PyPI
+## 3. `dfhack-client-python` is vendored (and NOT on PyPI)
 
-`pyproject.toml` has `dfhack-client-python = { path = "../dfhack-client-python" }`, so the
-package must sit next to this repo. The `master` branch is only flat
-`dfhack_remote.py` and has no `dfhack.py`, which `main.py` imports — use the
-**`convert-into-python-package`** branch:
+The dependency lives **in this repo** at `vendor/dfhack-client-python`, and `pyproject.toml`
+declares it as `{ path = "vendor/dfhack-client-python", editable = true }`. `uv.lock`
+matches. So a clone of this repo is enough to run the MCP - nothing outside it is needed.
 
-```bash
-cd ~/github
-git clone https://github.com/oleksiy-korniychuk/dfhack-client-python.git
-cd dfhack-client-python
-git checkout convert-into-python-package      # src/dfhack_client_python/{dfhack,dfhack_remote}.py
-```
+Why vendored: it is not published on PyPI, it is small (604 KB), and the MCP needs two
+local fixes in it (see `vendor/PROVENANCE.md`). A submodule was rejected because the
+upstream clone here is **shallow** (`git subtree add` refuses shallow roots, and
+`--unshallow` needs network), and a submodule cannot carry our commits.
+
+Provenance and refresh procedure: **`vendor/PROVENANCE.md`**. Short version - the sibling
+clone `../dfhack-client-python` is the place to `git pull` upstream; `rsync` it into
+`vendor/` (excluding `.git`), re-apply the two local fixes, run the tests.
+
+If you prefer the sibling layout again, point `pyproject.toml` back at
+`../dfhack-client-python`, run `uv lock`, and `uv sync`.
 
 ## 4. Regenerate protobuf for YOUR DFHack version
 

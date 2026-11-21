@@ -1,0 +1,13 @@
+# CMake
+Makefile
+CMakeFiles
+CMakeCache.txt
+*.cmake
+
+# Python
+__pycache__
+.python-version
+.venv
+*.egg-info/
+uv.lock
+build/
