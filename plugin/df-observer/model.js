@@ -31,7 +31,8 @@ export const PAYLOAD_PREFIX = '[df-observer] '
 /** The state field set shared by the live model and the session projection. */
 export const STATE_FIELDS = [
   'tick', 'online', 'observedAt', 'paused', 'pauseSource', 'pauseAtTick', 'pluginPauseTick',
-  'generation', 'facts', 'buildings', 'boxes', 'shafts', 'piles', 'warnings', 'rungs', 'next',
+  'generation', 'poll', 'pauseAuthority', 'filter',
+  'facts', 'buildings', 'boxes', 'shafts', 'piles', 'warnings', 'rungs', 'next',
   'reports', 'crashlog', 'notes', 'alerts', 'alertHistory', 'todos', 'digEvents', 'pauseEvents',
   'overload', 'briefings',
 ]
@@ -1025,7 +1026,8 @@ export const dfObserverProjection = (z) => ({
   }),
   init: () => ({
     tick: 0, online: null, observedAt: null, paused: null, pauseSource: null, pauseAtTick: null,
-    generation: null, facts: null, buildings: [], boxes: [], shafts: [], piles: [], warnings: null,
+    generation: null, poll: null, pauseAuthority: null, filter: null,
+    facts: null, buildings: [], boxes: [], shafts: [], piles: [], warnings: null,
     rungs: [], next: null, reports: [], crashlog: null, notes: [], alerts: [], alertHistory: [],
     todos: [], digEvents: [], pauseEvents: [], overload: null, briefings: 0,
   }),

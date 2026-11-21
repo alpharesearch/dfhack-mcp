@@ -15,7 +15,7 @@ const pluginDir = path.join(here, '..', 'plugin', 'df-observer')
 
 const {
   FortModel, dfObserverProjection, significantChange, runAcceptance, seedTodos, parsePayload, viewOf,
-  PAYLOAD_PREFIX,
+  PAYLOAD_PREFIX, STATE_FIELDS,
 } = await import(path.join(pluginDir, 'model.js'))
 const { buildBriefing, buildWake, estimateTokens, STANDING_RULES } = await import(path.join(pluginDir, 'brief.js'))
 const ConfigSchemaForTest = (await import(path.join(pluginDir, 'index.js'))).Config
@@ -553,6 +553,19 @@ test('wake advice follows the acceptance kind (pile to-do is not a dug box)', as
 test('projection schema keeps the panel fields (poll, pauseAuthority, filter)', () => {
   const projection = dfObserverProjection(z)
   const keys = Object.keys(projection.stateSchema.shape)
+  // The fold copies STATE_FIELDS and starts from init(): both must carry the
+  // chip fields, or the panel reads '?' no matter what the schema declares.
+  for (const key of ['poll', 'pauseAuthority', 'filter']) {
+    assert.ok(STATE_FIELDS.includes(key), `STATE_FIELDS must include ${key}`)
+    assert.ok(key in projection.init(), `init() must define ${key}`)
+  }
+  const folded = projection.apply(projection.init(), {
+    type: 'user/message',
+    data: { content: `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: 9, data: { tick: 9, poll: 8000, pauseAuthority: 'off', filter: { enabled: true, live: true, verdictTick: 7 } } })}` },
+  })
+  assert.equal(folded.poll, 8000, 'the fold carries poll')
+  assert.equal(folded.pauseAuthority, 'off', 'the fold carries pauseAuthority')
+  assert.equal(folded.filter?.verdictTick, 7, 'the fold carries the filter state (the chip needs it)')
   for (const key of ['poll', 'pauseAuthority', 'filter', 'generation', 'pauseSource', 'reports']) {
     assert.ok(keys.includes(key), `stateSchema must declare ${key} (the panel chips read it)`)
   }
