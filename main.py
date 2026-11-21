@@ -146,6 +146,7 @@ Known DFHack RPC quirks (learned the hard way, encoded into the tools below):
 
 import asyncio
 import shutil
+import time
 from collections import Counter
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, Request
@@ -899,6 +900,10 @@ async def warnings(e0: int = Query(None), e1: int = Query(None),
 # ---------------------------------------------------------------------------
 
 OBSERVE_SCHEMA = "df-observer/v1"
+
+# Read-side counters: the observer plugin's poll cadence must be MEASURABLE for
+# acceptance (adaptive interval: paused 60 s, running 5-15 s). Pure in-memory.
+OBSERVE_STATS: dict = {"count": 0, "last_at": None, "last_paused": None, "recent": []}
 OBSERVE_LUA_SETTLE = 0.8
 
 # <gamedir> for the crash-log watch. Server-side config (env), not the plugin's.
@@ -1086,6 +1091,10 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
     no builds, no commands, no game writes.
     """
     notes: list = []
+    OBSERVE_STATS["count"] += 1
+    OBSERVE_STATS["last_at"] = time.time()
+    OBSERVE_STATS["recent"].append({"at": time.time(), "deep": bool(json.loads(q).get("rungs")) if q.strip() and q.strip().startswith("{") else False})
+    OBSERVE_STATS["recent"] = OBSERVE_STATS["recent"][-60:]
     try:
         req = json.loads(q) if q.strip() else {}
     except json.JSONDecodeError as e:
@@ -1109,6 +1118,7 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
     if req.get("pause", True):
         try:
             out["paused"] = bool((await GetPauseState()).Value)
+            OBSERVE_STATS["last_paused"] = out["paused"]
         except (DFHackError, DFHackTransportError) as e:
             out["paused"] = None
             notes.append(f"pause state unavailable: {e}")
@@ -1244,6 +1254,16 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
 
     out["notes"] = notes
     return out
+
+
+@app.get("/observe-stats", operation_id="observe_stats")
+async def observe_stats():
+    """Read-side poll counters for the df-observer plugin: total /observe calls, the last call time,
+    the last observed pause state, and a rolling window of recent call timestamps (deep calls
+    flagged). Acceptance measurement only: no game data, no writes."""
+    return {"count": OBSERVE_STATS["count"], "last_at": OBSERVE_STATS["last_at"],
+            "last_paused": OBSERVE_STATS["last_paused"], "recent": OBSERVE_STATS["recent"][-40:],
+            "window_seconds": 60 if OBSERVE_STATS["recent"] else 0}
 
 
 @app.get("/wagon-path", operation_id="wagon_path")
@@ -1557,7 +1577,7 @@ mcp = FastApiMCP(
     # the supported way in.
     # observe is the df-observer plugin's composite read (machine-shaped JSON, ~2-4k
     # tokens): a plugin transport, not a model tool - it stays HTTP-only too.
-    exclude_operations=["game_lua", "observe"]
+    exclude_operations=["game_lua", "observe", "observe_stats"]
 )
 # Streamable HTTP (POST/GET /mcp) - the transport dsh-mcp-client speaks.
 # mcp.mount() is deprecated and mounts the legacy SSE pair (GET /mcp + POST /mcp/messages/).
