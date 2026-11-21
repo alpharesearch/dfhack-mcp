@@ -649,3 +649,30 @@ frozen face steers the play agent to queue the next designation - Config now
 defaults to `[water, dig_complete, dig_stalled, tile_state_lost, game_crashed,
 game_offline]`. One wake per alert lifetime (`wakeSent`), so a stall that keeps
 repeating (its evidence line changes every read) cannot spam the agent.
+
+## 21. The player's water at Z25 - and why the alert was blind (measured)
+
+The player reported "on Z25 the stairs stopped because of water". Probing:
+
+- `column` at the stairwell (43-44, 121-122): elev 30-26 are dug/stairs, **25 is solid**,
+  below is fog; `hazards` at 24-25 in that 7x7 window read clean.
+- Widening: `shaft` probe reports the **aquifer at elev 23-25** in the adit columns
+  (46,121 -> [23,24,25] ... 62,122 -> [25]); `warnings` shows **12 DAMP
+  designations** in `x43-44 y121-122 elev22-24` - the designations below the
+  stairwell breach the aquifer, which is exactly what the player hit.
+
+The observer was blind to it for one Config reason: `elev0: 26` cut the window
+above 25, so the damp designations (22-24) were outside the warning scan. The
+live row is now `elev0: 22`, the stairwell faces `x43-44 y121-122` at **elev 25
+and 29** are monitored boxes, and the adit's own columns (46/50/54/58/62/66) are
+shafts. Result: `A18 damp_hot [x43-44 y121-122 elev22-24]: 12 DAMP
+designations` - the alert fires with the box, and the filter's headline names it:
+
+```
+HEADLINE: 12 DAMP designations breach aquifer elev22-24; elev35 tunnel at 15/44 dug; zero drink for 21 dwarves
+```
+
+Lesson for the plugin's own defaults: the monitoring window must cover the
+levels the fort is *working on*, not just the embarking tunnel - so the
+stairwell and any adit are inside `elev0..elev1`, and every face the ledger
+watches joins `monitored_boxes` (the durable ledger keeps them across reloads).
