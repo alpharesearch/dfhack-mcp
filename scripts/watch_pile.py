@@ -16,16 +16,14 @@ import json
 import sys
 import time
 import urllib.request
+import sys
+sys.path.insert(0, __file__.rsplit('/', 1)[0])
+import dfw
 
 BASE = "http://127.0.0.1:8000"
 
-
 def lua(expr, timeout=150):
-    req = urllib.request.Request(
-        BASE + "/game-lua", data=json.dumps({"expression": expr}).encode(),
-        headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        d = json.loads(r.read().decode())
+    d = dfw.post("/game-lua", {"expression": expr}, timeout=timeout)
     return d.get("output") or d.get("error") or ""
 
 

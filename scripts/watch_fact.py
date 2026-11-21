@@ -17,6 +17,9 @@ import re
 import sys
 import time
 import urllib.request
+import sys
+sys.path.insert(0, __file__.rsplit('/', 1)[0])
+import dfw
 
 BASE = "http://127.0.0.1:8000"
 
@@ -33,13 +36,8 @@ PATTERNS = {
     "hostile": r"hostile (\d+)",
 }
 
-
-def get(path, params=None, timeout=90):
-    url = BASE + path
-    if params:
-        url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
-    with urllib.request.urlopen(url, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+def get(path, params=None, timeout=200):
+    return dfw.get(path, params, timeout=timeout)
 
 
 def main():

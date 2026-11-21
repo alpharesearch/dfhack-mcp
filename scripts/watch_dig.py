@@ -20,23 +20,17 @@ import json
 import sys
 import time
 import urllib.request
+import sys
+sys.path.insert(0, __file__.rsplit('/', 1)[0])
+import dfw
 
 BASE = "http://127.0.0.1:8000"
 
+def get(path, params=None, timeout=200):
+    return dfw.get(path, params, timeout=timeout)
 
-def get(path, params=None, timeout=30):
-    url = BASE + path
-    if params:
-        url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
-    with urllib.request.urlopen(url, timeout=timeout) as r:
-        return json.loads(r.read().decode())
-
-
-def post(path, body, timeout=30):
-    req = urllib.request.Request(BASE + path, data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+def post(path, body=None, timeout=200):
+    return dfw.post(path, body, timeout=timeout)
 
 
 def solid_in_box(elev, box):
