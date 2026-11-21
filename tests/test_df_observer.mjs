@@ -21,6 +21,7 @@ const { buildBriefing, buildWake, estimateTokens, STANDING_RULES } = await impor
 const { ObserverTransport, ObserverBug, GameOffline } = await import(path.join(pluginDir, 'observer.js'))
 const { toolDefinitions } = await import(path.join(pluginDir, 'tools.js'))
 const filterApi = await import(path.join(pluginDir, 'filter.js'))
+const briefApi = await import(path.join(pluginDir, 'brief.js'))
 const { default: DFObserver, Config } = await import(path.join(pluginDir, 'index.js'))
 const { remoteMethods } = await import(path.join(pluginDir, 'node_modules', '@deepseek-ai', 'dsh-typert-protocol', 'lib', 'index.js'))
 const { z } = await import(path.join(pluginDir, 'node_modules', 'zod', 'index.js'))
@@ -431,6 +432,26 @@ test('tools: bounded outputs, add/done/ack embed foldable payloads', async () =>
   const done = await defs[1].execute({ action: 'done', id: added.id, evidence: 'survey read: to_dig 0 dug 96' }, exec)
   assert.match(done.text, /closed/)
   return `df_status/df_todo/df_alerts verified (${defs.length} tools)`
+})
+
+// ---------------------------------------------------------------------------
+// rules section budget
+test('rules: default compact (per-assembly cost cut), full preserved, off silent', () => {
+  const cfg = Config.parse({})
+  assert.equal(cfg.rules_mode, 'compact', 'compact is the default')
+  const { standingRules } = briefApi
+  const compact = standingRules('compact')
+  const full = standingRules('full')
+  assert.equal(standingRules('off'), '', 'off contributes nothing')
+  assert.ok(Math.ceil(compact.length / 4) < 160, `compact fits its cap (${Math.ceil(compact.length / 4)})`)
+  assert.ok(Math.ceil(full.length / 4) > Math.ceil(compact.length / 4), 'full is the richer text')
+  for (const mode of ['compact', 'full']) {
+    const text = standingRules(mode)
+    assert.match(text, /to_dig==0 AND dug>0/, `${mode}: completion rule present`)
+    assert.match(text, /FORT BRIEFING/, `${mode}: briefing is state, not a request`)
+    assert.match(text, /read-only/, `${mode}: boundary stated`)
+  }
+  return `compact ${Math.ceil(standingRules('compact').length / 4)} vs full ${Math.ceil(standingRules('full').length / 4)} tokens`
 })
 
 // ---------------------------------------------------------------------------

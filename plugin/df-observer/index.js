@@ -36,7 +36,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 import { ObserverTransport } from './observer.js'
 import { FortModel, STATE_VERSION, significantChange, dfObserverProjection } from './model.js'
-import { STANDING_RULES, buildBriefing, buildWake } from './brief.js'
+import { buildBriefing, buildWake, standingRules } from './brief.js'
 import { toolDefinitions } from './tools.js'
 import { FILTER_SYSTEM_PROMPT, STATE_PREFIX, buildFilteredBriefing, buildFilterWake, parseVerdict } from './filter.js'
 
@@ -116,6 +116,9 @@ export const Config = z.object({
   brief_subagents: z.boolean().default(false),
   /** Quiet switches (player asks for a silent agent). */
   wake_enabled: z.boolean().default(true),
+  /** Rules section budget (measured: the full text costs ~316 tokens on EVERY
+   * assembly): full | compact (default: only what a briefing line cannot say) | off. */
+  rules_mode: z.enum(['full', 'compact', 'off']).default('compact'),
   /** Filter subagent (plan §11): a plugin-owned analyst session that reads the
    * full observation payload in ITS context and answers with one compact
    * verdict; play sessions get the filtered briefing. Default OFF - measure,
@@ -229,7 +232,7 @@ export default class DFObserver extends TypertRemoteService {
     ctx.effect(() => ctx.systemPrompt.section({
       name: 'df-observer',
       order: BRIEF_SECTION_ORDER,
-      text: STANDING_RULES,
+      text: standingRules(config.rules_mode),
     }), 'df-observer: prompt section')
 
     // ---- the pull tools ----

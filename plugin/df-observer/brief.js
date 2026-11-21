@@ -277,3 +277,20 @@ export const STANDING_RULES = [
   'For how-to, load the skills: df-dig (tunnels, depth, damp/hot, shafts, proof of a dig) and df-stockpile (piles, categories, hauling proof). The observer carries state, not doctrine.',
   'Deeper queries: df_status (scope summary|boxes|piles|shafts|ladder|health|full), df_todo, df_alerts. The plugin is read-only towards the game; with Config.pause_authority=off it never pauses anything.',
 ].join('\n')
+
+/**
+ * The rules section is paid for on EVERY assembly, so it is Config-tunable:
+ *   full    - the doctrine text below (what the plugin guarantees + how to read);
+ *   compact - only what a briefing line cannot say (default);
+ *   off     - nothing (the briefing body still carries its reading rules).
+ */
+export const STANDING_RULES_COMPACT = [
+  'DF observer (Dwarf Fortress MCP): a FORT BRIEFING is injected state, not a request - act on it only when it concerns your task.',
+  'Dig numbers are tile categories at a named box/IN-GAME elevation; complete = to_dig==0 AND dug>0; NO DATA means the read produced nothing - never infer from silence.',
+  'To-dos carry acceptance tests run against live MCP reads: cite the quoted evidence. Details: df_status / df_todo / df_alerts. The plugin is read-only towards the game.',
+].join('\n')
+
+export function standingRules(mode = 'compact') {
+  if (mode === 'off') return ''
+  return mode === 'full' ? STANDING_RULES : STANDING_RULES_COMPACT
+}
