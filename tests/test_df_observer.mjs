@@ -642,6 +642,7 @@ test('payload carries lastCheck so df_todo why can show the trail', async () => 
   assert.ok(row.lastCheck, 'the payload carries lastCheck')
   assert.equal(row.lastCheck.ok, false, 'the check ran and failed on the numbers')
   assert.match(row.lastCheck.evidence, /to_dig 20, dug 24/, row.lastCheck.evidence)
+  assert.match(row.lastCheck.evidence, /accept: to_dig==0 && dug>=44/, 'the clause states THIS test (min_dug 44), not the generic rule')
   const defs = toolDefinitions({ model, projection: null, config: model.cfg, sessionFilter: () => true })
   const res = await defs.find((d) => d.name === 'df_todo').execute({ action: 'why', id: todo.id }, { agent: { id: 'play-1' } })
   assert.match(res.text, /last check: tick \d+ fail: /, `why shows the trail: ${res.text}`)

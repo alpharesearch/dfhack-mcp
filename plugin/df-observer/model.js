@@ -207,8 +207,11 @@ export function runAcceptance(todo, snapshot) {
       if (box.to_dig == null || box.dug == null) {
         return { ok: false, noData: true, evidence: `box x${accept.x0}-${accept.x1} y${accept.y0}-${accept.y1} elev${accept.elev}: NO DATA yet (watched, awaiting its first survey read - not a fact)` }
       }
-      const ok = box.to_dig === 0 && box.dug >= num(accept.min_dug, 1)
-      return { ok, evidence: `x${box.box[0]}-${box.box[2]} y${box.box[1]}-${box.box[3]} elev${box.elev}: to_dig ${box.to_dig}, dug ${box.dug}, pending ${box.pending} (accept: to_dig==0 && dug>0)` }
+      const minDug = num(accept.min_dug, 1)
+      const ok = box.to_dig === 0 && box.dug >= minDug
+      // The clause must state THIS test (min_dug), not the generic completion rule:
+      // measured - `why` quoted "dug>0" on a task that requires 44.
+      return { ok, evidence: `x${box.box[0]}-${box.box[2]} y${box.box[1]}-${box.box[3]} elev${box.elev}: to_dig ${box.to_dig}, dug ${box.dug}, pending ${box.pending}${box.hidden ? `, hidden ${box.hidden}` : ''} (accept: to_dig==0 && dug>=${minDug})` }
     }
     case 'pile_category': {
       const pile = piles.find((p) => p.found === 1 && String(p.accepts ?? '').split(',').includes(accept.category))
