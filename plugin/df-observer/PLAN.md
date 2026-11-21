@@ -819,8 +819,10 @@ and **cleared** when the watch was registered (#203). The semantics it encodes:
   rectangle; clusters smaller than `unwatched_min_tiles` (20) stay quiet;
 - clearing tracks the live keys per cycle - the first cut cleared only inside the
   scan loop, so an empty scan left the alert standing (test covers it);
-- this alert is *not* on the wake whitelist by default: it is bookkeeping advice for
-  the play agent, not an emergency (ask the player before adding it).
+- this alert is not whitelisted by the plugin's defaults. **The player added it to
+  `alert_wakes` (round 39)**, so a newly-appeared unmeasured cluster now steers the
+  play agent at its next step, with `wake_min_spacing_ms` and one wake per alert
+  lifetime as the noise guards.
 
 Later in the same session the player ordered a designation wave (warnings
 `designated 12 -> 97`); the alert stayed quiet because the big cluster is now

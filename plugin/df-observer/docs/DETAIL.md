@@ -159,7 +159,7 @@ config object, so copy the keys you change.
 | `crew` | supply by the player's ranking: alcohol 0 -> meals 0 -> raw food 0; or the game's own `cancels Eat/Drink`-style report | no |
 | `game_says` | a noteworthy game report (attack, flood, out of food, caravan, migrant...) - evidence is the **verbatim quote** + elevation | no |
 | `game_crashed` / `game_offline` | the crash log grows / the game stops answering | yes |
-| `unwatched_designations` | a designation cluster of `>= unwatched_min_tiles` tiles sits outside every monitored box - work nothing measures - with a runnable `df_todo` watch recipe | no |
+| `unwatched_designations` | a designation cluster of `>= unwatched_min_tiles` tiles sits outside every monitored box - work nothing measures - with a runnable `df_todo` watch recipe | **on** (the player added it to `alert_wakes`) |
 
 `alert_wakes` is Config; a wake fires once per alert lifetime (`wakeSent`) plus
 `wake_min_spacing_ms`, and briefings always `inject` (never steer).
