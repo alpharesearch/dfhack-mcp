@@ -719,3 +719,22 @@ running, 60 s paused (observed 8000 -> 60000 in the payload); (c) real
 `dig_complete` wake with quoted evidence (box2 21/21, tunnel 96/96, stairwell 4/4);
 (d) player pause -> `PAUSED` + `last pause: game-auto-or-player @tick 8`, zero
 plugin writes; (e) panel in light + dark with working chips, to-dos and Ack.
+
+## 24. The plugin's share of a fresh session's first request, measured from the log
+
+`request/header` events carry the complete header sent to the model, so the cost
+is measurable in a real session (this is the number the play test asks for, taken
+from a fresh session's first header in this profile):
+
+| piece | tokens | share |
+|---|---|---|
+| all tool schemas (137 tools: MCP + built-ins + plugin) | **26,334** | 100% |
+| the plugin's tool schemas (4 entries incl. the filter's `df_observe_state`) | **906** | **3.4%** |
+| the plugin's tool schemas in a play session (3 tools, `tool_docs: compact`) | 737 | 2.8% |
+| standing rules (compact section, not in this header event) | 148 | - |
+
+Context: the harness baseline dwarfs the plugin - the observer's whole tool
+surface costs less than a third of one percent of the header it joins. The
+plugin's *transient* cost is one briefing: 250-290 tokens filtered, 456-538 in
+rule mode, injected on meaningful changes (measured ~8 s cadence running, 60 s
+paused).
