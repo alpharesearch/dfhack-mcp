@@ -202,7 +202,7 @@ function truncate(text, max) {
  */
 /** Ledger-lean todo rows: ids+states for ALL (the log contract), titles for the
  * first `titleRows` OPEN ones, and evidence only when `evidence` > 0. */
-function leanTodos(todos, limit = 30, evidence = 0, titleRows = 12) {
+function leanTodos(todos, limit = 30, evidence = 0, titleRows = TITLE_ROWS) {
   let titled = 0
   // Measured: the ledger is ordered done-first, so slicing 30 rows dropped the
   // OPEN ones entirely - the panel lists open rows, the agent acts on them, and
@@ -212,7 +212,7 @@ function leanTodos(todos, limit = 30, evidence = 0, titleRows = 12) {
     const row = { id: t.id, state: t.state }
     if (t.state !== 'done' && titled < titleRows) {
       titled += 1
-      row.title = String(t.title ?? '').slice(0, 24)
+      row.title = String(t.title ?? '').slice(0, TITLE_CHARS)
     }
     if (evidence > 0 && t.evidence) row.evidence = String(t.evidence).slice(0, evidence)
     return row
@@ -276,7 +276,7 @@ const SHRINK_LEVELS = [
     // where a human reads words.
     // 10 titled rows: the panel lists the first 10 OPEN to-dos, so the leanest
     // level titles exactly what a reader sees (measured: 8 left 2 id-only rows).
-    todos: leanTodos(p.todos, 30, 0, 10),
+    todos: leanTodos(p.todos, 30, 0, TITLE_ROWS),
     // coord stays: it is the shortest part of an alert that still tells a reader
     // WHERE, and the panel renders a row from it when evidence is trimmed away.
     alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked, coord: a.coord })) }),
@@ -303,6 +303,27 @@ function compactPanelSections(p) {
  * all-or-nothing, so a cap that could pay for 6 titles bought ZERO). Partial
  * coverage is strictly better for the panel, which lists the first 10 rows. */
 function withoutAnyTitles(d) { return withTitleBudget(d, 0) }
+/** Fields the panel never renders (cite/lastCheck/origin/box) go before the
+ * to-do words do: measured at a 1200-token cap the rich level's full todo objects
+ * left no room for titles, so the panel showed bare ids on a wide budget. */
+function withLeanFields(d) {
+  if (!Array.isArray(d?.todos)) return d
+  return { ...d, todos: d.todos.map((t) => {
+    const { cite, lastCheck, origin, box, ...rest } = t
+    return rest
+  }) }
+}
+
+// The panel's readability is budgeted explicitly (player-measured: rows read as
+// clipped nonsense at 24 chars, and 6 open rows arrived title-less).
+let TITLE_ROWS = 10
+let TITLE_CHARS = 44
+export function setTitleBudget({ rows, chars } = {}) {
+  if (Number.isFinite(rows)) TITLE_ROWS = Math.max(0, Math.min(30, Math.trunc(rows)))
+  if (Number.isFinite(chars)) TITLE_CHARS = Math.max(8, Math.min(80, Math.trunc(chars)))
+  return { rows: TITLE_ROWS, chars: TITLE_CHARS }
+}
+export function titleBudget() { return { rows: TITLE_ROWS, chars: TITLE_CHARS } }
 
 export function withTitleBudget(data, n) {
   if (!Array.isArray(data?.todos)) return data
@@ -372,36 +393,38 @@ export function buildBriefing(payload, { maxTokens, form = 'briefing' }) {
     // reachable by a third-party bundle - measured), so the panel's sections ride
     // along WHEN THE BUDGET PAYS: tried first, plain data as the fallback.
     const filled = withPanelSections(data)
-    // Partial title coverage beats none: try full titles, then 8, 4, then none.
-    const candidates = [filled, withTitleBudget(filled, 8), withTitleBudget(filled, 4), withoutAnyTitles(filled)]
-    let stateLine = lineOf(candidates[candidates.length - 1])
+    // Priority (measured, same rule as the filter ladder): PANEL WORDS over filter
+    // prose over payload level. So: for each payload level, try the richest title
+    // candidate, and trim the BODY before ever dropping a title.
+    const lean = withLeanFields(filled)
+    const candidates = [filled, lean, withTitleBudget(lean, TITLE_ROWS), withTitleBudget(lean, 6),
+      withTitleBudget(lean, 3), withoutAnyTitles(lean)]
+    // Trim order (player-facing): the ALERT ADVICE is the actionable line, so it
+    // outlives ladder prose; reports/health/ladder go first.
+    const bodyCaps = (body) => ({
+      ladderOpen: Math.max(0, 5 - body),
+      todos: Math.max(1, 12 - 2 * body),
+      // The alert-advice floor only applies when the budget can afford it (measured:
+      // a floor of 2 put a 300-token briefing at 319).
+      alerts: maxTokens >= 500 ? Math.max(2, 8 - body) : Math.max(0, 8 - 2 * body),
+      health: Math.max(0, 6 - 2 * body),
+      reports: Math.max(0, 4 - 2 * body),
+      evidence: Math.max(40, 160 - 15 * body),
+    })
     for (const cand of candidates) {
-      if (estimateTokens(lineOf(cand)) <= maxTokens - 40) { stateLine = lineOf(cand); break }
-    }
-    const payloadTokens = estimateTokens(stateLine)
-    if (payloadTokens > maxTokens - 40 && level < SHRINK_MAX) continue
-    // Trim ONLY as much as the budget needs: start at body=0 (full prose) and
-    // increase. Measured regression: running 7 -> 0 returned the most trimmed
-    // variant whenever it fit, so `ALERTS: 1 active` lost its evidence lines at a
-    // 1,200-token budget.
-    for (let body = 0; body <= 7; body += 1) {
-      const caps = {
-        ladderOpen: Math.max(0, 5 - body),
-        todos: Math.max(1, 12 - 2 * body),
-        alerts: Math.max(0, 8 - 2 * body),
-        health: Math.max(0, 6 - body),
-        reports: Math.max(0, 4 - body),
-        evidence: Math.max(40, 160 - 15 * body),
+      const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form, tick: payload.tick, data: cand })}`
+      for (let body = 0; body <= 7; body += 1) {
+        const out = `${bodyOf(bodyCaps(body))}\n${stateLine}`
+        const tokens = estimateTokens(out)
+        if (tokens <= maxTokens) return { text: out, tokens, payloadLevel: level, textLevel: body }
       }
-      const text = bodyOf(caps)
-      const out = `${text}\n${stateLine}`
-      const tokens = estimateTokens(out)
-      if (tokens <= maxTokens) return { text: out, tokens, payloadLevel: level }
     }
   }
-  // Last resort: leanest payload WITHOUT the panel fill, header-only body, and the
-  // over-budget result labelled - the caller must never read a bust as a success.
-  const data = shrinkPayloadLevel(payload, SHRINK_MAX)
+  // Last resort: the leanest payload AND the leanest fields AND no titles, header-only
+  // body, and the over-budget result labelled - the caller must never read a bust as
+  // a success. (Measured: this path ignored the candidate ladder and shipped 319
+  // tokens against a 300 budget with every title stripped by the loop above.)
+  const data = withoutAnyTitles(withLeanFields(withPanelSections(shrinkPayloadLevel(payload, SHRINK_MAX))))
   const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form, tick: payload.tick, data })}`
   const out = `FORT BRIEFING (budget-trimmed) tick ${payload.tick}\n${stateLine}`
   return { text: out, tokens: estimateTokens(out), payloadLevel: SHRINK_MAX, overBudget: estimateTokens(out) > maxTokens }

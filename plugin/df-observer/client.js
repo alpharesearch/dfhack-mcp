@@ -217,8 +217,13 @@ window.__ModuleLoader__.load({
             h('span', null, b.to_dig === null
               ? t('noData')
               : `${t('to_dig')} ${b.to_dig} · ${t('dug')} ${b.dug} · ${t('pending')} ${b.pending}`)))
+        // In the right Sidebar the page owns the pane's full height: a flex column
+        // with minHeight 0 (the player measured the scroll bar while the shell was
+        // maxHeight:100% of an auto-height parent, so it scrolled at ~half height).
         const shell = asPage
-          ? { ...S.panel, maxWidth: 'none', width: '100%', margin: 0, maxHeight: '100%', overflow: 'auto', boxSizing: 'border-box' }
+          ? { ...S.panel, maxWidth: 'none', width: '100%', margin: 0, height: '100%',
+            display: 'flex', flexDirection: 'column', gap: 6, minHeight: 0,
+            overflowY: 'auto', boxSizing: 'border-box' }
           : S.panel
         return h('div', { style: shell },
           h('div', { style: S.head },
@@ -266,7 +271,7 @@ window.__ModuleLoader__.load({
                 `${t('todos')} (${openTodos.length} ${t('todos.open')}, ${todos.length - openTodos.length} ${t('todos.done')})`),
               openTodos.slice(0, 10).map((todo) => h('div', { key: `t${todo.id}`, style: S.line },
                 h('span', { style: S.ids }, `#${todo.id}`),
-                h('span', null, String(todo.title ?? '')),
+                h('span', { title: String(todo.title ?? '') }, String(todo.title ?? '')),
                 h('span', { style: S.ev }, String(todo.evidence ?? '').slice(0, 90))))),
             h('div', { style: S.sec },
               h('div', { style: S.secTitle }, t('alerts')),

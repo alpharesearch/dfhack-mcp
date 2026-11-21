@@ -89,7 +89,7 @@ const num = (v) => Number(v ?? 0)
  * the log, so the filter's opinion never replaces the facts.
  */
 import { PAYLOAD_PREFIX } from './model.js'
-import { shrinkPayloadLevel, SHRINK_MAX, estimateTokens, withTitleBudget } from './brief.js'
+import { shrinkPayloadLevel, SHRINK_MAX, estimateTokens, withTitleBudget, titleBudget } from './brief.js'
 
 /** Titles are panel sugar: the filtered wire pays for them only when the cap can
  * afford them (measured: 8 titles cost ~50 tokens and a 260-token cap could not).
@@ -149,8 +149,9 @@ export function buildFilteredBriefing(verdict, payload, { maxTokens }) {
     // The ledger (ids + states) is never part of the strip ladder.
     // Partial coverage beats all-or-nothing (measured live: with a long verdict
     // headline the cap bought ZERO titles; with a short one it bought all).
-    for (const data of [full, withoutScan(full), withoutScan(withTitleBudget(full, 8)),
-      withoutScan(withTitleBudget(full, 4)), withoutTitles(withoutScan(full))]) {
+    for (const data of [full, withoutScan(full), withoutScan(withTitleBudget(full, titleBudget().rows)),
+      withoutScan(withTitleBudget(full, 6)), withoutScan(withTitleBudget(full, 3)),
+      withoutTitles(withoutScan(full))]) {
       const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: payload.tick, data })}`
       for (let textLevel = 0; textLevel < texts.length; textLevel += 1) {
         const out = `${texts[textLevel]}\n${stateLine}`

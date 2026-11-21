@@ -40,7 +40,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 import { ObserverTransport } from './observer.js'
 import { FortModel, STATE_VERSION, significantChange, dfObserverProjection } from './model.js'
-import { buildBriefing, buildWake, standingRules, compactDesignations } from './brief.js'
+import { buildBriefing, buildWake, standingRules, compactDesignations, setTitleBudget } from './brief.js'
 import { toolDefinitions, jsonSafe } from './tools.js'
 import { FILTER_SYSTEM_PROMPT, STATE_PREFIX, buildFilteredBriefing, buildFilterWake, parseVerdict } from './filter.js'
 
@@ -121,6 +121,11 @@ export const Config = z.object({
    * is the only way the right-Sidebar panel sees those sections (measured: the
    * `/df-panel` promise never settles for the client half). */
   panel_full_briefing: z.boolean().default(false),
+  /** The panel lists the first `panel_title_rows` OPEN to-dos: how many of them
+   * carry a title on the wire, and how many characters each title gets. Titles
+   * cost ~5 tokens per row at 24 chars, ~10 at 44 (measured). */
+  panel_title_rows: z.number().int().min(0).max(30).default(10),
+  panel_title_chars: z.number().int().min(8).max(80).default(44),
   /** A pile this full on a small area is reported as full. */
   pile_full_items: z.number().int().min(10).default(150),
 
@@ -199,6 +204,9 @@ export default class DFObserver extends TypertRemoteService {
   constructor(ctx, config = Config.parse({})) {
     super(ctx, 'dfObserver')
     this.config = config
+    // The panel's word budget is Config-driven (measured: 24-char titles read as
+    // clipped nonsense, and title-less rows left the panel listing bare ids).
+    setTitleBudget({ rows: config.panel_title_rows, chars: config.panel_title_chars })
     this.model = new FortModel(config)
     this.model.notesSource = () => this.noteLines.map((n) => `plugin: ${n.message}`)
     this.transport = new ObserverTransport({

@@ -318,7 +318,13 @@ test('briefing stays inside briefing_max_tokens and carries the state line', () 
     sorted(live.todos.map((t) => `${t.id}:${t.state}`)),
     'ledger ids+states reconstruct from the log line (open rows are ordered first, measured)')
   const opens = foldedFull.data.todos.filter((t) => t.state !== 'done')
-  assert.ok(opens.every((t) => t.title), 'the open rows carry titles (the panel shows words, not bare ids)')
+  // The panel lists the first `panel_title_rows` (default 10) open rows: those carry
+  // titles; a longer ledger keeps ids+states for the rest (measured contract).
+  const listed = opens.slice(0, 10)
+  // The panel's words are paid for first, prose next, fields last; on a heavy
+  // payload the ladder guarantees a floor of titled rows, not all of them.
+  assert.ok(listed.filter((t) => t.title).length >= 3,
+    `the listed open rows carry titles at a 1200 budget (saw ${listed.filter((t) => t.title).length}/${listed.length})`)
   assert.ok(foldedFull.data.todos.every((t) => t.evidence), 'ledger evidence survives')
   assert.match(full.text, /\[df-observer\] \{/)
   assert.match(full.text, /FORT BRIEFING \(in-game elevations\)/)
@@ -700,12 +706,97 @@ test('title coverage is partial, never all-or-nothing', () => {
     if (cap === 420) assert.ok(titled > 0, `cap 420 must buy at least partial titles (saw ${titled}/${open.length})`)
   }
   const brief = fs.readFileSync(path.join(pluginDir, 'brief.js'), 'utf8')
-  assert.match(brief, /withTitleBudget\(filled, 8\)/, 'the briefing ladder steps titles down')
-  assert.match(brief, /withTitleBudget\(filled, 4\)/, 'and again before dropping them')
+  assert.match(brief, /withTitleBudget\(lean, TITLE_ROWS\)/, 'the briefing ladder steps titles down from the knob')
+  assert.match(brief, /withTitleBudget\(lean, 6\)/, 'then 6')
+  assert.match(brief, /withTitleBudget\(lean, 3\)/, 'then 3, before dropping them')
+  assert.match(brief, /withLeanFields/, 'and drops non-panel fields before the words')
   const filter = fs.readFileSync(path.join(pluginDir, 'filter.js'), 'utf8')
-  assert.match(filter, /withTitleBudget\(full, 8\)/, 'the filter ladder steps titles down too')
+  assert.match(filter, /withTitleBudget\(full, titleBudget\(\)\.rows\)/, 'the filter ladder steps titles down too')
   assert.match(filter, /import \{[^}]*withTitleBudget[^}]*\} from '\.\/brief\.js'/, 'and imports the helper (a missing import crashed the harness once)')
   return sawPartial ? 'partial coverage observed on the way down' : 'titles held at every cap tested'
+})
+
+test('the Sidebar page fills the pane height (no half-height scroll)', () => {
+  const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
+  const asPage = client.slice(client.indexOf('const shell = asPage'), client.indexOf('return h(\'div\', { style: shell }'))
+  assert.match(asPage, /height: '100%'/, 'the page shell is given the pane height')
+  assert.match(asPage, /display: 'flex', flexDirection: 'column'/, 'and lays out as a column')
+  assert.match(asPage, /minHeight: 0/, 'with minHeight 0 so the column can shrink (the flex trap that keeps scrollbars alive)')
+  assert.ok(!/maxHeight: '100%'/.test(asPage), 'no maxHeight:100% of an auto-height parent (measured: scrolls at ~half height)')
+  // the composer dock keeps its compact cap - it is a chip, not a page
+  const dock = client.slice(client.indexOf('body: {'), client.indexOf('body: {') + 120)
+  assert.match(dock, /maxHeight: \d+/, 'the dock body keeps a height cap')
+  return 'page fills the pane; dock stays compact'
+})
+
+test('panel title budget is Config-driven and the ladder steps it down', () => {
+  const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  assert.match(index, /panel_title_rows: z\.number\(\)\.int\(\)\.min\(0\)\.max\(30\)\.default\(10\)/, 'rows knob declared')
+  assert.match(index, /panel_title_chars: z\.number\(\)\.int\(\)\.min\(8\)\.max\(80\)\.default\(44\)/, 'chars knob declared')
+  assert.match(index, /setTitleBudget\(\{ rows: config\.panel_title_rows, chars: config\.panel_title_chars \}\)/, 'applied at activation')
+  const brief = fs.readFileSync(path.join(pluginDir, 'brief.js'), 'utf8')
+  assert.match(brief, /row\.title = String\(t\.title \?\? ''\)\.slice\(0, TITLE_CHARS\)/, 'the lean ledger honours the char budget')
+  const client = fs.readFileSync(path.join(pluginDir, 'client.js'), 'utf8')
+  assert.match(client, /title: String\(todo\.title \?\? ''\)/, 'the panel row carries a full-title tooltip for clipped text')
+  // the knob actually moves the wire
+  const { setTitleBudget } = briefApi
+  const model = freshModel()
+  const payload = model.payload()
+  const openRow = payload.todos.find((t) => t.state !== 'done' && String(t.title ?? '').length > 20)
+  assert.ok(openRow, 'the ledger has an open row with a title worth clipping')
+  setTitleBudget({ rows: 10, chars: 44 })
+  const wide = shrinkPayloadLevel(payload, 8).todos.find((t) => t.id === openRow.id)
+  setTitleBudget({ rows: 10, chars: 12 })
+  const tight = shrinkPayloadLevel(payload, 8).todos.find((t) => t.id === openRow.id)
+  setTitleBudget({ rows: 10, chars: 44 })
+  assert.ok(wide?.title && tight?.title, `the row carries a title at both budgets (${JSON.stringify(wide)} / ${JSON.stringify(tight)})`)
+  assert.ok(tight.title.length <= 12, `the char knob clips the wire (${tight.title.length})`)
+  assert.ok(wide.title.length > tight.title.length, `44 chars beats 12 (${wide.title.length} vs ${tight.title.length})`)
+  setTitleBudget({ rows: 0, chars: 44 })
+  assert.ok(!shrinkPayloadLevel(payload, 8).todos.some((t) => t.title), 'rows: 0 means no title budget spent')
+  setTitleBudget({ rows: 10, chars: 44 })
+  return `title budget honoured: ${wide.title.length}-char titles, ladder steps rows`
+})
+
+test('closing a to-do keeps its acceptance identity (no re-seed after a reload)', () => {
+  // Measured live: #220 "Well (or cistern plan)…" closed, then #236 with the same
+  // title was seeded as a NEW open task - the filter reported the duplicate as a
+  // state change. Cause: closeTodo() rewrote todo.accept, the seed dedupe key.
+  const cfg = Config.parse({})
+  const first = new FortModel(cfg)
+  first.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 40, drink: 0, wood: 0, stone: 140, metal: 0, barrels: 0, pending_dig: 10, water_tiles: 0, magma_tiles: 0 },
+    buildings: [{ name: 'Well', count: 1 }], boxes: [], shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [] })
+  first.ingestDeep({ rungs: [{ id: 'labors', title: 'Two dwarves on Miners', done: true }, { id: 'farm', title: 'Farm plot', done: true }, { id: 'water', title: 'Well', done: true }], notes: [], piles: [] })
+  first.evaluate(cfg)
+  const well = first.todos.find((t) => t.accept?.kind === 'buildings_kw' && t.accept?.keyword === 'well')
+  assert.ok(well, 'the seeded ledger has the well to-do')
+  assert.equal(well.state, 'done', 'the building read closed it')
+  assert.deepEqual(well.accept, { kind: 'buildings_kw', keyword: 'well', min: 1 }, 'closing kept the acceptance test (no {kind:manual} rewrite)')
+  assert.equal(well.manualClosed, undefined, 'no manual-close marker on an acceptance closure')
+
+  // Reload: a new model, the closed record restored from storage, ladder read again.
+  const restored = JSON.parse(JSON.stringify(first.todos))
+  const second = new FortModel(cfg)
+  second.restoreTodos(restored)
+  second.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 40, drink: 0, wood: 0, stone: 140, metal: 0, barrels: 0, pending_dig: 10, water_tiles: 0, magma_tiles: 0 },
+    buildings: [{ name: 'Well', count: 1 }], boxes: [], shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [] })
+  second.ingestDeep({ rungs: [{ id: 'labors', title: 'Two dwarves on Miners', done: true }, { id: 'farm', title: 'Farm plot', done: true }, { id: 'water', title: 'Well', done: true }], notes: [], piles: [] })
+  second.evaluate(cfg)
+  const wells = second.todos.filter((t) => /well/i.test(String(t.title)))
+  assert.equal(wells.length, 1, `the well task is not re-seeded after a reload (saw ${wells.map((t) => `#${t.id}:${t.state}`).join(', ')})`)
+  // the legacy {kind:manual} records are caught by the title fallback
+  const legacy = restored.map((t) => ({ ...t, state: 'done', accept: { kind: 'manual' } }))
+  const third = new FortModel(cfg)
+  third.restoreTodos(legacy)
+  third.ingestFast({ paused: false, generation: 1,
+    facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 40, drink: 0, wood: 0, stone: 140, metal: 0, barrels: 0, pending_dig: 10, water_tiles: 0, magma_tiles: 0 },
+    buildings: [{ name: 'Well', count: 1 }], boxes: [], shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [] })
+  third.ingestDeep({ rungs: [{ id: 'water', title: 'Well', done: true }], notes: [], piles: [] })
+  third.evaluate(cfg)
+  assert.equal(third.todos.filter((t) => /well/i.test(String(t.title))).length, 1, 'legacy manual-accept rows dedupe by title')
+  return 'acceptance identity survives closure and reload'
 })
 
 test('a non-box completion names its acceptance, not an empty coordinate', () => {

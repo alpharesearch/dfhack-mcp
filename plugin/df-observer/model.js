@@ -471,7 +471,12 @@ export class FortModel {
       // second general/stone/wood pile task, and the backlog tripped the
       // overload alert on our own bookkeeping).
       const taken = new Set(this.todos.map((t) => todoSignature(t)))
-      const fresh = seeded.filter((t) => !taken.has(todoSignature(t)))
+      // Title fallback: stored rows closed by an OLD build carry accept={kind:manual}
+      // (the mutation above), so their signature no longer matches the rung; the
+      // title still identifies the same task.
+      const normTitle = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
+      const titles = new Set(this.todos.map((t) => normTitle(t.title)))
+      const fresh = seeded.filter((t) => !taken.has(todoSignature(t)) && !titles.has(normTitle(t.title)))
         .map((t) => ({ ...t, id: t.id + offset }))
       this.todos = [...this.todos, ...fresh]
       this.nextTodoId = Math.max(this.nextTodoId, ...this.todos.map((t) => t.id)) + 1
@@ -867,9 +872,28 @@ export class FortModel {
       if (!rec || typeof rec.id !== 'number') continue
       known.set(rec.id, { ...rec })
     }
-    this.todos = [...known.values()].sort((a, b) => a.id - b.id)
+    // Ledger hygiene at restore: a to-do is ONE task, identified by its acceptance
+    // test (or, for the legacy rows whose accept was rewritten by an older
+    // closeTodo, by its title). Duplicates left by that bug - `#220 Well done` plus
+    // `#236 Well open` in the same panel - collapse to the most advanced record,
+    // keeping the lower id so history stays readable.
+    const normTitle = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
+    const groups = new Map()
+    for (const t of known.values()) {
+      const key = `${todoSignature(t)}|${normTitle(t.title)}`
+      const prev = groups.get(key)
+      if (!prev) { groups.set(key, { ...t }); continue }
+      const keep = (prev.state === 'done') === (t.state === 'done')
+        ? (prev.id <= t.id ? prev : t)
+        : (t.state === 'done' ? { ...t } : prev)
+      this.prunedTodoIds = this.prunedTodoIds ?? []
+      this.prunedTodoIds.push((keep === prev ? t : prev).id)
+      groups.set(key, keep)
+    }
+    this.todos = [...groups.values()].sort((a, b) => a.id - b.id)
     this.nextTodoId = Math.max(this.nextTodoId, ...this.todos.map((t) => t.id)) + 1
     this.trim('todos', 80)
+    return this.prunedTodoIds?.length ?? 0
   }
 
   restoreBoxes(stored) {
@@ -903,7 +927,11 @@ export class FortModel {
     todo.statusTick = this.tick
     this.onLedgerWrite?.(todo)
     todo.evidence = evidence ?? 'closed by the model (manual acceptance)'
-    todo.accept = { kind: 'manual' }
+    // Measured defect: overwriting `accept` destroyed the acceptance identity that
+    // the seed dedupe keys on (todoSignature reads accept), so after a reload the
+    // SAME rung was re-seeded as a fresh OPEN to-do (#220 Well done + #236 Well
+    // open). Record the manual close separately; never rewrite the test.
+    todo.manualClosed = true
     return todo
   }
 
