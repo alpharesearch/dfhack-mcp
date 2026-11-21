@@ -23,6 +23,14 @@ Planned (the ladder in play order, one skill per discipline):
 - Keep it bounded: a skill is loaded on demand, so every line must earn its tokens.
   Long reference material goes in sibling files the skill points at, not in the body.
 
+## Live here with no profile change (verified)
+`/home/markus/github/dfhack-mcp/.dsh/skills -> ../skills` (a symlink, git-tracked). The
+filesystem provider scans **`<projectRoot>/.dsh/skills`** at rank 100, where the project root
+is the nearest `.git` ancestor - so authoring in `skills/` is discovered and watched live in
+any session whose working directory is inside this repo. Proof: `df-dig` appeared in the
+session skill catalog and loaded, with its base directory reported as
+`.dsh/skills/df-dig`.
+
 ## Making a harness use this library (pick one, all non-destructive)
 1. **Point the provider at the repo** (no copying; edits are watched live):
    ```yaml
