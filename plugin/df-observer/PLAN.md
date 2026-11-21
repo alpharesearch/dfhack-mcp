@@ -501,3 +501,28 @@ The predicate only checked "excludes stone/wood". Fixed in-game (`/configure-sto
 category the rung names** - `pile_categories` with an exact allowed set, not a subset check.
 An alert that quotes evidence contradicting its own title is worse than no alert: it teaches the
 model to accept a half-right state.
+
+## 17. The game's own hints (player question 2026-11-21: "out of food, build a
+farm plot" style announcements)
+
+Yes - the game's announcements are the best hint channel we have, and they are
+**quoted verbatim**, never paraphrased:
+
+```
+GAME SAYS [Y101]: Urdim Rerrasbomrek, expedition leader cancels Eat: Item inaccessible.
+GAME SAYS [Y101]: A caravan from Ral Al has arrived.  Overall trade sentiments are lukewarm.
+```
+
+Implementation (0.1.34): `reports: N` already rode the deep read, and three
+defects kept it from the player - `payload()` never carried `reports`/`crashlog`;
+the section was inside the trimmable body (it vanished at the 700-token budget);
+and the builder called a helper that does not exist in `brief.js`, so
+`buildBriefing` threw. Now: the section sits **after** the trimmable body (our
+prose gets cut before the game's words), it prints nothing when the read is
+empty, and 1-4 lines survive every shrink level.
+
+The game's supply hints outrank our derived math: a report matching
+`cancels Eat | Out of food | Out of drink | get drunk` raises the `crew` alert
+`game-says-supply` with the report's own words and `elevNN` from the report.
+The filter prompt carries the same rule ("quote them verbatim ... attribute them
+to the game").
