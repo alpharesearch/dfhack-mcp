@@ -51,8 +51,14 @@ def main():
     ap.add_argument("--width", type=int, default=2, help="stair tiles along x")
     ap.add_argument("--every", type=int, default=15)
     ap.add_argument("--per-level", type=int, default=1200)
+    ap.add_argument("--through-damp", action="store_true",
+                    help="keep sinking when a level reads DAMP (the player ordered the shaft "
+                         "through the aquifer). The default STOP is the safer rule: water "
+                         "follows a shaft down, so a drain must exist before the band is "
+                         "opened. With this flag every damp level is logged as a warning.")
     a = ap.parse_args()
 
+    damp_levels = []
     for elev in range(a.from_e, a.to_e - 1, -1):
         tiles = [[a.x + i, a.y, elev + Z_OFF] for i in range(a.width)]
         sent = post("/send-dig-command", {"designation": "UP_DOWN_STAIR_DIG", "locations": tiles}).get("tiles")
@@ -73,11 +79,22 @@ def main():
             rows = get("/probe-plan", {"x": a.x, "y": a.y, "elev0": elev - 1, "elev1": elev - 1})["text"]
             line = [l for l in rows.splitlines() if "elev" in l][-1].strip()
             print(f"  elev {elev} dug. next level reads: {line}", flush=True)
-            if "avoid" in line or "not diggable" in line:
-                print(f"  elev {elev-1} refused by the hazard/open check - stop here", flush=True)
+            if "not diggable" in line:
+                print(f"  elev {elev-1} is open air - stop here", flush=True)
                 return 3
+            if "avoid" in line:
+                if not a.through_damp:
+                    print(f"  elev {elev-1} DAMP - stop (plan the drain, or pass --through-damp)",
+                          flush=True)
+                    return 3
+                print(f"  elev {elev-1} DAMP - CONTINUING by request: water follows this "
+                      f"shaft down. Log it: {line}", flush=True)
+                damp_levels.append(elev - 1)
         else:
             print(f"[elev {elev} / ui {elev-1}] shaft complete at target elevation", flush=True)
+    if damp_levels:
+        print(f"SHAFT CROSSES THE DAMP BAND at elevations {damp_levels} - expect inflow; "
+              f"plan the cistern/pump/sealed-stairwell drainage before building below", flush=True)
     return 0
 
 
