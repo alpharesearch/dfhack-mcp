@@ -41,6 +41,31 @@ def post(path, body, timeout=120):
         return json.loads(r.read().decode())
 
 
+def box_state(elev, x0, x1, y0, y1):
+    """(walls, fog, floors, other) in the box. Fog is NOT freedom to call it done:
+    a box of unexplored rock has zero '#' walls, which is how the first version of this
+    script announced DUG COMPLETE at 0s. Completion means FLOORS with no walls and no fog."""
+    t = get("/world-map", {"e": elev, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                           "rle": "false", "max_tokens": 3000}, timeout=120)["text"]
+    wall = fog = floor = other = 0
+    for l in t.splitlines():
+        if "|" not in l:
+            continue
+        y, row = l.split("|", 1)
+        try:
+            y = int(y.strip())
+        except ValueError:
+            continue
+        if not (y0 <= y <= y1):
+            continue
+        cells = row[: (x1 - x0 + 1)]
+        wall += cells.count("#")
+        fog += cells.count("?")
+        floor += cells.count(".") + cells.count("=")
+        other += sum(1 for c in cells if c not in "#?.=")
+    return wall, fog, floor, other
+
+
 def walls_in(elev, x0, x1, y0, y1):
     t = get("/world-map", {"e": elev, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
                            "rle": "false", "max_tokens": 3000}, timeout=120)["text"]
@@ -105,15 +130,17 @@ def main():
     last = None
     stall_at = None
     while True:
-        w = walls_in(*box)
+        w, fog, floor, other = box_state(*box)
         pd = pending_in(*box)
         stamp = int(time.time() - t0)
-        if (w, pd) != last:
-            print(f"[{stamp}s] walls left: {w} | pending designations: {pd}", flush=True)
-            last = (w, pd)
+        if (w, fog, floor, pd) != last:
+            print(f"[{stamp}s] walls: {w} | fog: {fog} | floors+stairs: {floor} | "
+                  f"pending: {pd}", flush=True)
+            last = (w, fog, floor, pd)
             stall_at = stamp
-        if w == 0:
-            print(f"DUG COMPLETE after {stamp}s - no wall tiles left in the box", flush=True)
+        if w == 0 and fog == 0:
+            print(f"DUG COMPLETE after {stamp}s - the box reads as floor/stair, no walls, "
+                  f"no fog ({floor} dug tiles)", flush=True)
             return 0
         if time.time() - t0 > a.timeout:
             print(f"TIMEOUT after {a.timeout}s: walls {w}, pending {pd}. "

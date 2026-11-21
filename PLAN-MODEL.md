@@ -128,3 +128,14 @@ Consequences, all implemented in `scripts/dig_run.py`:
 5. `tile_at` does not surface `dig_designation` on hidden tiles (the designation is recorded -
    `world-objects` reports it), so designation state on fog tiles must be read from
    `world-objects` clusters, not per tile. Fix the tile-level read in the store design.
+
+### Absence of walls is not the presence of a tunnel (second fog trap)
+`dig_run.py` first version announced `DUG COMPLETE after 0s` for the elev-36 box: it counted
+`#` glyphs, and fog tiles are `?` - **a box of unexplored rock has zero walls**. Completion
+now requires `walls == 0 AND fog == 0`, and reports the four counts
+`walls | fog | floors+stairs | pending` every change.
+
+General rule for the model: every "is it done?" question is answered by a **positive tile
+state** (floors/stairs present), never by the absence of the pre-dig state. The same trap
+caught me twice (designation count → 0; wall count → 0), and both times the fog was the
+thing that made absence look like success.
