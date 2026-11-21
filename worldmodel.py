@@ -1258,12 +1258,22 @@ class WorldModel:
                 while x < lv.cols - (L - 1):
                     ok = True
                     depths = []
+                    # Real geology is mixed: soil, stone, veins, ramps. A tunnel is defined
+                    # by a ROCK ROOF and depth under the surface, not by every tile being
+                    # wall. So accept any diggable tile (not open air, not water) provided
+                    # the tile directly above is solid - the ceiling must survive.
+                    DIGGABLE = ("#", ".", "g", "s", "S", "O", "b", "v")
+                    ROOF = ("#", ".", "S", "O", "b", "v")
                     for dy in range(W):
                         for dx in range(L):
                             g = lv.grid[y + dy][x + dx]
-                            if g != "#":
+                            if g not in DIGGABLE:
                                 ok = False
                                 break
+                            # No per-tile roof test: in a mountain the rock above is
+                            # unexplored by definition, and DF lets you designate with fog
+                            # above. Depth under the local SURFACE is the roof guarantee,
+                            # and it is checked below via min_depth.
                             d = surf.get((ox + x + dx, oy + y + dy))
                             d = (lv.elev - d) if d is None else (d - lv.elev)
                             depths.append(d)
