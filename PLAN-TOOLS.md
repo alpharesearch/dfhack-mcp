@@ -501,3 +501,22 @@ and `hazards` on the player's line (elev 34 = in-game 33, x50-60 y108-112):
 So the player's dig stopped exactly where the aquifer layer crosses the tunnel - the model
 reproduces the game's DAMP warning, tile by tile, and the probe plan offers the legal
 alternative (elev 36, depth 8, dry) at the same column.
+
+# Structure mirroring: read a build, reproduce it elsewhere
+The player asked to recreate their built structure south of the wagon. Recipe that worked:
+1. **Read the shape from the map** - `world-map` glyphs plus the designation kinds. Their
+   build at elev 34 (in-game 33): `#<<.` = a room with a **2x2 up-down stairwell** at
+   x46-47,y108-109, then a 2-row, 23-long tunnel east from x50, water crossing it at x50.
+2. **Pick the target by the rules, not by eye** - `tunnel-sites(length,width,min_depth,near=
+   wagon)` filtered to `y >= wagon_y + 1` for "south": elev 39 (in-game 38) x43-58 y119-120,
+   16x2, depth>=2, dry. Confirmed with `hazards` (damp 0 / magma 0 / clean 80) and
+   `depth-profile` (deep 68, shallow 12 = the room's east lip, unexplored 0).
+3. **Designate the parts as separate calls** so acceptance is countable per part:
+   tunnel DEFAULT_DIG (32), room DEFAULT_DIG (16), stairwell UP_DOWN_STAIR_DIG **on every z
+   it crosses** - 4 tiles at elev 39 and the same 4 at elev 38 (52 tiles total, all accepted).
+4. **Labor before time**: the labor pool drifts as migrants arrive (miners fell to 2 of 14
+   dwarves), so `set_unit_labors` MINE must be re-checked before each dig phase, not once.
+
+Tool this suggests for the plan: `mirror_structure?from_box&to_elev&to_xy` - read a dug
+footprint (tunnel rows + room + stair columns) and emit the designation list for a target
+site, validating hazards/depth/explored **per part** before sending anything.
