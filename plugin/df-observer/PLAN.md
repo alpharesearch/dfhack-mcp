@@ -353,10 +353,12 @@ Staleness (measured, twice, in both directions):
 - A linked reinstall at the SAME version reuses the loaded module (`application:
   applied`, plugin re-activates, code stays old). Bumping `version` fixed it
   0.1.0 -> 0.1.1 (new command registered, new payload fields appeared).
-- It is NOT reliable: after 0.1.18 -> 0.1.19 -> 0.1.20 the running code was
-  still 0.1.18 - proved by the plugin's own note quoting the retired domain name
-  `dfObserver` (0.1.19+ sends `df_observer`). pnpm says "Already up to date"
-  for a link spec, and the live recomposition reused the module.
+- Bumps DO load: 0.1.21's relabelled header (`food-on-piles`) appeared live
+  after a remove+install. The 0.1.18 -> 0.1.20 "reuse" reading was MY error -
+  the 0.1.19 fix never landed (a replace pattern missed a re-indented line), so
+  the running code behaved identically and looked stale. Lesson recorded in
+  0.1.22: verify an edit by its own marker (`grep` the changed string), not by
+  behaviour alone.
 - Therefore: for a linked bundle, a **Host restart** is the dependable way to
   load new code. `plugin_manager` (which records the bundle version) is the
   supported install route; the CLI `dsh plugin --profile web add <dir>` writes
