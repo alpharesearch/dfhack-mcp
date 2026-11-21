@@ -118,6 +118,12 @@ config object, so copy the keys you change.
   (absent in the game's Lua env) and mood needs unit-thoughts; both are labelled
   as not probeable, never invented.
 
+- Wakes steer (`agent.steer`): a busy agent consumes the alert at its next step,
+  an idle one starts a turn. `followup` queues the next turn (the composer's
+  pending item) - that is what the player had to press.
+- `tile_state_lost` (whitelisted wake): a monitored box's `dug` count DECREASING
+  raises it with both numbers, because positive tile state was removed.
+
 ## Verified platform facts (measured, this install)
 
 - A third-party bundle CANNOT add its own `ctx.remote` namespace on the web

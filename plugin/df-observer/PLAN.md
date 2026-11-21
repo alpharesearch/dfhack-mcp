@@ -571,3 +571,23 @@ Three defects, in severity order:
 Why it matters for play: the flap makes the model re-do work the ledger says is undone (dig
 orders, pile reconfiguration) while the fort is short of food and drink - and every reopen is
 followed by a re-complete alert, which is pure noise on top of the briefing budget.
+
+## 18. The wake boundary (player-measured 2026-11-21)
+
+The player saw a `dig_complete` wake "sitting above my message with the little up
+arrow - I had to press it". Cause: the alert used `agent.followup`, which the
+Agent docs define as "queue an ordinary follow-up turn **and wake the driver**" -
+on a *busy* agent that is a queued next turn, shown as the composer's pending
+item.
+
+Boundary rules (Agent runtime docs, measured):
+
+| call | idle agent | busy agent |
+|---|---|---|
+| `agent.inject` | parks until something else wakes it | claimed at a later step boundary |
+| `agent.followup` | starts a turn | queued as the NEXT turn (the up arrow) |
+| `agent.steer` | starts a turn | consumed at its NEXT STEP |
+
+So: **alerts steer** (`deliveryOf('alert', agent)` -> steer, followup only as a
+fallback), **briefings inject** (state, not a request - the plan's rule). A wake
+now lands mid-task, which is what a water/crew/tile-loss alert is for.
