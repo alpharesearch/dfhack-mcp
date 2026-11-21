@@ -43,12 +43,31 @@ reachability; use those to *explain* a stall.
 `miners` in `fort-progress` before every dig phase, not once. Unpause the game; dig takes
 time, and time is the point.
 
-## 4. Stairs and shafts
-A shaft is **one revealed level at a time**: designate up-down stairs on the current level,
-dig it, then the tile below is revealed - designate that, and so on. Designating every z in
-one batch works in fog (see §2), but each level's stair must be its own designation kind:
-top = down-stairs, middle = up-down, bottom = up-stairs. `scripts/sink_shaft.py` runs this
-loop and stops with a reason if a revealed level is damp, open, or fog.
+## 4. Stairs and shafts - the stairwell comes FIRST, and it goes ALL the way down
+The player's rule, stated twice: designate the stairwell **on every level it crosses**
+(`m -> t`: click the room floor, **scroll one level down**, click again, repeat), and the
+ladder rung is literally *"Stairs connecting the levels"*. So:
+
+- A stairwell is a **continuous column**: top = down-stairs, every middle level = up-down
+  stairs, bottom = up-stairs. A gap in the middle is not a shaft, it is two shafts that
+  reach nothing.
+- **Dig it down to the level you intend to work on, and finish it, BEFORE ordering the room
+  complex on that level.** Access first is not only about a 3-wide band's flanks (§5) - it is
+  the order of the whole plan. I got this backwards: I designated a 975-tile, 50-room complex
+  at elev 36 and only then *started* sinking the shaft to it, and the complex had to be
+  cleared. A plan whose access is unfinished is not a plan.
+- One level at a time when the map is fog (designate, dig, the level below is revealed,
+  designate, ...). `scripts/sink_shaft.py` runs exactly that loop and stops with a reason if
+  a revealed level is damp, open, or fog - and it must be **allowed to run to the target
+  elevation**; killing it mid-shaft leaves a stairwell that ends in the middle of the
+  mountain, which is worse than no stairwell.
+- Each stair designation is per-level: `UP_DOWN_STAIR_DIG` for the middle levels. Sending
+  stairs for one level only (2 tiles at elev 36) buys nothing until the levels below it are
+  dug too.
+- Water rule when the shaft crosses the aquifer band (elev 33-34 here): water follows the
+  shaft down. Plan the drain (cistern/channel above the working level, sealed stairwell,
+  pumps) **before** the shaft is opened through the band - this is the flood the game's
+  "damp" warning is telling you about.
 
 ## 5. Band ordering: middle first
 A 3-wide designation whose flanks have no walkable neighbour is **cancelled silently**.
@@ -144,7 +163,9 @@ not observed.
 ## 14. Sequence for a new fort (the ladder, in dig terms)
 1. Entrance: 3-wide tunnel with depth >=2, dry, from the wagon side - `tunnel-sites`, then
    designate in fog.
-2. Shaft: up-down stairs down 2-4 levels from the entrance (one revealed level at a time).
+2. **Stairwell ALL the way down to the level you intend to work, dug complete** - every
+   crossed z designated (see §4). No room complex is ordered above a stairwell that does
+   not reach it.
 3. General stockpile (exclude corpses/refuse/stone/gems/wood) in the first room.
 4. Meeting area on the 2nd level below ground (zone, 5x5-7x7) - not at the entrance.
 5. Refuse pile OUTSIDE on the surface (miasma rule).
