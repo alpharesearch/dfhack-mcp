@@ -486,6 +486,29 @@ test('acceptance tiles_progress: finds monitored boxes in payload shape', () => 
 })
 
 // ---------------------------------------------------------------------------
+// seeds must not duplicate restored to-dos
+test('seed dedupe: restored to-dos are not re-created by the ladder read', () => {
+  const model = freshModel()
+  model.restoreTodos([
+    { id: 71, title: 'General pile near the wagon', origin: 'auto', state: 'done', accept: { kind: 'pile_general' }, evidence: 'pile 20 accepts …' },
+    { id: 74, title: 'Miners rung', origin: 'ladder', state: 'done', accept: { kind: 'rung', rung: 'labors' }, evidence: 'rung satisfied' },
+  ])
+  model.ingestDeep({
+    rungs: [{ id: 'labors', title: 'Two dwarves on Miners', done: true, keys: 'y', why: 'dig needs picks' },
+      { id: 'meeting', title: 'Meeting area', done: false, keys: 'z', why: 'keeps idle dwarves inside' }],
+    next: null, piles: [], reports: [], crashlog: null, notes: [],
+  })
+  const labors = model.todos.filter((t) => t.accept?.kind === 'rung' && t.accept?.rung === 'labors')
+  assert.equal(labsafe(laborCount(labors)), 1, 'the labors rung exists exactly once')
+  const generals = model.todos.filter((t) => t.accept?.kind === 'pile_general')
+  assert.equal(generals.length, 1, 'pile_general not duplicated by seeds')
+  assert.ok(model.todos.some((t) => t.accept?.kind === 'rung' && t.accept?.rung === 'meeting'), 'new rungs still seed')
+  function laborCount(x) { return x.length }
+  function labsafe(n) { return n }
+  return 'seed dedupe by acceptance signature verified'
+})
+
+// ---------------------------------------------------------------------------
 // wake advice must match what the acceptance proved
 test('wake advice follows the acceptance kind (pile to-do is not a dug box)', async () => {
   const { todoAdvice } = await import(pluginDir + '/model.js')

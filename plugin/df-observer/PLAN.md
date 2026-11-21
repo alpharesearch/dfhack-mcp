@@ -486,3 +486,18 @@ repeats; `df_alerts ack A1` did the same for the alcohol alert (repeats silenced
 while the condition stays). Pile health became visible only after 0.1.28: the
 server keys pile rows by id, and `Array.isArray(data.piles)` silently dropped
 them, so every pile read NO DATA while a direct `curl` showed the rows.
+
+### Measured: rung predicates must be as strict as the rung text (precision gap, live)
+Alert A2 marked to-do #84 "General pile near the wagon, **excluding stone/wood/corpses/refuse/gems**"
+as done with its own evidence showing the pile accepting **gems**:
+
+```
+pile 20 elev38 accepts ammo,animals,armor,bars_blocks,cloth,coins,finished_goods,food,
+                      furniture,gems,leather,sheet,weapons   <- gems present
+```
+
+The predicate only checked "excludes stone/wood". Fixed in-game (`/configure-stockpile` on 20:
+`gems=false`), and the rule for the plugin: **a rung's acceptance test must encode every
+category the rung names** - `pile_categories` with an exact allowed set, not a subset check.
+An alert that quotes evidence contradicting its own title is worse than no alert: it teaches the
+model to accept a half-right state.

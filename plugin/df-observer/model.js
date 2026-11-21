@@ -136,6 +136,17 @@ export const BASIC_TODOS = [
     accept: { kind: 'buildings_kw', keyword: 'door', min: 1 }, cite: 'df-dig §16b (openings)' },
 ]
 
+/** Identity of a to-do for dedupe: what it proves, not its title text. */
+export function todoSignature(todo) {
+  const a = todo?.accept ?? {}
+  const parts = [a.kind ?? 'manual']
+  for (const k of ['rung', 'category', 'keyword', 'elev', 'x0', 'y0', 'x1', 'y1', 'min', 'min_items']) {
+    if (a[k] != null) parts.push(`${k}=${a[k]}`)
+  }
+  if (Array.isArray(a.categories)) parts.push(`categories=${[...a.categories].sort().join('+')}`)
+  return parts.join('|')
+}
+
 /** Fields the status probe owns; they survive fast ticks (facts is replaced). */
 export const STATUS_KEYS = ['picks', 'site_id', 'seeds', 'date', 'alcohol', 'meals', 'raw_food']
 
@@ -421,7 +432,13 @@ export class FortModel {
       // Re-key seeds past anything already registered (a restore can beat the
       // first ladder read).
       const offset = Math.max(0, ...this.todos.map((t) => t.id))
-      this.todos = [...this.todos, ...seeded.map((t) => ({ ...t, id: t.id + offset }))]
+      // Seeds must not duplicate a restored to-do (measured: reloads created a
+      // second general/stone/wood pile task, and the backlog tripped the
+      // overload alert on our own bookkeeping).
+      const taken = new Set(this.todos.map((t) => todoSignature(t)))
+      const fresh = seeded.filter((t) => !taken.has(todoSignature(t)))
+        .map((t) => ({ ...t, id: t.id + offset }))
+      this.todos = [...this.todos, ...fresh]
       this.nextTodoId = Math.max(this.nextTodoId, ...this.todos.map((t) => t.id)) + 1
       this.trim('todos', 80)
       this.seeded = true
