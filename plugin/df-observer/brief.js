@@ -200,6 +200,21 @@ function truncate(text, max) {
  * session projection folds from it, so the log alone reconstructs what the
  * model saw (fork/resume safe).
  */
+/** Ledger-lean todo rows: ids+states for ALL (the log contract), titles for the
+ * first `titleRows` OPEN ones, and evidence only when `evidence` > 0. */
+function leanTodos(todos, limit = 30, evidence = 0, titleRows = 12) {
+  let titled = 0
+  return (todos ?? []).slice(0, limit).map((t) => {
+    const row = { id: t.id, state: t.state }
+    if (t.state !== 'done' && titled < titleRows) {
+      titled += 1
+      row.title = String(t.title ?? '').slice(0, 24)
+    }
+    if (evidence > 0 && t.evidence) row.evidence = String(t.evidence).slice(0, evidence)
+    return row
+  })
+}
+
 const shrinkCompactTodo = (t) => ({ id: t.id, state: t.state, title: String(t.title ?? '').slice(0, 90),
   accept: t.accept, evidence: String(t.evidence ?? '').slice(0, 110) })
 const shrinkCompactAlert = (a) => ({ id: a.id, kind: a.kind, coord: a.coord, count: a.count,
@@ -242,14 +257,20 @@ const SHRINK_LEVELS = [
     poll: p.poll ?? null, pauseSource: p.pauseSource ?? null, pauseAuthority: p.pauseAuthority ?? null,
     facts: compactFacts(p.facts), reports: (p.reports ?? []).slice(-2),
     designations: compactDesignations(p.designations),
-    todos: (p.todos ?? []).slice(0, 24).map((t) => ({ id: t.id, state: t.state, evidence: String(t.evidence ?? '').slice(0, 60) })),
+    todos: leanTodos(p.todos, 24, 60),
+    // level 7 keeps evidence and titles for the OPEN rows only (measured: titles on all
+    // 30 rows cost ~200 tokens and busted the 300-token test budget)
     alerts: (p.alerts ?? []).slice(0, 8).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked, coord: a.coord })),
     digEvents: (p.digEvents ?? []).slice(0, 6) }),
   (p) => ({ tick: p.tick, online: p.online, paused: p.paused, poll: p.poll,
     generation: p.generation ?? null, pauseSource: p.pauseSource ?? null,
     pauseAuthority: p.pauseAuthority, facts: compactFacts(p.facts), reports: (p.reports ?? []).slice(-1),
     designations: compactDesignations(p.designations),
-    todos: (p.todos ?? []).slice(0, 30).map((t) => ({ id: t.id, state: t.state })),
+    // Measured: ids without titles read as cryptic placeholders in the panel
+    // (`#21 #40 #41 …`); titles ride on the OPEN rows, which are the rows the
+    // panel lists, so the ledger keeps ids+states for every row and pays only
+    // where a human reads words.
+    todos: leanTodos(p.todos, 30, 0, 8),
     // coord stays: it is the shortest part of an alert that still tells a reader
     // WHERE, and the panel renders a row from it when evidence is trimmed away.
     alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked, coord: a.coord })) }),
@@ -391,7 +412,10 @@ export function buildWake(alert, payload, { maxTokens }) {
         data: { tick: payload.tick, online: payload.online, paused: payload.paused,
           alerts: [{ id: alert.id, kind: alert.kind, coord: alert.coord, evidence: String(alert.evidence).slice(0, 120), acked: false }],
           todos: (payload.todos ?? []).slice(0, 6).map((t) => ({ id: t.id, state: t.state })) } }
-      const out2 = `${lines.slice(0, 2).join('\n')}\n${PAYLOAD_PREFIX}${JSON.stringify(minimal)}`
+      // The ack line is the actionable sentence in a wake, so the tight-budget
+      // fallback keeps it (measured: slicing to lines[0..1] dropped it, and a wake
+      // without the ack advice teaches nothing).
+      const out2 = `${[lines[0], lines[1], lines[lines.length - 1]].filter(Boolean).join('\n')}\n${PAYLOAD_PREFIX}${JSON.stringify(minimal)}`
       return { text: out2, tokens: estimateTokens(out2), overBudget: estimateTokens(out2) > maxTokens }
     }
   }

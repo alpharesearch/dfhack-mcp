@@ -678,6 +678,23 @@ test('lean wire payloads keep the designation summary the panel needs', () => {
   return 'designation summary survives every lean level, under 260 chars'
 })
 
+test('every wire level carries to-do titles (ids alone read as placeholders)', () => {
+  const todos = [{ id: 21, state: 'open', title: 'Farm plot built (needs tree-free soil floors)', evidence: 'e'.repeat(200) },
+    { id: 40, state: 'open', title: 'Water adit at in-game 35 from the stairwell eastward' }]
+  const base = { tick: 4, online: true, paused: false, generation: 1, poll: 8000, facts: { pop: 102, dwarves: 21 }, reports: [], todos, alerts: [] }
+  for (const level of [7, 8]) {
+    const d = shrinkPayloadLevel(base, level)
+    const open = d.todos.filter((t) => t.state !== 'done')
+    assert.ok(open.length > 0 && open.every((t) => typeof t.title === 'string' && t.title.length > 0), `level ${level} OPEN rows carry titles (saw ${JSON.stringify(open[0])})`)
+    assert.ok(open.every((t) => t.title.length <= 30), `level ${level} titles stay short`)
+    assert.deepEqual(d.todos.map((t) => `${t.id}:${t.state}`), ['21:open', '40:open'], `level ${level} keeps the full ledger of ids+states`)
+  }
+  const wide = shrinkPayloadLevel({ ...base, todos: base.todos.concat(Array.from({ length: 20 }, (_, i) => ({ id: 100 + i, state: 'done', title: 'done thing' }))) }, 8)
+  const titled = wide.todos.filter((t) => t.title).length
+  assert.ok(titled <= 12, `titles are paid for at most 12 open rows (saw ${titled})`)
+  return 'open rows titled, ledger intact, cost capped'
+})
+
 test('config declares each key exactly once (duplicate zod keys are a silent last-wins)', () => {
   const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
   const keys = [...index.matchAll(/^  ([a-z_]+): z\./gm)].map((m) => m[1])

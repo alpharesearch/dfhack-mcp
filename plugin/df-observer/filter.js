@@ -91,36 +91,69 @@ const num = (v) => Number(v ?? 0)
 import { PAYLOAD_PREFIX } from './model.js'
 import { shrinkPayloadLevel, SHRINK_MAX, estimateTokens } from './brief.js'
 
+/** Titles are panel sugar: the filtered wire pays for them only when the cap can
+ * afford them (measured: 8 titles cost ~50 tokens and a 260-token cap could not).
+ * The ledger (ids + states) is never touched. */
+const withoutTitles = (d) => (Array.isArray(d?.todos)
+  ? { ...d, todos: d.todos.map((t) => { const { title, ...rest } = t; return rest }) }
+  : d)
+const withoutScan = (d) => ({ ...d, designations: undefined })
+
+
+
 export function buildFilteredBriefing(verdict, payload, { maxTokens }) {
-  const lines = [`DF-OBSERVER (filtered) tick ${payload.tick}${payload.paused ? ' | PAUSED' : ''}`]
-  if (verdict.headline) lines.push(`HEADLINE: ${verdict.headline}`)
-  for (const change of (verdict.changes ?? []).slice(0, 6)) lines.push(`  - ${change}`)
   const next = verdict.next ?? payload.next
-  if (next) {
-    const at = next.at ? ` (x${next.at.x0}-${next.at.x1} y${next.at.y0}-${next.at.y1} elev${next.at.elev})` : ''
-    lines.push(`NEXT: ${next.id ?? ''} ${next.title ?? ''}${at}${next.keys ? ` | keys: ${next.keys}` : ''}`)
-  }
-  for (const note of (verdict.notes ?? []).slice(0, 3)) lines.push(`NOTE: ${note}`)
-  const boxes = (payload.boxes ?? []).slice(0, 3).map((b) =>
+  const at = next?.at ? ` (x${next.at.x0}-${next.at.x1} y${next.at.y0}-${next.at.y1} elev${next.at.elev})` : ''
+  const boxLines = (payload.boxes ?? []).map((b) =>
     `elev${b.elev} x${b.box[0]}-${b.box[2]} y${b.box[1]}-${b.box[3]}: to_dig ${b.to_dig} | dug ${b.dug} | pending ${b.pending}`)
-  if (boxes.length) lines.push(`DIG: ${boxes.join(' ; ')}`)
-  lines.push('Detail: df_status / df_todo / df_alerts. Filter is the plugin\'s analyst; wake whitelist stays Config-enforced.')
-  const text = lines.join('\n')
-  for (let level = 0; level <= SHRINK_MAX; level += 1) {
-    const data = shrinkPayloadLevel(payload, level)
-    const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: payload.tick, data })}`
-    const out = `${text}\n${stateLine}`
-    const tokens = estimateTokens(out)
-    if (tokens <= maxTokens) return { text: out, tokens, payloadLevel: level }
+  const head = `DF-OBSERVER (filtered) tick ${payload.tick}${payload.paused ? ' | PAUSED' : ''}`
+  // The filter's OWN prose shrinks with the budget too (measured: at a 260-token
+  // cap the prose plus the leanest wire is 275 - the floor was my text, not the
+  // payload). Text levels, in the order a reader misses them last.
+  const texts = [
+    [
+      head,
+      verdict.headline ? `HEADLINE: ${verdict.headline}` : '',
+      ...(verdict.changes ?? []).slice(0, 6).map((c) => `  - ${c}`),
+      next ? `NEXT: ${next.id ?? ''} ${next.title ?? ''}${at}${next.keys ? ` | keys: ${next.keys}` : ''}` : '',
+      ...(verdict.notes ?? []).slice(0, 3).map((n) => `NOTE: ${n}`),
+      boxLines.length ? `DIG: ${boxLines.slice(0, 3).join(' ; ')}` : '',
+      'Detail: df_status / df_todo / df_alerts. Filter is the plugin\'s analyst; wake whitelist stays Config-enforced.',
+    ].filter(Boolean).join('\n'),
+    [
+      head,
+      verdict.headline ? `HEADLINE: ${verdict.headline}` : '',
+      ...(verdict.changes ?? []).slice(0, 4).map((c) => `  - ${c}`),
+      next ? `NEXT: ${next.id ?? ''} ${next.title ?? ''}${at}` : '',
+      boxLines.length ? `DIG: ${boxLines.slice(0, 2).join(' ; ')}` : '',
+      'Detail: df_status / df_todo / df_alerts.',
+    ].filter(Boolean).join('\n'),
+    [
+      head,
+      verdict.headline ? `HEADLINE: ${verdict.headline}` : '',
+      ...(verdict.changes ?? []).slice(0, 2).map((c) => `  - ${c}`),
+    ].filter(Boolean).join('\n'),
+  ]
+  for (let textLevel = 0; textLevel < texts.length; textLevel += 1) {
+    const text = texts[textLevel]
+    for (let level = 0; level <= SHRINK_MAX; level += 1) {
+      const full = shrinkPayloadLevel(payload, level)
+      // Sugar first, in the order a reader misses it last: titles, then the scan.
+      // The ledger (ids + states) is never part of the strip ladder.
+      for (const data of [full, withoutTitles(full), withoutScan(withoutTitles(full))]) {
+        const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: payload.tick, data })}`
+        const out = `${text}\n${stateLine}`
+        const tokens = estimateTokens(out)
+        if (tokens <= maxTokens) return { text: out, tokens, payloadLevel: level, textLevel }
+      }
+    }
   }
-  const data = shrinkPayloadLevel(payload, SHRINK_MAX)
+  const data = withoutScan(withoutTitles(shrinkPayloadLevel(payload, SHRINK_MAX)))
   const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'briefing', tick: payload.tick, data })}`
-  const shortText = lines.slice(0, 2).join('\n')
-  const out = `${shortText}\n${stateLine}`
-  return { text: out, tokens: estimateTokens(out), overBudget: estimateTokens(out) > maxTokens }
+  const out = `${texts[texts.length - 1]}\n${stateLine}`
+  return { text: out, tokens: estimateTokens(out), payloadLevel: SHRINK_MAX, textLevel: texts.length - 1, overBudget: estimateTokens(out) > maxTokens }
 }
 
-/** Wake text from a filter-proposed, plugin-approved alert. */
 export function buildFilterWake(alert, payload, { maxTokens = 420 } = {}) {
   const lines = [
     `DF-OBSERVER ALERT (filter, tick ${payload.tick}) ${alert.kind}${alert.coord ? ` at ${alert.coord}` : ''}:`,
