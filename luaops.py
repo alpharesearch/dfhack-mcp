@@ -659,6 +659,14 @@ async def list_zones(dec) -> list[dict]:
         if len(parts) < 10:
             continue
         _, bid, tval, tname, x1, x2, y1, y2, z, flag = parts
+        # The RPC reply stream cross-talks: a PILE row (whose third field is an extent
+        # string like "66..67,112..113") arrived inside the ZONE scan and the int() calls
+        # blew up (measured 2026-11-21: "zones unavailable: invalid literal for int() with
+        # base 10: '66..67,112..113'"). A zone row has ten numeric-shaped fields; anything
+        # else is a foreign row - skip it and say so, never crash the read.
+        if not all(tok.lstrip("-").isdigit() for tok in (bid, tval, x1, x2, y1, y2, z)):
+            print(f"[list_zones] foreign row skipped: {line[:70]!r}", file=sys.stderr)
+            continue
         rows.append({"id": int(bid), "type": int(tval), "type_name": tname,
                      "x0": int(x1), "x1": int(x2), "y0": int(y1), "y1": int(y2),
                      "elev": int(z) - GAME_Z_OFFSET,

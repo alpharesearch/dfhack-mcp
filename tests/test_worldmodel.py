@@ -500,7 +500,8 @@ def test_scan_row_guards_match_the_row_they_parse():
     2026-11-21; the zone row legitimately has 10 fields, so the two scans need different
     widths and each guard must match its own unpack."""
     lo = pathlib.Path("luaops.py").read_text()
-    for name, width in (("list_zones", 10), ("list_stockpiles", 9)):
+    # The pile row grew a 10th field (panel_number) on 2026-11-21 - the guard must track it.
+    for name, width in (("list_zones", 10), ("list_stockpiles", 10)):
         i = lo.index("async def " + name)
         body = lo[i:lo.index("async def ", i + 10)]
         assert f"if len(parts) < {width}:" in body, name + ": guard must match the row width"
