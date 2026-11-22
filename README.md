@@ -14,13 +14,13 @@ Setup, wiring to a harness, and troubleshooting: [SETUP-LINUX.md](SETUP-LINUX.md
 
 | Path | What it is |
 |---|---|
-| [`main.py`](main.py) | the MCP server: FastAPI routes that become MCP tools, plus the RPC traps docstring |
-| [`worldmodel.py`](worldmodel.py) | the preprocessing layer — fetch, cache, decode, aggregate, project, budget |
-| [`luaops.py`](luaops.py) | the Lua-side operations driven over DFHack (labors, dig reachability, building ops) |
-| [`vendor/dfhack-client-python/`](vendor/dfhack-client-python) | the vendored DFHack RPC client (third-party, editable install — see [License](#license)) |
+| [`main.py`](main.py) | the MCP server: FastAPI routes with typed Pydantic schemas that become MCP tools, plus the RPC traps docstring |
+| [`worldmodel.py`](worldmodel.py) | the preprocessing layer — fetch, cache, decode, aggregate, project, budget, plus the SQLite `TransitionStore` |
+| [`luaops.py`](luaops.py) | the Lua-side operations driven over DFHack + the auto-bootstrapping JSON bridge to `deployables/scripts/dfhack_mcp.lua` |
+| [`vendor/dfhack-client-python/`](vendor/dfhack-client-python) | the vendored DFHack RPC client (per-call task-local `ContextVar` reply isolation, auto-reconnect — see [License](#license)) |
 | [`plugin/df-observer/`](plugin/df-observer) | a harness-side companion plugin: watches the game and pushes briefings, to-dos and alerts unprompted |
-| [`skills/`](skills) | agent skills (`df-dig`, `df-stockpile`) — the labour playbook the tools assume |
-| [`deployables/`](deployables) | quickfort blueprints and lua scripts authored here, deployed by copy into the game dir |
+| [`skills/`](skills) | agent skills (`df-dig`, `df-stockpile`, `df-placement`) — the labour playbook the tools assume |
+| [`deployables/`](deployables) | quickfort blueprints and [`deployables/scripts/dfhack_mcp.lua`](deployables/scripts/dfhack_mcp.lua), deployed by copy into the game dir |
 | [`scripts/`](scripts) | operator scripts: `mcp-reload.sh`, `deploy.sh`, dig/watch helpers |
 | [`tests/`](tests) | unit + live-game tests (python) and the plugin's node test |
 | `PLAN-MODEL.md`, `PLAN-TOOLS.md` | design notes: why the layer is shaped this way, and the tool-surface plan |
@@ -57,9 +57,12 @@ caches, decodes, aggregates, and projects. Rules:
 * **Deltas.** Consecutive calls report what *changed* (new/cleared designations,
   buildings, item counts, water/magma) — 29 tokens, which is what makes a long game
   playable in a small context.
-* **Coordinates are game elevations** (`elev = rpc_z - 128`). The offset, the x/y
-  dig transposition, and the half-open z bounds are handled inside the layer and never
-  reach the model.
+* **Coordinates are game elevations** (`elev = rpc_z - 129`, `WM.GAME_Z_OFFSET`). The offset,
+  rectangle/stair-shaft expansion, and the half-open z bounds are handled inside the layer and
+  never reach the model.
+* **Persistent tile transitions (`TransitionStore`).** Observed `wall/fog → floor/stair/ramp`
+  transitions are persisted in SQLite (`.dfhack-transitions.sqlite3`) keyed by save identity so
+  player-dug tunnels and stairwells are never confused with natural subterranean caverns.
 * **Mode gating.** Fortress and adventure are different games; map projections check
   `GetWorldInfo` mode and refuse to answer in adventure mode.
 
@@ -68,27 +71,32 @@ caches, decodes, aggregates, and projects. Rules:
 | Tool | Gives you | Tokens |
 |---|---|---|
 | `look` | date, pause, population by role/species/soldier/wounded/hostile, reports, 12-elevation strip, deltas, dig clusters, item and building rollups, named regions, ladder status + next step | **1,232** |
-| `fort_progress` | the Quickstart milestone ladder evaluated live, with keys, why, a coordinate box, flood alerts | **430** |
-| `world_zone(e0,e1)` | one line per elevation | **286** |
-| `world_map(e,x0,x1,y0,y1)` | glyph grid of a window, RLE, region letters | **721** |
+| `fort_progress` | the Quickstart milestone ladder evaluated live, with keys, why, a coordinate box, flood alerts, and transition-verified dug counts | **430** |
+| `world_map(e,x0,x1,y0,y1)` | glyph grid of a window with a column-aligned X-coordinate ruler, left Y-coordinate labels, and region letters | **721** |
 | `world_objects(e0,e1)` | everything actionable, nothing else | **674** |
 | `world_delta` | only what changed since the last read | **29** |
+| `transitions` | transition-verified excavated tiles (`dug_floors`, `dug_stairs`, `dug_ramps`) from the SQLite `TransitionStore` | **120** |
+| `building_status` | unfinished/planned buildings, construction stages, missing material filters, crew labor/pick bottlenecks, and recent cancellation reports | **180** |
 | `tile_legend` | the stable glyph alphabet | **321** |
 | `world_minimap` | 1 char per 16×16 block, 48 z (opt-in: all 191 z) | 3,713 (13,688) |
-| `world_raw` | raw blocks **written to a file** (grep it), never into context | **50** |
-| `get_block_list` | the old raw tool, kept for power users, with its size announced | 196,361 |
+| `world_raw` | raw blocks **written to a file** (HTTP operator endpoint, excluded from MCP tool list) | **50** |
+| `get_block_list` | the old raw tool (HTTP operator endpoint, excluded from MCP tool list) | 196,361 |
 
 Briefing vs raw: **159× smaller.** Raw z-level vs objects view: **180× smaller**, and
 the objects view is the same planning content.
 
-Action tools ride the same idea: designation (`send_dig_command`), quickfort
-blueprints (`apply_blueprint`), buildings (`place_building`, `create_stockpile`,
-`resize_building`, `configure_stockpile`), labors (`labor_list`, `set_unit_labors`),
-work orders (`work_order`), keyboard (`pass_keyboard_event`), pause
-(`set_pause_state`), plus safety reads (`survey`, `depth_profile`, `overburden`,
-`tunnel_sites`, `probe_plan`, `hazards`, `warnings`, `dig_reachable`, `wagon_path`,
-`walkable_between`). The current registered set is what `./scripts/mcp-reload.sh probe`
-reports against `/mcp`.
+Action tools ride the same idea: designation (`send_dig_command` with `box`, `boxes`,
+`middle_first`, and multi-z `stair_shaft` helpers), quickfort blueprints
+(`apply_blueprint`), buildings (`place_building`, `create_stockpile`,
+`configure_stockpile`, `configure_farmplot`, `create_zone`, `remove_building`,
+`remove_zone` — all protected by pre-flight footprint ground checks and duplicate-footprint
+idempotency), trees/water (`find_trees`, `cut_trees`, `find_water`), labors
+(`labor_list`, `set_unit_labors`), work orders (`work_order`), allowlisted commands
+(`run_command`), keyboard (`pass_keyboard_event`), pause (`set_pause_state`), plus
+safety reads (`survey`, `depth_profile`, `overburden`, `cross_section`, `column`,
+`tunnel_sites`, `probe_plan`, `hazards`, `magma_depth`, `warnings`, `dig_reachable`,
+`reach_map`, `wagon_path`, `walkable_between`, `building_status`, `transitions`). The
+current registered set is what `./scripts/mcp-reload.sh probe` reports against `/mcp`.
 
 ### The ladder (why `fort_progress` exists)
 

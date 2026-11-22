@@ -1,8 +1,12 @@
 # deployables/scripts - DFHack lua scripts, deployed by copy
 
 Anything here (including subdirectories, e.g. `gui/`) is copied to
-`<gamedir>/hack/scripts/` by `./scripts/deploy.sh`. DFHack loads scripts at game start,
-so a deploy needs a restart to take effect.
+`<gamedir>/hack/scripts/` by `./scripts/deploy.sh`.
 
-No scripts ship yet; this file exists so the directory survives a clone (git does not
-track empty directories).
+## Shipped scripts
+
+* [`dfhack_mcp.lua`](dfhack_mcp.lua) — the server-side RPC Lua module for `dfhack-mcp`.
+  Exposes structured JSON operations (`game_paths`, `observe_status`, `building_status`,
+  `configure_farmplot`) returning `MCP_JSON|{...}` lines. Deployed to
+  `<gamedir>/hack/scripts/dfhack_mcp.lua` via `./scripts/deploy.sh deploy`, and also
+  auto-bootstrapped into `_G.__dfhack_mcp` per connection generation by `luaops.py`.

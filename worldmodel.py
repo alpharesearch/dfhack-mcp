@@ -35,7 +35,10 @@ Design rules
 from __future__ import annotations
 
 import asyncio
+import os
+import pathlib
 import re
+import sqlite3
 import time
 from collections import Counter, defaultdict, deque
 
@@ -877,8 +880,19 @@ def map_lines(lv: LevelModel, x0: int, x1: int, y0: int, y1: int, b: Budget,
     and buildings (`B`) - on top of the terrain glyph, because a map view that shows
     only terrain hides the very things a player acts on (verified live: a 12-tile
     channel design at x21 read as blank space)."""
+    rle_note = " (RLE on; pass rle=false for column-aligned x ruler)" if rle else ""
     lines = [f"z{lv.z} elev{lv.elev} window x{x0}-{x1} y{y0}-{y1} "
-             f"({x1 - x0 + 1}x{y1 - y0 + 1} tiles)"]
+             f"({x1 - x0 + 1}x{y1 - y0 + 1} tiles){rle_note}"]
+    if not rle and (x1 - x0 + 1) <= 192:
+        if x1 >= 100:
+            r100 = "  x |" + "".join(str((gx // 100) % 10) if gx >= 100 else " " for gx in range(x0, x1 + 1))
+            b.spend(len(r100) + 1)
+            lines.append(r100)
+        r10 = "    |" + "".join(str((gx // 10) % 10) for gx in range(x0, x1 + 1))
+        r1 = "    |" + "".join(str(gx % 10) for gx in range(x0, x1 + 1))
+        b.spend(len(r10) + len(r1) + 2)
+        lines.append(r10)
+        lines.append(r1)
     region_of = {}
     if region_labels:
         for r in lv.regions:
@@ -898,7 +912,7 @@ def map_lines(lv: LevelModel, x0: int, x1: int, y0: int, y1: int, b: Budget,
         for gx in range(x0, x1 + 1):
             ch = marks.get((gx, gy))
             if ch is None:
-                oy, ox = lv.origin
+                ox, oy = lv.origin
                 iy, ix = gy - oy, gx - ox
                 ch = lv.grid[iy][ix] if 0 <= iy < lv.rows and 0 <= ix < lv.cols else " "
             row += ch
@@ -1059,6 +1073,183 @@ def diff_snapshot(prev: dict, cur: dict, elev: int) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Persistent Tile Transition Store (PLAN-MODEL.md Technique 1: wall -> floor)
+#
+# Distinguishes player-dug tunnels/stairs from natural subterranean caverns by
+# tracking tile-class transitions from an observed solid/fog baseline ('#', '?')
+# to excavated floor ('.', "'", '+', 's'), stair ('=', '<', '>'), or ramp ('/', '^'),
+# persisted to a local SQLite database keyed by the loaded save identity.
+# ---------------------------------------------------------------------------
+
+class TransitionStore:
+    SOLID_GLYPHS = {"#", "?"}
+    FLOOR_GLYPHS = {".", "'", "+", "s"}
+    STAIR_GLYPHS = {"=", "<", ">"}
+    RAMP_GLYPHS = {"/", "^"}
+
+    def __init__(self, db_path: str | None = None):
+        default_path = os.getenv(
+            "DFHACK_TRANSITIONS_DB",
+            str(pathlib.Path(__file__).resolve().parent / ".dfhack-transitions.sqlite3"),
+        )
+        self.db_path = db_path or default_path
+        self._baseline: dict[str, dict[tuple[int, int, int], str]] = defaultdict(dict)
+        self._transitions: dict[str, dict[tuple[int, int, int], dict]] = defaultdict(dict)
+        self._loaded_keys: set[str] = set()
+        self._conn: sqlite3.Connection | None = None
+
+    def _db(self) -> sqlite3.Connection | None:
+        if self._conn is not None:
+            return self._conn
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS tile_transitions ("
+                "  save_key TEXT NOT NULL,"
+                "  x INTEGER NOT NULL,"
+                "  y INTEGER NOT NULL,"
+                "  elev INTEGER NOT NULL,"
+                "  from_glyph TEXT NOT NULL,"
+                "  to_glyph TEXT NOT NULL,"
+                "  kind TEXT NOT NULL,"
+                "  at REAL NOT NULL,"
+                "  PRIMARY KEY (save_key, x, y, elev)"
+                ")"
+            )
+            conn.commit()
+            self._conn = conn
+            return conn
+        except Exception:
+            return None
+
+    def _ensure_loaded(self, save_key: str) -> None:
+        if not save_key or save_key in self._loaded_keys:
+            return
+        self._loaded_keys.add(save_key)
+        conn = self._db()
+        if conn is None:
+            return
+        try:
+            cur = conn.execute(
+                "SELECT x, y, elev, from_glyph, to_glyph, kind, at "
+                "FROM tile_transitions WHERE save_key = ?",
+                (save_key,),
+            )
+            bucket = self._transitions[save_key]
+            for x, y, elev, fg, tg, kind, at in cur.fetchall():
+                bucket[(int(x), int(y), int(elev))] = {
+                    "x": int(x), "y": int(y), "elev": int(elev),
+                    "from": str(fg), "to": str(tg), "kind": str(kind), "at": float(at),
+                }
+        except Exception:
+            pass
+
+    def ingest_level(self, save_key: str, lv: LevelModel) -> int:
+        """Compare lv's current grid against the solid/fog baseline for save_key and
+        record any newly excavated tiles (wall/fog -> floor/stair/ramp)."""
+        if not save_key or not lv.rows or not lv.cols:
+            return 0
+        self._ensure_loaded(save_key)
+        base = self._baseline[save_key]
+        trans = self._transitions[save_key]
+        ox, oy = lv.origin
+        elev = int(lv.elev)
+        now = time.time()
+        new_rows = []
+        for gy in range(lv.rows):
+            row = lv.grid[gy]
+            y = oy + gy
+            for gx in range(lv.cols):
+                g = row[gx]
+                x = ox + gx
+                coord = (x, y, elev)
+                if g in self.SOLID_GLYPHS:
+                    base.setdefault(coord, g)
+                elif coord in base:
+                    if g in self.FLOOR_GLYPHS:
+                        kind = "dug_floor"
+                    elif g in self.STAIR_GLYPHS:
+                        kind = "dug_stair"
+                    elif g in self.RAMP_GLYPHS:
+                        kind = "dug_ramp"
+                    else:
+                        continue
+                    prev = trans.get(coord)
+                    if prev is None or prev["to"] != g:
+                        rec = {
+                            "x": x, "y": y, "elev": elev,
+                            "from": base[coord], "to": g, "kind": kind, "at": now,
+                        }
+                        trans[coord] = rec
+                        new_rows.append((save_key, x, y, elev, base[coord], g, kind, now))
+        if new_rows:
+            conn = self._db()
+            if conn is not None:
+                try:
+                    conn.executemany(
+                        "INSERT OR REPLACE INTO tile_transitions "
+                        "(save_key, x, y, elev, from_glyph, to_glyph, kind, at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        new_rows,
+                    )
+                    conn.commit()
+                except Exception:
+                    pass
+        return len(new_rows)
+
+    def clear_save(self, save_key: str | None = None) -> None:
+        """Reset recorded baselines and transitions (called on save reload / rollback)."""
+        if save_key:
+            self._baseline.pop(save_key, None)
+            self._transitions.pop(save_key, None)
+            self._loaded_keys.discard(save_key)
+            conn = self._db()
+            if conn is not None:
+                try:
+                    conn.execute("DELETE FROM tile_transitions WHERE save_key = ?", (save_key,))
+                    conn.commit()
+                except Exception:
+                    pass
+        else:
+            self._baseline.clear()
+            self._transitions.clear()
+            self._loaded_keys.clear()
+
+    def summary(self, save_key: str, elev0: int | None = None, elev1: int | None = None) -> dict:
+        self._ensure_loaded(save_key)
+        trans = self._transitions.get(save_key, {})
+        floors = stairs = ramps = 0
+        by_elev: dict[int, dict[str, int]] = {}
+        recent = []
+        for (x, y, e), rec in trans.items():
+            if elev0 is not None and e < elev0:
+                continue
+            if elev1 is not None and e > elev1:
+                continue
+            k = rec["kind"]
+            eb = by_elev.setdefault(e, {"dug_floor": 0, "dug_stair": 0, "dug_ramp": 0})
+            eb[k] = eb.get(k, 0) + 1
+            if k == "dug_floor":
+                floors += 1
+            elif k == "dug_stair":
+                stairs += 1
+            elif k == "dug_ramp":
+                ramps += 1
+            recent.append(rec)
+        recent.sort(key=lambda r: -r["at"])
+        return {
+            "save_key": save_key,
+            "dug_floors": floors,
+            "dug_stairs": stairs,
+            "dug_ramps": ramps,
+            "total_dug_transitions": floors + stairs + ramps,
+            "baseline_solid_tracked": len(self._baseline.get(save_key, {})),
+            "by_elev": {str(e): by_elev[e] for e in sorted(by_elev, reverse=True)},
+            "recent": recent[:25],
+        }
+
+
+# ---------------------------------------------------------------------------
 # The orchestrator: one per MCP process. Owns the decode tables, the z-chunk
 # cache, and the previous-snapshot used for deltas.
 # ---------------------------------------------------------------------------
@@ -1067,6 +1258,7 @@ class WorldModel:
     def __init__(self):
         self.dec = Decoders()
         self.cache = WorldCache()
+        self.transitions = TransitionStore()
         self._state: dict = {}
         self._prev: dict[int, dict] = {}
         self._band: tuple[int, int] | None = None
@@ -1154,6 +1346,10 @@ class WorldModel:
         self._state.clear()
         self._prev.clear()
         self._desig_memo = None      # the designation scan is derived too
+        if self._sig and self._sig.get("key"):
+            self.transitions.clear_save(self._sig["key"])
+        else:
+            self.transitions.clear_save()
         scope = "cache only"
         try:
             from dfhack_client_python.dfhack import ResetMapHashes
@@ -1719,7 +1915,8 @@ class WorldModel:
                 "scanned_to": last, "note": "no magma found in scanned range"}
 
     async def annotate_depth(self, facts: "FortFacts") -> "FortFacts":
-        """Count floor tiles that sit at depth >=2 under their local surface.
+        """Count floor tiles that sit at depth >=2 under their local surface, and attach
+        transition-verified dug counts from TransitionStore.
 
         That number - not raw floor_tiles - is what distinguishes a dug tunnel from a
         grassland, and it is what the ladder's entrance rung now checks.
@@ -1737,6 +1934,10 @@ class WorldModel:
                 if top - e >= 2 and g in (".", "s", "S"):     # floor / smooth / constructed
                     n += 1
         facts.underground_floors = n
+        skey = (self._sig or {}).get("key", "default")
+        ts = self.transitions.summary(skey)
+        facts.dug_floors = ts["dug_floors"]
+        facts.dug_stairs = ts["dug_stairs"]
         return facts
 
     async def warnings(self, e0: int | None = None, e1: int | None = None) -> dict:
@@ -2135,7 +2336,11 @@ class WorldModel:
         byz = defaultdict(list)
         for b in blocks:
             byz[b.map_z].append(b)
-        return [build_level(z, byz[z], dec) for z in sorted(byz)]
+        out = [build_level(z, byz[z], dec) for z in sorted(byz)]
+        skey = (self._sig or {}).get("key", "default")
+        for lv in out:
+            self.transitions.ingest_level(skey, lv)
+        return out
 
     async def levels(self, e0: int, e1: int, force: bool = False) -> list[LevelModel]:
         """Levels between game elevations e0..e1 inclusive."""
@@ -2756,11 +2961,15 @@ _LADDER = [
 
 
 def progress_lines(facts: FortFacts, with_next: bool = True) -> list[str]:
+    dug_note = ""
+    if getattr(facts, "dug_floors", 0) or getattr(facts, "dug_stairs", 0):
+        dug_note = (f" | transition-verified dug: {getattr(facts, 'dug_floors', 0)} floors, "
+                    f"{getattr(facts, 'dug_stairs', 0)} stairs")
     lines = [f"LADDER (quickstart order) | pop {facts.pop}, soldiers {facts.soldiers}, "
              f"hostile {facts.hostile} | food {facts.food}, drink {facts.drink}, "
              f"wood {facts.wood}, stone {facts.stone}, metal {facts.metal} | "
              f"miners {facts.miners}, pending dig {facts.designations}",
-             f"underground floors (depth>=2): {getattr(facts, 'underground_floors', 0)}"]
+             f"underground floors (depth>=2): {getattr(facts, 'underground_floors', 0)}{dug_note}"]
     missing = []
     for rid, rung, done, keys, why in _LADDER:
         ok = done(facts)

@@ -254,8 +254,8 @@ already says exactly that, and the zone tool was pointed at the player's live fo
 
 | Phase | Content | Result |
 |---|---|---|
-| **1. Hygiene + safety** | drop the 7 raw reads from the tool list, merge diagnostics into `server_status`, allowlist `run_command` (deny `lua`/`script`/destructive), `max_chars` on `copy_screen` | ~24 tools, raw door closed, token footguns gone |
-| **2. Ladder P0** | `create_zone`, `create/configure/contents` for stockpiles, `assign_room`, `squad`, `burrow`, `complete_designations` | the 6 mouse-only rungs become executable by the model |
+| **1. Hygiene + safety (✅ DONE 2026-11-22)** | drop 16 raw/redundant endpoints from the MCP tool list (`exclude_operations`), merge diagnostics into `get_status?detail=full`, allowlist `run_command` (deny `lua`/`script`/`dig-now`/`build-now`/destructive), `max_chars` on `copy_screen`, typed Pydantic request models on all 21 POST routes, fix `_reply_log` cross-talk race via task-local `ContextVar`, deploy [`deployables/scripts/dfhack_mcp.lua`](deployables/scripts/dfhack_mcp.lua) | clean typed schemas, raw door closed, token footguns gone, ~20 ms Lua calls with zero cross-talk |
+| **2. Ladder P0 (in progress)** | `create_zone` (with ground gate + idempotency), `create/configure/list` for stockpiles (unified ground gate + UI arrays), `configure_farmplot`, `building_status`, `send_dig_command` (`box`, `boxes`, `middle_first`, `stair_shaft`), `transitions` (`TransitionStore`); remaining: `assign_room`, `squad`, `burrow`, `complete_designations` | core early-game rungs and stall diagnostics executable by the model |
 | **3. Management P1** | `job_postings`, `hauling_routes`, `path_report`, `fort_facts`, `tool_switch`, `warnings` | the model can answer "why is nothing happening" |
 | **4. Depth P2** | `locate_ore`, `caravan`, `fluid` | longer-game planning |
 | **5. Retrieval (optional)** | facts/items indexed for long-tail questions (sqlite-vec + an embedder, as chosen earlier) | only after 1-4; aggregation, not RAG, is what fixed perception |

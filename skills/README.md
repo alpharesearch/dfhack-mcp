@@ -7,7 +7,8 @@ into one harness install.
 ## Library
 | Skill | Covers |
 |---|---|
-| [`df-dig`](df-dig/SKILL.md) | tunnels, rooms, stair shafts: depth/overburden, damp & hot hazards, designating into fog, labour, band ordering, proving the dig, background-job waits, this world's geometry |
+| [`df-dig`](df-dig/SKILL.md) | tunnels, rooms, stair shafts (`box`, `boxes`, `middle_first`, `stair_shaft`): depth/overburden, damp & hot hazards, designating into fog, labour, band ordering, proving the dig (`transitions`), background-job waits, this world's geometry |
+| [`df-placement`](df-placement/SKILL.md) | workshops, furniture, trade depots, farm plots (`configure_farmplot`), stockpiles (`create_stockpile` + category/container config), zones (`create_zone`), building status & stall diagnostics (`building_status`) |
 
 Planned (the ladder in play order, one skill per discipline):
 `df-build` (stockpiles, zones, furniture, material-attached construction, depot + wagon path),

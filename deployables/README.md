@@ -6,7 +6,7 @@ copy target, never the authoring place. Nothing here requires host write access 
 | Source (this repo)                    | Deploy target (game dir)             | What |
 |---------------------------------------|--------------------------------------|------|
 | `deployables/blueprints/*.csv`        | `<gamedir>/dfhack-config/blueprints/` | quickfort blueprints (the MCP writes these via `apply_blueprint`) |
-| `deployables/scripts/**/*.lua`        | `<gamedir>/hack/scripts/`             | DFHack lua scripts, mirroring subdirectories (none shipped yet) |
+| `deployables/scripts/**/*.lua`        | `<gamedir>/hack/scripts/`             | DFHack lua scripts, mirroring subdirectories (ships [`dfhack_mcp.lua`](scripts/dfhack_mcp.lua)) |
 
 Deploy with:
 

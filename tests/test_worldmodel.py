@@ -791,6 +791,84 @@ def test_one_level_one_source_no_phantom_offsets():
     assert "GAME_Z_OFFSET" in dig[:2000], "and name the single source of it"
 
 
+def test_map_lines_renders_x_coordinate_ruler_when_uncompressed():
+    """Section 5.3: world_map with rle=False renders a column-aligned X-coordinate ruler
+    so the model can pick exact (x, y) origins without miscounting RLE runs."""
+    lv = WM.LevelModel(165, None)
+    lv.rows = lv.cols = 6
+    lv.origin = (40, 120)
+    lv.grid = [["#"] * 6 for _ in range(6)]
+    lv.grid[2][3] = "."
+    b = WM.Budget(500)
+    lines = WM.map_lines(lv, 40, 45, 120, 125, b, rle=False, region_labels=False)
+    assert lines[1] == "    |444444", f"expected tens ruler, got {lines[1]!r}"
+    assert lines[2] == "    |012345", f"expected ones ruler, got {lines[2]!r}"
+    assert lines[5] == "122|###.##", f"expected row 122, got {lines[5]!r}"
+
+
+def test_transition_store_records_wall_to_floor_and_stair_transitions():
+    """Section 5.4 (PLAN-MODEL.md Technique 1): TransitionStore tracks observed
+    wall/fog -> floor/stair transitions in SQLite and never confuses pre-existing
+    natural cavern floors with player-dug tiles."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False) as tf:
+        db_file = tf.name
+    try:
+        store = WM.TransitionStore(db_path=db_file)
+        lv = WM.LevelModel(165, None)
+        lv.rows = lv.cols = 4
+        lv.origin = (10, 20)
+        # (10,20) is already '.' on first sight (natural cavern floor) -> must NOT count as dug
+        # (11,20) is '#' wall, (12,20) is '?' fog, (13,20) is '#' wall
+        lv.grid = [
+            [".", "#", "?", "#"],
+            ["#", "#", "#", "#"],
+            ["#", "#", "#", "#"],
+            ["#", "#", "#", "#"],
+        ]
+        n0 = store.ingest_level("saveA", lv)
+        assert n0 == 0, "baseline observation must record 0 transitions"
+
+        # Now miners carve (11,20) -> '.', (12,20) -> '.', and (13,20) -> '=' (stair)
+        lv.grid[0] = [".", ".", ".", "="]
+        n1 = store.ingest_level("saveA", lv)
+        assert n1 == 3, f"expected 3 transitions, got {n1}"
+        s = store.summary("saveA")
+        assert s["dug_floors"] == 2 and s["dug_stairs"] == 1 and s["total_dug_transitions"] == 3
+
+        # Re-open from SQLite in a fresh TransitionStore instance to prove persistence
+        store2 = WM.TransitionStore(db_path=db_file)
+        s2 = store2.summary("saveA")
+        assert s2["dug_floors"] == 2 and s2["dug_stairs"] == 1
+
+        # Save reload / clear_save wipes the save's transitions
+        store2.clear_save("saveA")
+        assert store2.summary("saveA")["total_dug_transitions"] == 0
+    finally:
+        try:
+            os.remove(db_file)
+        except OSError:
+            pass
+
+
+def test_site_gate_and_idempotency_on_place_building_create_zone_and_stockpile():
+    """Sections 5.1 & 5.2: shared footprint ground check, duplicate zone/stockpile
+    idempotency gate, enriched building_status diagnostics, and /transitions endpoint."""
+    main = pathlib.Path("main.py").read_text()
+    assert "async def _verify_footprint_ground(" in main
+    for ep in ('operation_id="place_building"', 'operation_id="create_zone"'):
+        i = main.index(ep)
+        seg = main[i:main.index("@app.", i + 20)]
+        assert "_verify_footprint_ground(" in seg, f"{ep} must run _verify_footprint_ground"
+    for ep in ('operation_id="create_stockpile"', 'operation_id="create_zone"'):
+        i = main.index(ep)
+        seg = main[i:main.index("@app.", i + 20)]
+        assert '"already_exists": True' in seg, f"{ep} must short-circuit duplicate footprints"
+    bs = main[main.index('operation_id="building_status"'):]
+    assert '"diagnostics": diagnostics' in bs and '"recent_cancellations"' in bs
+    assert 'operation_id="transitions"' in main
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

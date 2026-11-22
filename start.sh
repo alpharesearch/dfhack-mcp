@@ -20,15 +20,16 @@ PIDFILE="${DIR}/.dfhack-mcp.pid"
 LOG="${DIR}/dfhack-mcp.log"
 
 port_pids() {   # pids currently holding the server port
-  ss -tlnp 2>/dev/null | grep -w "$PORT" | grep -oE 'pid=[0-9]+' | sed 's/pid=//' | sort -u
+  ss -tlnp 2>/dev/null | grep -w "$PORT" | grep -oE 'pid=[0-9]+' | sed 's/pid=//' | sort -u || true
 }
 
 server_pids() {  # pidfile + port owner + our command line; a stale pidfile is not enough
   {
-    [[ -f "$PIDFILE" ]] && cat "$PIDFILE" 2>/dev/null
+    [[ -f "$PIDFILE" ]] && cat "$PIDFILE" 2>/dev/null || true
     port_pids
-    pgrep -f "uv run --no-sync python main.py" 2>/dev/null
-  } | grep -E '^[0-9]+$' | sort -u
+    pgrep -f "uv run --no-sync python main.py" 2>/dev/null || true
+    pgrep -f "python.*main\.py" 2>/dev/null || true
+  } | grep -E '^[0-9]+$' | sort -u || true
 }
 
 running() {   # any live server process?
@@ -60,10 +61,13 @@ start() {
     return 0
   fi
   rm -f "$PIDFILE"
-  command -v uv >/dev/null || { echo "uv not found in PATH (get https://docs.astral.sh/uv/)"; exit 1; }
-
   cd "$DIR"
-  nohup uv run --no-sync python main.py >>"$LOG" 2>&1 &
+  if [[ -x "${DIR}/.venv/bin/python" ]]; then
+    setsid nohup "${DIR}/.venv/bin/python" main.py </dev/null >>"$LOG" 2>&1 &
+  else
+    command -v uv >/dev/null || { echo "uv not found in PATH (get https://docs.astral.sh/uv/)"; exit 1; }
+    setsid nohup uv run --no-sync python main.py </dev/null >>"$LOG" 2>&1 &
+  fi
   local pid=$!
   echo "$pid" >"$PIDFILE"
   disown "$pid" 2>/dev/null || true

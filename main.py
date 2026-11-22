@@ -151,8 +151,11 @@ import shutil
 import time
 from collections import Counter
 from contextlib import asynccontextmanager
+from typing import Any
 from fastapi import FastAPI, Query, Request
+from fastapi.responses import JSONResponse
 from fastapi_mcp import FastApiMCP
+from pydantic import BaseModel, ConfigDict, Field
 from dfhack_client_python.dfhack_remote import (connect, close, ensure_connection, drop_connection,
                                                 connection_state, DFHackError, DFHackTransportError,
                                                 drain_replies)
@@ -189,6 +192,242 @@ DIG_DESIGNATIONS = {v.name: v.number for v in
 
 GAME_Z_OFFSET = WM.GAME_Z_OFFSET   # 129: in-game Elevation = z - 129 (one unit, one source)
 
+
+# ---------------------------------------------------------------------------
+# PYDANTIC REQUEST SCHEMAS (give FastApiMCP exact JSON Schemas for every POST tool)
+# ---------------------------------------------------------------------------
+
+async def _as_dict(payload: Any) -> dict:
+    """Normalize a Pydantic request model, raw dict, or test Request stub into a dict."""
+    if isinstance(payload, BaseModel):
+        return payload.model_dump(by_alias=True, exclude_none=True)
+    if isinstance(payload, dict):
+        return payload
+    if hasattr(payload, "json") and callable(payload.json):
+        res = payload.json()
+        return (await res) if asyncio.iscoroutine(res) else res
+    return dict(payload)
+
+
+class ListUnitsRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    unit_ids: list[int] = Field(..., description="Unit IDs to fetch details for (from look or get_unit_list)")
+
+
+class RunCommandRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    command: str = Field(..., description="Allowlisted DFHack command name (e.g. 'autochop', 'buildingplan', 'suspendmanager', 'warn-stranded', 'locate-ore', 'list-waves', 'help'); raw lua/script and destructive commands are denied")
+    arguments: list[str] = Field(default_factory=list, description="Arguments to pass to the DFHack command")
+
+
+class PassKeyboardEventRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    key: str = Field(..., description="Key name: up/down/left/right/enter/escape/pageup/pagedown/home/end/tab/space/backspace/a-z/0-9")
+    repeat: int = Field(1, ge=1, le=500, description="Number of times to send the key press")
+    hold: int | None = Field(None, description="Optional: send N presses without releases")
+
+
+class ApplyBlueprintRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str = Field(..., description="Blueprint file name (written to deployables/blueprints/<name>.csv)")
+    grid: list[list[str]] = Field(..., description="2D grid of rows of quickfort cell keys (e.g. [['d','d'],['d','d']])")
+    cursor: list[int] = Field(..., description="[x, y, z] where the top-left cell should land (z = elev + 129)")
+    mode: str = Field("dig", description="'dig' (#dig modeline) or 'build' (#build modeline)")
+
+
+class SetPauseStateRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    paused: bool = Field(..., description="True to pause the game, False to unpause")
+
+
+class CutTreesRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    x0: int = Field(..., description="Left X coordinate of rectangle")
+    y0: int = Field(..., description="Top Y coordinate of rectangle")
+    x1: int = Field(..., description="Right X coordinate of rectangle")
+    y1: int = Field(..., description="Bottom Y coordinate of rectangle")
+    elev: int = Field(..., description="In-game Elevation (panel number)")
+    limit: int = Field(0, ge=0, description="Optional max number of tree trunks to designate (0 = all in box)")
+
+
+class DigBox(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    x0: int = Field(..., description="Start X tile coordinate (inclusive)")
+    y0: int = Field(..., description="Start Y tile coordinate (inclusive)")
+    x1: int = Field(..., description="End X tile coordinate (inclusive)")
+    y1: int = Field(..., description="End Y tile coordinate (inclusive)")
+    elev: int = Field(..., description="In-game Elevation (map panel number; converted internally via z = elev + 129)")
+    elev1: int | None = Field(None, description="Optional end in-game Elevation (inclusive) to span multiple levels")
+    designation: str | None = Field(None, description="Optional per-box designation override (DEFAULT_DIG, UP_DOWN_STAIR_DIG, CHANNEL_DIG, RAMP_DIG, DOWN_STAIR_DIG, UP_STAIR_DIG, NO_DIG)")
+
+
+class StairShaftSpec(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    x0: int = Field(..., description="Shaft start X coordinate (inclusive)")
+    y0: int = Field(..., description="Shaft start Y coordinate (inclusive)")
+    x1: int | None = Field(None, description="Shaft end X coordinate (inclusive; defaults to x0, or x0+1 for a 2x2 shaft)")
+    y1: int | None = Field(None, description="Shaft end Y coordinate (inclusive; defaults to y0, or y0+1 for a 2x2 shaft)")
+    from_elev: int = Field(..., description="Starting in-game Elevation (top or bottom of shaft)")
+    to_elev: int = Field(..., description="Target in-game Elevation (bottom or top of shaft)")
+    connect_above: bool = Field(False, description="If True, the top elevation uses UP_DOWN_STAIR_DIG instead of DOWN_STAIR_DIG (use when extending an existing shaft downward)")
+    continue_below: bool = Field(False, description="If True, the bottom elevation uses UP_DOWN_STAIR_DIG instead of UP_STAIR_DIG (use when you plan to extend deeper later)")
+
+
+class SendDigCommandRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    designation: str = Field("DEFAULT_DIG", description="One of DEFAULT_DIG, UP_DOWN_STAIR_DIG, CHANNEL_DIG, RAMP_DIG, DOWN_STAIR_DIG, UP_STAIR_DIG, NO_DIG (or STAIR_SHAFT with box)")
+    locations: list[list[int]] | None = Field(None, description="Explicit list of [x, y, z] triples where z = elevation + 129 (GAME_Z_OFFSET)")
+    box: DigBox | None = Field(None, description="Single rectangle in in-game Elevation coordinates {x0, y0, x1, y1, elev, elev1?}")
+    boxes: list[DigBox] | None = Field(None, description="List of rectangles in in-game Elevation coordinates; middle-first ordering is applied automatically per box")
+    stair_shaft: StairShaftSpec | None = Field(None, description="Multi-z stairwell helper: automatically designates DOWN_STAIR_DIG at the top elevation, UP_DOWN_STAIR_DIG on every intermediate elevation, and UP_STAIR_DIG at the bottom elevation")
+    middle_first: bool = Field(True, description="For box/boxes: order the center spine of the rectangle before the flanks so miners carve an access path into fog")
+    swap: bool = Field(False, description="Legacy x/y swap flag (default False)")
+
+
+class GetBlockListRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    min_z: int
+    max_z: int
+    census_top: int = 8
+
+
+class WorldRawRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    e0: int
+    e1: int
+    path: str | None = None
+
+
+class GameLuaRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    expression: str
+
+
+class PlaceBuildingRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    building: str = Field(..., description="Friendly building name (Still, Carpenter, Mason, Mechanic, Jeweler, Craftsdwarf's Workshop, Smelter, Forge, Farm Plot, Trade Depot, Bed, Table, Chair, Door, Chest, Well, Lever, Bridge, Floodgate...)")
+    x: int = Field(..., description="Top-left X tile coordinate")
+    y: int = Field(..., description="Top-left Y tile coordinate")
+    elev: int = Field(..., description="In-game Elevation (map panel number)")
+    w: int = Field(1, ge=1, le=31, description="Footprint width in tiles (e.g. 3 for a 3x3 workshop, 5 for a Trade Depot)")
+    h: int = Field(1, ge=1, le=31, description="Footprint height in tiles (e.g. 3 for a 3x3 workshop, 4 for a 3x4 Still)")
+    complete: bool = Field(True, description="For 1x1 buildings: complete immediately via completeBuild (default True)")
+    abstract: bool | None = Field(None, description="Material-free abstract building flag (auto-detected for Stockpile/Zone)")
+    items: list[int] | None = Field(None, description="Specific item IDs to attach for furniture/doors")
+    material: str | None = Field(None, description="Material description substring to attach closest in-play items (e.g. 'log', 'boulder', 'block')")
+    count: int = Field(3, ge=1, le=20, description="Number of matching material items to attach when material is set")
+
+
+class RemoveBuildingRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    building_id: int | None = Field(None, description="Building ID from list_stockpiles, list_zones, or place_building")
+    x: int | None = Field(None, description="Tile X coordinate (alternative to building_id)")
+    y: int | None = Field(None, description="Tile Y coordinate (alternative to building_id)")
+    elev: int | None = Field(None, description="In-game Elevation (alternative to building_id)")
+
+
+class CreateStockpileRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    x: int = Field(..., description="Top-left X tile coordinate")
+    y: int = Field(..., description="Top-left Y tile coordinate")
+    elev: int = Field(..., description="In-game Elevation (map panel number)")
+    w: int = Field(..., ge=1, le=31, description="Width in tiles")
+    h: int = Field(..., ge=1, le=31, description="Height in tiles")
+    allow: list[str] | None = Field(None, description="Optional categories to enable immediately: ammo, animals, armor, bars_blocks, cloth, coins, corpses, finished_goods, food, furniture, gems, leather, refuse, sheet, stone, weapons, wood")
+    deny: list[str] | None = Field(None, description="Optional categories to disable (useful with all_categories=True for a general pile)")
+    all_categories: bool = Field(False, description="Enable all 17 categories (except those in deny)")
+    max_wheelbarrows: int | None = Field(None, ge=0, description="Optional wheelbarrow limit (e.g. 3 for a stone pile)")
+    max_barrels: int | None = Field(None, ge=0, description="Optional barrel limit")
+    max_bins: int | None = Field(None, ge=0, description="Optional bin limit")
+
+
+class ResizeBuildingRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    building_id: int
+    w: int
+    h: int
+
+
+class BuildingIdRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    building_id: int = Field(..., description="Target building ID")
+
+
+class ConfigureStockpileRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    building_id: int = Field(..., description="Stockpile building ID from list_stockpiles or create_stockpile")
+    allow: list[str] | None = Field(None, description="Categories to enable: ammo, animals, armor, bars_blocks, cloth, coins, corpses, finished_goods, food, furniture, gems, leather, refuse, sheet, stone, weapons, wood")
+    deny: list[str] | None = Field(None, description="Categories to disable (combined with all_categories=True)")
+    all_categories: bool = Field(False, description="Enable all 17 categories except those listed in deny")
+    max_wheelbarrows: int | None = Field(None, ge=0, description="Max wheelbarrows assigned to this stockpile")
+    max_barrels: int | None = Field(None, ge=0, description="Max barrels assigned to this stockpile")
+    max_bins: int | None = Field(None, ge=0, description="Max bins assigned to this stockpile")
+
+
+class CreateZoneRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    kind: str = Field(..., description="Zone kind: meeting, pasture, pen, pit, pond, dump, garbage, refuse, watersource, office, bedroom, dining, barracks, dormitory, fishing, sand, archery, tomb, training, dungeon")
+    x: int = Field(..., description="Top-left X tile coordinate")
+    y: int = Field(..., description="Top-left Y tile coordinate")
+    elev: int = Field(..., description="In-game Elevation (map panel number)")
+    w: int = Field(5, ge=1, le=31, description="Zone width in tiles")
+    h: int = Field(5, ge=1, le=31, description="Zone height in tiles")
+    acknowledge_risk: bool = Field(False, description="Must be True to execute (zone creation via RPC is opt-in)")
+
+
+class LaborChange(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    unit_id: int = Field(..., description="Unit ID of the citizen")
+    labor: str | int = Field(..., description="Labor name from labor_list (e.g. 'MINE', 'CUTWOOD', 'CARPENTER', 'MASON', 'PLANT') or integer ID")
+    value: bool = Field(..., description="True to enable the labor, False to disable")
+
+
+class SetUnitLaborsRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    changes: list[LaborChange] = Field(..., description="List of {unit_id, labor, value} changes to apply")
+
+
+class WorkOrderRequest(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+    job: str | None = Field(None, description="df.job_type name (e.g. 'MakeBarrel', 'MakeBed', 'MakeTable', 'MakeChair', 'BrewDrink', 'MakeCharcoal', 'SmeltOre')")
+    amount: int | None = Field(None, ge=1, description="Total amount to produce")
+    material: str | None = Field(None, description="Optional material filter (e.g. 'rock', 'wood')")
+    item_type: str | None = Field(None, description="Optional item_type filter")
+    quantity: int | None = Field(None, description="Optional quantity field")
+    json_spec: str | dict | None = Field(None, alias="json", description="Optional raw workorder JSON string or object")
+
+
+class ConfigureFarmplotRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    building_id: int | None = Field(None, description="Farm Plot building ID (omit to target the first farm plot)")
+    crop: str | None = Field("MUSHROOM_HELMET_PLUMP", description="Plant raw ID or substring (e.g. 'MUSHROOM_HELMET_PLUMP', 'PLUMP', 'PIG_TAIL'); omit to read current seasonal crops without modifying")
+    all_seasons: bool = Field(True, description="Set this crop for all four seasons (Spring, Summer, Autumn, Winter)")
+    spring: bool = Field(False, description="Set for Spring (when all_seasons=False)")
+    summer: bool = Field(False, description="Set for Summer (when all_seasons=False)")
+    autumn: bool = Field(False, description="Set for Autumn (when all_seasons=False)")
+    winter: bool = Field(False, description="Set for Winter (when all_seasons=False)")
+
+
+# Allowlist and denylist for /run-command (PLAN-TOOLS.md principle #2 and #6):
+# raw code execution (lua/script), destructive commands, and instant-cheat commands are denied.
+RUN_COMMAND_DENY_EXACT = {
+    "lua", "luap", "script", ":lua",
+    "die", "kill-lua", "teleport", "exterminate", "importlegends",
+    "dig-now", "build-now", "reveal", "unreveal",
+}
+RUN_COMMAND_DENY_PREFIXES = (
+    "strip", "remove-", "force", "resurrect", "export", "modtools/", "devel/",
+)
+RUN_COMMAND_ALLOWLIST = {
+    "help", "ls", "tags", "version",
+    "autochop", "autobutcher", "autofarm", "autolabor", "autonestbox", "autoslab",
+    "buildingplan", "suspendmanager", "prioritize", "orders", "workorder",
+    "quickfort", "dreamfort",
+    "warn-stranded", "locate-ore", "list-waves", "caravan", "liquids",
+    "clean", "cleanowned", "seedwatch", "tailor", "ban-cooking",
+    "toggle-kbd-cursor", "position", "prospect",
+}
+
 # The preprocessing layer (see worldmodel.py). One instance per process: it owns the
 # decode tables (tiletype/item/material/building/profession names), the z-chunk block
 # cache, and the previous-snapshot used for delta reporting.
@@ -209,6 +448,27 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+@app.exception_handler(DFHackTransportError)
+async def _offline_handler(request, exc):
+    """The game is not reachable: say so, in the answer, with the recovery step.
+
+    Measured 2026-11-21 (after my zone-removal write crashed the fort at 22:53:41): every
+    endpoint that did not wrap its call answered HTTP 500 "Internal Server Error", so the
+    observer and the agent read a server fault where the truth is one sentence - the game is
+    down. Transport failures are not a bug in this server, so they are reported as 503 with
+    a success flag and the next step, and the read-only tools keep answering.
+    """
+    return JSONResponse(status_code=503, content={
+        "success": False,
+        "game_offline": True,
+        "error": f"cannot reach the DFHack RPC: {exc}",
+        "next_step": "start Dwarf Fortress with DFHack (remote-server on 127.0.0.1:5000); "
+                     "reads resume on their own - the dig and designation state lives in the save",
+        "path": str(request.url.path),
+    })
+
+
+
 async def _map_extent():
     """True map tile extents and z count from GetMapInfo (blocks are 16x16 tiles)."""
     mi = await GetMapInfo()
@@ -225,10 +485,11 @@ async def get_versions():
     }
 
 @app.get("/get-status", operation_id="get_status")
-async def get_status():
+async def get_status(detail: str = Query("brief", description="'brief' or 'full' (adds map dimensions, view/cursor info, and world info)")):
     """Report the DFHack RPC connection state, the game versions, and the identity of the
     loaded save (save name + in-game date). `reloads` counts the save swaps this server has
-    detected and cleared caches for; `reloaded` is the pending swap, reported once."""
+    detected and cleared caches for; `reloaded` is the pending swap, reported once. Pass
+    detail='full' to include mapInfo, viewInfo, and worldInfo in a single call."""
     try:
         await ensure_connection()
         out = dict(connection_state())          # read state AFTER connecting
@@ -242,6 +503,19 @@ async def get_status():
         pending = world.take_reload()
         if pending:
             out["reloaded"] = pending
+        if str(detail).strip().lower() == "full":
+            try:
+                out["mapInfo"] = await get_map_info()
+            except Exception as e:
+                out["mapInfoError"] = str(e)
+            try:
+                out["viewInfo"] = await get_view_info()
+            except Exception as e:
+                out["viewInfoError"] = str(e)
+            try:
+                out["worldInfo"] = await get_world_info()
+            except Exception as e:
+                out["worldInfoError"] = str(e)
     except DFHackTransportError as e:
         out = dict(connection_state())
         out["connected"] = False
@@ -323,9 +597,10 @@ async def get_map_info():
     }
 
 @app.post("/list-units", operation_id="list_units")
-async def list_units(request: Request):
-    """Get details for the units with the given ids. Parameters: unit_ids[int]"""
-    unit_ids = (await request.json())["unit_ids"]
+async def list_units(request: ListUnitsRequest):
+    """Get details for the units with the given ids. Parameters: unit_ids[list[int]]"""
+    body = await _as_dict(request)
+    unit_ids = body["unit_ids"]
     print("Unit IDs: " + str(unit_ids))
     units = await ListUnits(input = ListUnitsIn(id_list = unit_ids))
     unit_details = []
@@ -379,11 +654,22 @@ async def get_unit_list():
     return { "unitCount": len(units.creature_list), "units": unit_details }
 
 @app.post("/run-command", operation_id="run_command")
-async def run_command(request: Request):
-    """Run a DFHack command in the currently running game. Command output is not returned (it streams to this server's log); keep commands small. Parameters: command[str], arguments[list[str]] (optional)"""
-    body = await request.json()
-    command = body["command"]
-    arguments = body.get("arguments", [])
+async def run_command(request: RunCommandRequest):
+    """Run an allowlisted DFHack command in the currently running game and return its console output. Raw Lua/script execution, cheats (dig-now/build-now/reveal), and destructive commands are denied - use the typed tools instead."""
+    body = await _as_dict(request)
+    command = str(body["command"]).strip()
+    arguments = [str(a) for a in body.get("arguments", [])]
+    cmd_norm = command.lstrip(":").lower()
+    if cmd_norm in RUN_COMMAND_DENY_EXACT or cmd_norm.startswith(RUN_COMMAND_DENY_PREFIXES):
+        return {"command": command, "arguments": list(arguments), "success": False,
+                "blocked": True,
+                "error": f"command '{command}' is denied on the MCP surface (no raw Lua, cheats, or destructive commands)",
+                "hint": "use typed tools instead: send_dig_command, place_building, create_stockpile, work_order, set_unit_labors"}
+    if cmd_norm not in RUN_COMMAND_ALLOWLIST:
+        return {"command": command, "arguments": list(arguments), "success": False,
+                "blocked": True,
+                "error": f"command '{command}' is not in the run_command allowlist",
+                "allowed": sorted(RUN_COMMAND_ALLOWLIST)}
     # DFHack answers CR_NOT_IMPLEMENTED for an unknown command and CR_LINK_FAILURE for a
     # dead socket; both arrived as unhandled exceptions (HTTP 500 + a stack trace in the
     # log). Report them as data so the caller can read the failure and move on.
@@ -391,7 +677,7 @@ async def run_command(request: Request):
     try:
         await RunCommand(input = CoreRunCommandRequest(command = command, arguments = arguments))
     except DFHackError as e:
-        out = drain_replies()
+        out = getattr(e, "replies", None) or drain_replies()
         return {"command": command, "arguments": list(arguments), "success": False,
                 "error": str(e),
                 "output": "\n".join(out),
@@ -424,8 +710,8 @@ async def get_reports():
     return {"reportCount": len(reports), "reports": reports[-100:]}
 
 @app.get("/copy-screen", operation_id="copy_screen")
-async def copy_screen():
-    """Capture the current game screen as ASCII text (rows joined) - shows menus, designation UI, announcements"""
+async def copy_screen(max_chars: int = Query(4000, ge=200, le=20000, description="maximum characters of screen text to return")):
+    """Capture the current game screen as ASCII text (rows joined, bounded by max_chars) - shows menus, designation UI, announcements"""
     sc = await CopyScreen()
     w, h = sc.width, sc.height
     tiles = list(sc.tiles)
@@ -439,6 +725,9 @@ async def copy_screen():
     # ScreenCapture tiles are COLUMN-major (index = x*height + y).
     # Map/graphics cells are duplicated in pairs; collapse consecutive repeats.
     rows = []
+    used = 0
+    truncated = False
+    cap = max(200, min(int(max_chars), 20000))
     for y in range(h):
         out = []
         last = None
@@ -448,13 +737,18 @@ async def copy_screen():
             if ch != last:
                 out.append(ch)
             last = ch
-        rows.append(''.join(out).rstrip())
-    return {"width": w, "height": h, "rows": rows}
+        row_str = ''.join(out).rstrip()
+        if used + len(row_str) + 1 > cap:
+            truncated = True
+            break
+        rows.append(row_str)
+        used += len(row_str) + 1
+    return {"width": w, "height": h, "rows": rows, "chars": used, "max_chars": cap, "truncated": truncated}
 
 @app.post("/pass-keyboard-event", operation_id="pass_keyboard_event")
-async def pass_keyboard_event(request: Request):
-    """Inject a key press into the game - drives the real UI (menus, d-designation with the keyboard cursor). Parameters: key[str] (up/down/left/right/enter/escape/pageup/pagedown/home/end/tab/space/backspace/a-z/0-9), repeat[int] (optional, default 1), hold[int] (optional, send N presses without releases)"""
-    body = await request.json()
+async def pass_keyboard_event(request: PassKeyboardEventRequest):
+    """Inject a key press into the game - drives the real UI hotkeys (menus, dialogs). Arrow keys do not move the keyboard cursor in DF 53. Parameters: key[str], repeat[int] (optional, default 1)"""
+    body = await _as_dict(request)
     key = str(body["key"]).lower()
     if key not in SDL1_SYM:
         return {"error": f"unknown key '{key}'", "known": sorted(SDL1_SYM)}
@@ -478,9 +772,9 @@ REPO_BLUEPRINT_DIR = os.getenv("DFHACK_BLUEPRINT_REPO_DIR",
 DEPLOY_BLUEPRINT_DIR = os.getenv("DFHACK_BLUEPRINT_DIR", "")   # <gamedir>/dfhack-config/blueprints
 
 @app.post("/apply-blueprint", operation_id="apply_blueprint")
-async def apply_blueprint(request: Request):
-    """Write a quickfort blueprint INTO THE REPO (deployables/blueprints, git-controlled) and apply it: the reliable bulk path for BOTH digging and building. mode: "dig" (default) writes a #dig modeline; "build" writes #build - build keys are only valid there (D=trade depot, b=stairs, h=hatch, d=door, f=forge, w=well...). quickfort modelines set the mode, so a build key in a dig blueprint answers "invalid key sequence". grid: list of rows, each a list of single dig keys (d=default, c=channel, i=up-down stairs, x=up, u=down...); cursor: [x,y,z] where the TOP-LEFT cell should land - this tool pre-compensates the known +3 y offset. Set DFHACK_BLUEPRINT_DIR to the game's dfhack-config/blueprints path to enable. Returns quickfort stats; verify with get_block_list then run dig-now on the landed box."""
-    body = await request.json()
+async def apply_blueprint(request: ApplyBlueprintRequest):
+    """Write a quickfort blueprint INTO THE REPO (deployables/blueprints, git-controlled) and apply it: the reliable bulk path for BOTH digging and building. mode: "dig" (default) writes a #dig modeline; "build" writes #build - build keys are only valid there (D=trade depot, b=stairs, h=hatch, d=door, f=forge, w=well...). quickfort modelines set the mode, so a build key in a dig blueprint answers "invalid key sequence". grid: list of rows, each a list of single dig keys (d=default, c=channel, i=up-down stairs, x=up, u=down...); cursor: [x,y,z] where the TOP-LEFT cell should land - this tool pre-compensates the known +3 y offset. Set DFHACK_BLUEPRINT_DIR to the game's dfhack-config/blueprints path to enable. Returns quickfort stats; verify with world_objects / look."""
+    body = await _as_dict(request)
     os.makedirs(REPO_BLUEPRINT_DIR, exist_ok=True)
     deploy_ok = True
     name = str(body["name"]).replace(" ", "_")
@@ -532,9 +826,10 @@ async def apply_blueprint(request: Request):
     except (DFHackError, DFHackTransportError) as e:
         # The blueprint IS written and deployed; only the apply failed. Say so with both
         # paths, otherwise a caller cannot tell authoring from deployment.
+        out = getattr(e, "replies", None) or drain_replies()
         return {"success": False, "blueprint": path, "deployed_to": shipped, "mode": mode,
                 "target_top_left": cur, "error": str(e),
-                "output": "\n".join(drain_replies()),
+                "output": "\n".join(out),
                 "hint": "the file is in the repo and deployed; the quickfort run is what failed"}
     return {"blueprint": path, "deployed_to": shipped, "mode": mode,
             "target_top_left": cur, "success": True,
@@ -549,15 +844,15 @@ async def get_pause_state():
     return {"paused": state.Value}
 
 @app.post("/set-pause-state", operation_id="set_pause_state")
-async def set_pause_state(request: Request):
+async def set_pause_state(request: SetPauseStateRequest):
     """Pause (true) or unpause (false) the game. Parameters: paused[bool]"""
-    body = await request.json()
+    body = await _as_dict(request)
     await SetPauseState(input = SingleBool(Value = bool(body["paused"])))
     state = await GetPauseState()
     return {"paused": state.Value}
 
 @app.post("/cut-trees", operation_id="cut_trees")
-async def cut_trees(body: dict):
+async def cut_trees(request: CutTreesRequest):
     """Fell the trees in a rectangle - the player's own action, typed.
 
     How a human does it (the player's words, 2026-11-21): *"as a player i select the tree
@@ -572,6 +867,7 @@ async def cut_trees(body: dict):
     and reports the wood count before/after - hauling and cutting take in-game time, so
     `wood_after` is a fact about the moment of reading, not a promise.
     """
+    body = await _as_dict(request)
     x0, y0, x1, y1, e = (int(body[k]) for k in ("x0", "y0", "x1", "y1", "elev"))
     limit = int(body.get("limit") or 0) or 0
     TRUNK = "tree_trunk"
@@ -746,32 +1042,175 @@ async def find_trees(elev0: int = Query(...), elev1: int = Query(...),
             "note": "fell trunks with /cut-trees using a cluster box; saplings are the vegetation order"}
 
 
+def _expand_dig_box(x0: int, y0: int, x1: int, y1: int, e0: int, e1: int | None = None,
+                    middle_first: bool = True) -> list[list[int]]:
+    """Expand an in-game Elevation rectangle [x0..x1, y0..y1, e0..e1] into RPC [x, y, z]
+    triples (z = elev + GAME_Z_OFFSET), ordering the center spine before the flanks so
+    miners carve an access corridor into fog without stranding flank designations."""
+    if x1 < x0:
+        x0, x1 = x1, x0
+    if y1 < y0:
+        y0, y1 = y1, y0
+    e_end = e0 if e1 is None else int(e1)
+    e_lo, e_hi = min(int(e0), e_end), max(int(e0), e_end)
+    xs = list(range(int(x0), int(x1) + 1))
+    ys = list(range(int(y0), int(y1) + 1))
+    if middle_first:
+        if len(xs) >= len(ys):
+            cy = (y0 + y1) / 2.0
+            ys = sorted(ys, key=lambda y: (abs(y - cy), y))
+        else:
+            cx = (x0 + x1) / 2.0
+            xs = sorted(xs, key=lambda x: (abs(x - cx), x))
+    out: list[list[int]] = []
+    for e in range(e_hi, e_lo - 1, -1):
+        z = e + GAME_Z_OFFSET
+        if len(xs) >= len(ys):
+            for y in ys:
+                for x in xs:
+                    out.append([x, y, z])
+        else:
+            for x in xs:
+                for y in ys:
+                    out.append([x, y, z])
+    return out
+
+
 @app.post("/send-dig-command", operation_id="send_dig_command")
-async def send_dig_command(request: Request):
-    """Designate digging - the `m` menu over RPC, no blueprint and no instant-dig. designation: one of NO_DIG, DEFAULT_DIG, UP_DOWN_STAIR_DIG, CHANNEL_DIG, RAMP_DIG, DOWN_STAIR_DIG, UP_STAIR_DIG; locations: list of [x,y,z] where z = elevation + 129 (WM.GAME_Z_OFFSET - the SAME number every read tool uses), sent AS GIVEN (measured: lands where you put it; an earlier note here said +128, which is one level LOW - following it digs under your feet). Optional swap:true reproduces the old mirrored behaviour for other builds. Only DISCOVERED, diggable tiles accept designations - unexplored tiles are rejected SILENTLY, and there is no reply, so ALWAYS verify: read `world_objects`/`look` for the dig cluster and its tile count before assuming work was ordered. Use NO_DIG to clear a rectangle."""
-    body = await request.json()
-    designation = body["designation"].upper()
+async def send_dig_command(request: SendDigCommandRequest):
+    """Designate digging - the `m` menu over RPC, no blueprint and no instant-dig.
+    designation: one of NO_DIG, DEFAULT_DIG, UP_DOWN_STAIR_DIG, CHANNEL_DIG, RAMP_DIG,
+    DOWN_STAIR_DIG, UP_STAIR_DIG (or STAIR_SHAFT with box).
+
+    Three ways to pass coordinates:
+    1. `box`: `{x0, y0, x1, y1, elev, elev1?}` (or `boxes`: list of boxes) using in-game
+       Elevation numbers directly (`z = elevation + 129`, `WM.GAME_Z_OFFSET`, converted
+       internally). Orders the middle spine before the flanks (`middle_first=True`) so
+       miners carve access into fog cleanly.
+    2. `stair_shaft`: `{x0, y0, x1?, y1?, from_elev, to_elev, connect_above?, continue_below?}`
+       - automatically designates `DOWN_STAIR_DIG` at the top elevation, `UP_DOWN_STAIR_DIG`
+       on every intermediate elevation, and `UP_STAIR_DIG` at the bottom elevation so a
+       multi-z stairwell is never half-ordered.
+    3. `locations`: list of `[x, y, z]` where `z = elevation + 129` (`WM.GAME_Z_OFFSET` - the
+       SAME number every read tool uses), sent AS GIVEN.
+
+    FOG WORKFLOW (verified live on 53.17-r1): designating into unexplored fog (`hidden=True`,
+    `?` glyph) WORKS and is the intended workflow for extending tunnels, rooms, and stair
+    shafts into the mountain. Gate before designating with `hazards` (damp/hot),
+    `depth_profile` / `overburden` (depth >= 2), and `survey` (do not designate over existing
+    floors/buildings). Note: `tile_at` does not show `dig_designation` on hidden tiles, so
+    verify fog orders via `world_objects` / `look` dig clusters, and verify completion by
+    positive tile state (`dug > 0 and to_dig == 0` in `survey`), never by designation count
+    dropping to 0. Use `NO_DIG` to clear a rectangle."""
+    body = await _as_dict(request)
+    swap = bool(body.get("swap", False))
+    middle_first = bool(body.get("middle_first", True))
+
+    def _apply_swap(pts: list[list[int]]) -> list[list[int]]:
+        return [[int(p[1]), int(p[0]), int(p[2])] for p in pts] if swap \
+               else [[int(p[0]), int(p[1]), int(p[2])] for p in pts]
+
+    # Mode 1: explicit stair_shaft helper (or designation="STAIR_SHAFT" with box)
+    shaft = body.get("stair_shaft")
+    raw_des = str(body.get("designation") or "DEFAULT_DIG").upper()
+    if shaft is None and raw_des == "STAIR_SHAFT" and body.get("box"):
+        bx = body["box"]
+        shaft = {
+            "x0": bx["x0"], "y0": bx["y0"],
+            "x1": bx.get("x1", bx["x0"]), "y1": bx.get("y1", bx["y0"]),
+            "from_elev": bx["elev"],
+            "to_elev": bx.get("elev1") if bx.get("elev1") is not None else bx["elev"],
+        }
+    if shaft is not None:
+        x0, y0 = int(shaft["x0"]), int(shaft["y0"])
+        x1 = int(shaft["x1"]) if shaft.get("x1") is not None else x0
+        y1 = int(shaft["y1"]) if shaft.get("y1") is not None else y0
+        if x1 < x0:
+            x0, x1 = x1, x0
+        if y1 < y0:
+            y0, y1 = y1, y0
+        hi = max(int(shaft["from_elev"]), int(shaft["to_elev"]))
+        lo = min(int(shaft["from_elev"]), int(shaft["to_elev"]))
+        connect_above = bool(shaft.get("connect_above", False))
+        continue_below = bool(shaft.get("continue_below", False))
+        shaft_levels = []
+        total_tiles = 0
+        for e in range(hi, lo - 1, -1):
+            if hi == lo:
+                kind = "UP_DOWN_STAIR_DIG"
+            elif e == hi:
+                kind = "UP_DOWN_STAIR_DIG" if connect_above else "DOWN_STAIR_DIG"
+            elif e == lo:
+                kind = "UP_DOWN_STAIR_DIG" if continue_below else "UP_STAIR_DIG"
+            else:
+                kind = "UP_DOWN_STAIR_DIG"
+            lvl_pts = _apply_swap(_expand_dig_box(x0, y0, x1, y1, e, e, middle_first=False))
+            n_lvl = await _designate(kind, lvl_pts)
+            total_tiles += n_lvl
+            shaft_levels.append({"elev": e, "z": e + GAME_Z_OFFSET, "designation": kind, "tiles": n_lvl})
+        return {
+            "success": True,
+            "mode": "stair_shaft",
+            "designation": "STAIR_SHAFT",
+            "footprint": [x0, y0, x1, y1],
+            "elevations": [hi, lo],
+            "tiles": total_tiles,
+            "shaft_levels": shaft_levels,
+        }
+
+    designation = raw_des
     if designation not in DIG_DESIGNATIONS:
         return {"error": f"unknown designation '{designation}'", "known": sorted(DIG_DESIGNATIONS)}
-    # Measured on 53.17-r1 STEAM (single-tile calibration): a designation sent as
-    # [x=63, y=118, z=167] lands at x63,y118 - AS GIVEN, no transposition. In elevation
-    # terms z=167 IS elev 38 on this save (the wagon sits at z167, panel 38); the old
-    # note calling it elev 39 came from a view reading, and following it as a rule puts
-    # every designation one level under where you aimed it.
-    # The old x/y swap was inherited from an earlier observation and sent whole
-    # tunnels to the mirrored coordinates, where unexplored tiles silently rejected
-    # them (verified: 87 designated tiles, dig count stayed 0). Passing `swap` is
-    # accepted for callers who need the old behaviour on some other build.
-    swap = bool(body.get("swap", False))
-    locs = [Coord(x=int(p[1]), y=int(p[0]), z=int(p[2])) for p in body["locations"]] if swap \
-           else [Coord(x=int(p[0]), y=int(p[1]), z=int(p[2])) for p in body["locations"]]
-    n = await _designate(designation, [[c.x, c.y, c.z] for c in locs])
-    return {"designation": designation, "tiles": n, "success": True}
+
+    # Mode 2: box / boxes (or top-level x0, y0, x1, y1, elev convenience fields)
+    boxes_in = []
+    if body.get("box"):
+        boxes_in.append(body["box"])
+    if body.get("boxes"):
+        boxes_in.extend(body["boxes"])
+    if not boxes_in and all(k in body for k in ("x0", "y0", "x1", "y1", "elev")):
+        boxes_in.append({k: body[k] for k in ("x0", "y0", "x1", "y1", "elev", "elev1") if k in body})
+
+    total_sent = 0
+    boxes_applied = []
+    for bx in boxes_in:
+        b_des = str(bx.get("designation") or designation).upper()
+        if b_des not in DIG_DESIGNATIONS:
+            return {"error": f"unknown box designation '{b_des}'", "known": sorted(DIG_DESIGNATIONS)}
+        pts = _apply_swap(_expand_dig_box(
+            int(bx["x0"]), int(bx["y0"]), int(bx["x1"]), int(bx["y1"]),
+            int(bx["elev"]), bx.get("elev1"), middle_first=middle_first
+        ))
+        n_box = await _designate(b_des, pts)
+        total_sent += n_box
+        boxes_applied.append({
+            "x0": int(bx["x0"]), "y0": int(bx["y0"]),
+            "x1": int(bx["x1"]), "y1": int(bx["y1"]),
+            "elev": int(bx["elev"]),
+            "elev1": int(bx["elev1"]) if bx.get("elev1") is not None else int(bx["elev"]),
+            "designation": b_des,
+            "tiles": n_box,
+        })
+
+    # Mode 3: explicit locations [[x, y, z], ...]
+    if body.get("locations"):
+        locs = [Coord(x=int(p[1]), y=int(p[0]), z=int(p[2])) for p in body["locations"]] if swap \
+               else [Coord(x=int(p[0]), y=int(p[1]), z=int(p[2])) for p in body["locations"]]
+        total_sent += await _designate(designation, [[c.x, c.y, c.z] for c in locs])
+
+    if not boxes_in and not body.get("locations"):
+        return {"success": False,
+                "error": "provide 'box' ({x0,y0,x1,y1,elev}), 'boxes', 'stair_shaft', or 'locations' ([[x,y,z],...])"}
+
+    out_res = {"designation": designation, "tiles": total_sent, "success": True}
+    if boxes_applied:
+        out_res["boxes_applied"] = boxes_applied
+    return out_res
 
 @app.post("/get-block-list", operation_id="get_block_list")
-async def get_block_list(request: Request):
+async def get_block_list(request: GetBlockListRequest):
     """RAW tile arrays - the expensive escape hatch: ONE elevation is ~147,000 tokens, so prefer look / world_objects / world_map / world_minimap. Read map blocks (explored tiles only) in a z window. Full map x/y is always used (windowed x/y requests return nothing - plugin bug); z windows <= 12 levels (larger overflows the RPC reply limit and kills the socket). Parameters: min_z[int], max_z[int], census_top[int] (optional, default 8)"""
-    body = await request.json()
+    body = await _as_dict(request)
     min_z = int(body["min_z"]); max_z = int(body["max_z"])
     census_top = int(body.get("census_top", 8))
     tiles_x, tiles_y, z_count = await _map_extent()
@@ -844,10 +1283,10 @@ async def world_zone(e0: int = Query(..., description="start in-game Elevation")
 async def world_map(e: int = Query(..., description="in-game Elevation"),
                     x0: int = Query(...), x1: int = Query(...),
                     y0: int = Query(...), y1: int = Query(...),
-                    rle: bool = Query(True, description="run-length encode flat rows"),
+                    rle: bool = Query(False, description="run-length encode flat rows (default False so the top X-coordinate ruler aligns character-for-character; set True for wide >60-col scans)"),
                     with_legend: bool = Query(False, description="include the glyph legend"),
                     max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS)):
-    """A single elevation as a 1-char-per-tile glyph grid for an explicit x/y window, with walkable-region letters annotated alongside. Keep windows ~40x40 (~400 tokens). Tiletype names are NEVER sent; read the legend once. Water/magma/hidden override the base glyph."""
+    """A single elevation as a 1-char-per-tile glyph grid for an explicit x/y window, with a top X-coordinate ruler, left Y-coordinate labels, and walkable-region letters annotated alongside. Keep windows ~40x40 (~400 tokens). Tiletype names are NEVER sent; read the legend once. Water/magma/hidden override the base glyph."""
     return await world.view(e, x0, x1, y0, y1, max_tokens=max_tokens, rle=rle,
                             with_legend=with_legend)
 
@@ -890,10 +1329,10 @@ async def tile_legend():
                                                      for n in world.dec.tile.values()} or set())}
 
 @app.post("/world-raw", operation_id="world_raw")
-async def world_raw(request: Request):
+async def world_raw(request: WorldRawRequest):
     """Dump RAW map blocks to a FILE instead of into the conversation - use this when you truly need tile-level detail, then grep the file with your file tools. Parameters: e0[int], e1[int], path[str] (optional). Returns the path and shape stats, never the tiles."""
     import json, os, time
-    body = await request.json()
+    body = await _as_dict(request)
     e0 = int(body["e0"]); e1 = int(body["e1"])
     out = body.get("path") or os.path.join("dumps", f"blocks-{int(time.time())}.json")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
@@ -927,16 +1366,16 @@ async def world_raw(request: Request):
 # ---------------------------------------------------------------------------
 
 @app.post("/game-lua", operation_id="game_lua")
-async def game_lua(request: Request):
+async def game_lua(request: GameLuaRequest):
     """Run a Lua EXPRESSION against the live game through DFHack's `lua` command and get its printed output back. This is the door the proto list does not cover: read anything (world.jobs.list, buildings, units, path info) and call DFHack's own APIs - reqscript("quickfort").apply_blueprint{mode="build", data="D(1x1)", pos={x=...,y=...,z=...}} places buildings, dfhack.zone / dfhack.stockpile reach zones and stockpiles. CAUTION: this writes live game state; prefer read-only prints, test on a throwaway save, and keep a save before mutating. Parameters: expression[str] (a Lua chunk; use print() to return data)"""
-    body = await request.json()
+    body = await _as_dict(request)
     expr = str(body["expression"])
     drain_replies()
     try:
         await RunCommand(input = CoreRunCommandRequest(command = "lua", arguments = [expr]))
     except (DFHackError, DFHackTransportError) as e:
-        return {"success": False, "error": str(e), "output": "\n".join(drain_replies())}
-    await asyncio.sleep(0.6)                      # let the text frames arrive
+        out = getattr(e, "replies", None) or drain_replies()
+        return {"success": False, "error": str(e), "output": "\n".join(out)}
     out = drain_replies()
     return {"success": True, "output": "\n".join(out).strip(),
             "chars": len("\n".join(out)), "note": "print() is the return channel"}
@@ -956,17 +1395,52 @@ async def game_lua(request: Request):
 # RemoteFortressReader is not a trustworthy verifier for fresh writes.
 # ---------------------------------------------------------------------------
 
+async def _verify_footprint_ground(e: int, x0: int, y0: int, w: int, h: int,
+                                   label: str = "building") -> dict | None:
+    """Shared pre-flight site gate: verify that [x0..x0+w-1, y0..y0+h-1] at elevation e
+    is walkable ground (no unexcavated rock, wall, hidden fog, open cavern air, or standing
+    water). Returns None when the footprint is valid ground, or a refusal dict."""
+    x1, y1 = int(x0) + max(1, int(w)) - 1, int(y0) + max(1, int(h)) - 1
+    try:
+        st = await world.box_state(int(e), int(x0), int(y0), x1, y1)
+        sv = await world.survey(int(e), int(x0), int(y0), x1, y1)
+    except Exception as ex:
+        return {"success": False, "error": f"site gate could not read the footprint: {ex}",
+                "hint": "the read failed; nothing was placed"}
+    counts = sv.get("counts") or {}
+    nonground = {k: v for k, v in counts.items()
+                 if k in ("rock", "wall", "hidden", "open", "wood_wall", "water")}
+    dug, total = int(st.get("dug", 0)), int(st.get("total_tiles", max(1, int(w)) * max(1, int(h))))
+    to_dig = int(st.get("to_dig", 0))
+    if sum(nonground.values()) > 0:
+        return {"success": False,
+                "error": f"site x{x0}-{x1} y{y0}-{y1} elev{e} is not valid {label} ground: {nonground}",
+                "hint": f"a {label} needs walkable, dry ground under every tile - rock, fog, water and cavern air are not ground",
+                "gate": "no rock/wall/hidden/open/water in the footprint", "measured": counts}
+    if to_dig > 0:
+        return {"success": False,
+                "error": f"site x{x0}-{x1} y{y0}-{y1} elev{e} is not valid {label} ground: "
+                         f"{to_dig} tiles still to dig (dug {dug}/{total})",
+                "hint": "dig it out first before placing a building or zone",
+                "gate": "no rock/wall/hidden/open, to_dig == 0", "measured": st}
+    return None
+
+
 @app.post("/place-building", operation_id="place_building")
-async def place_building(request: Request):
-    """CREATE A BUILDING at an exact tile - no menu, no mouse, no dwarf. building: friendly name (Stockpile, Zone, Trade Depot, Bed, Table, Chair, Door, Chest, Well, Farm Plot, Still, Mechanic, Carpenter, Stoneworker, Jeweler, Smelter, Forge, Kitchen, Butcher, Weapon Rack, Axle, Gear Assembly, Water Wheel, Lever, Trap, Cage, Trackstop...); x/y int, elev GAME ELEVATION; w/h optional (a Trade Depot is 5x5, a workshop 3x3); complete:true (default) finishes it via completeBuild - pass false to queue it for a dwarf to build with real materials; material:"log"/"boulder"/"block" with count:N attaches REAL item objects found by description (measured: constructWithItems rejects an empty list, and RFR item ids do not resolve); abstract:true for material-free buildings (auto for Stockpile/Zone - the game REQUIRES one of items/filters/abstract); items:[itemId,...] for furniture and doors. Returns the game type + building id verified by findAtTile, and the game's own rejection text (e.g. 'one of items, filters or abstract is required') when it refuses. Check a site with tile_at first: placing into water fails."""
-    body = await request.json()
+async def place_building(request: PlaceBuildingRequest):
+    """CREATE A BUILDING at an exact tile - no menu, no mouse, no dwarf. building: friendly name (Stockpile, Zone, Trade Depot, Bed, Table, Chair, Door, Chest, Well, Farm Plot, Still, Mechanic, Carpenter, Stoneworker, Jeweler, Smelter, Forge, Kitchen, Butcher, Weapon Rack, Axle, Gear Assembly, Water Wheel, Lever, Trap, Cage, Trackstop...); x/y int, elev GAME ELEVATION; w/h optional (a Trade Depot is 5x5, a workshop 3x3); complete:true (default) finishes it via completeBuild - pass false to queue it for a dwarf to build with real materials; material:"log"/"boulder"/"block" with count:N attaches REAL item objects found by description (measured: constructWithItems rejects an empty list, and RFR item ids do not resolve); abstract:true for material-free buildings (auto for Stockpile/Zone - the game REQUIRES one of items/filters/abstract); items:[itemId,...] for furniture and doors. Returns the game type + building id verified by findAtTile, and the game's own rejection text (e.g. 'one of items, filters or abstract is required') when it refuses. Pre-flight site gate rejects footprints containing rock, fog, open air, or water."""
+    body = await _as_dict(request)
+    _x0, _y0, _e = int(body["x"]), int(body["y"]), int(body["elev"])
+    _w, _h = int(body.get("w") or 1), int(body.get("h") or 1)
+    if body.get("check_site", True) is not False:
+        _bname = str(body.get("building") or "").strip().lower()
+        # Wells and bridges legitimately span open space/water, so exempt them from the dry-floor gate
+        if _bname not in ("well", "bridge", "water wheel", "screw pump"):
+            gate_err = await _verify_footprint_ground(_e, _x0, _y0, _w, _h, label="building")
+            if gate_err is not None:
+                return gate_err
     dec = await world._dec(await world._gen())
     try:
-        # A MULTI-TILE stockpile must not come back 1x1. constructBuilding ignores w/h for
-        # piles (measured twice: pile 1 arrived x66-66,128-128 for a 4x2 request, and the
-        # response said success:true), so a bigger pile goes through the game's own
-        # allocInstance -> setSize -> constructAbstract path, which reports real extents.
-        _w, _h = int(body.get("w") or 1), int(body.get("h") or 1)
         # ANY multi-tile request goes through the game's own setSize path. Not just
         # piles: a 3x2 Farm Plot came back 1x1 the same way (measured 2026-11-21, and
         # the ladder rung still read satisfied - a 1-tile farm quietly starves a fort).
@@ -1048,7 +1522,7 @@ async def _building_present(building_id: int) -> bool | None:
 
 
 @app.post("/remove-building", operation_id="remove_building")
-async def remove_building(request: Request):
+async def remove_building(request: RemoveBuildingRequest):
     """Deconstruct a building - by tile (x, y, elev) OR by building_id.
 
     Measured 2026-11-21: this endpoint read body["x"] unconditionally, so the natural call
@@ -1057,7 +1531,7 @@ async def remove_building(request: Request):
     footprint start from the live pile/zone lists; a call that names neither is answered
     with a usage message, not a traceback.
     """
-    body = await request.json()
+    body = await _as_dict(request)
     x = y = elev = None
     if body.get("building_id") is not None:
         bid = int(body["building_id"])
@@ -1193,8 +1667,8 @@ async def tunnel_sites(length: int = Query(12, ge=4, le=40), width: int = Query(
                      f"depth>={r['min_depth']} tiles={r['tiles']} entrance={r['entrance']}"
                      + (f" dist={r['dist_to_near']}" if r['dist_to_near'] is not None else ""))
     if not sites:
-        lines.append("  none - try a shorter length, a smaller min_depth, or explore first "
-                     "(designations cannot land on unexplored tiles)")
+        lines.append("  none - try a shorter length, a smaller min_depth, or start from an explored entrance "
+                     "and extend into fog via send_dig_command (gate with hazards and depth_profile first)")
     for l in lines:
         b.spend(len(l) + 1)
     return WM.finish(lines, b)
@@ -1237,7 +1711,7 @@ OBSERVE_SCHEMA = "df-observer/v1"
 # Read-side counters: the observer plugin's poll cadence must be MEASURABLE for
 # acceptance (adaptive interval: paused 60 s, running 5-15 s). Pure in-memory.
 OBSERVE_STATS: dict = {"count": 0, "last_at": None, "last_paused": None, "recent": []}
-OBSERVE_LUA_SETTLE = 0.8
+OBSERVE_LUA_SETTLE = 0.0
 
 # <gamedir> for the crash-log watch. Server-side config (env), not the plugin's.
 OBSERVE_GAME_DIR = os.getenv("DFHACK_GAME_DIR", "")
@@ -1792,7 +2266,7 @@ async def probe_plan(x: int = Query(...), y: int = Query(...),
                      elev0: int = Query(..., description="lowest elevation to consider"),
                      elev1: int = Query(..., description="highest elevation to consider"),
                      min_depth: int = Query(2, ge=1, le=12)):
-    """Rank the elevations in ONE column for a probe dig - the way a player beats fog. Plans change mid-game: dig a short 1-wide adit, read the strata, then go deeper / shallower / elsewhere. Per elevation it reports glyph, depth under the local surface, and a verdict: probe here (solid, deep enough), avoid (damp: aquifer or water in the column at/above - digging floods the works), shallow (surface cut), fog (designation rejected), or open air."""
+    """Rank the elevations in ONE column for a probe dig - the way a player beats fog. Plans change mid-game: dig a short 1-wide adit, read the strata, then go deeper / shallower / elsewhere. Per elevation it reports glyph, depth under the local surface, and a verdict: probe here (solid, deep enough), avoid (damp: aquifer or water in the column at/above - digging floods the works), shallow (surface cut), fog (unexplored rock - designations ARE accepted in fog; gate with hazards/depth_profile as miners reveal it), or open air."""
     rows = await world.probe_plan(x, y, elev0, elev1, min_depth=min_depth)
     b = WM.Budget(1500)
     lines = [f"probe plan at x{x},y{y}, elevations {elev1} down to {elev0} "
@@ -1844,29 +2318,21 @@ async def magma_depth(x: int = Query(...), y: int = Query(...),
     return await world.magma_depth_below(x, y, elev, e_min=e_min, step=step)
 
 @app.post("/make-stockpile", operation_id="make_stockpile")
-async def make_stockpile(body: dict):
-    """Create a multi-tile stockpile and set it up correctly in ONE call: size + category flags + the material arrays the game's custom-settings UI walks + container limits. Every new pile should come through here, so no pile is ever left in the state that crashes the Custom button."""
-    try:
-        dec = await world._dec(await world._gen())
-        return await LO.make_stockpile(
-            dec, int(body["x"]), int(body["y"]), int(body["elev"]), int(body["w"]), int(body["h"]),
-            allow=body.get("allow"), deny=body.get("deny"),
-            all_categories=bool(body.get("all_categories", False)),
-            max_wheelbarrows=body.get("max_wheelbarrows"),
-            max_barrels=body.get("max_barrels"), max_bins=body.get("max_bins"))
-    except LO.LuaOpError as e:
-        return {"success": False, "error": str(e)}
+async def make_stockpile(request: CreateStockpileRequest):
+    """Create a multi-tile stockpile and set it up correctly in ONE call: site gate + size + category flags + the material arrays the game's custom-settings UI walks + container limits. Delegates to create_stockpile so the mid-air site gate is always enforced."""
+    return await create_stockpile(request)
 
 
 @app.post("/create-stockpile", operation_id="create_stockpile")
-async def create_stockpile(body: dict):
-    """Create a multi-tile stockpile (abstract -> setSize -> completeBuild). Use this, not place_building, for any pile bigger than 1 tile; then set its categories with /configure-stockpile.
+async def create_stockpile(request: CreateStockpileRequest):
+    """Create a multi-tile stockpile (abstract -> setSize -> completeBuild), optionally configuring its categories (`allow`, `deny`, `all_categories`) and container limits (`max_wheelbarrows`, `max_barrels`, `max_bins`) in the same call. Use this, not place_building, for any pile bigger than 1 tile.
 
     SITE GATE (measured 2026-11-21, three times on one fort): a pile placed on tiles that
     are not dug floor - `open` cavern air, unexcavated rock, fog - is accepted by the game
     and lands IN MID AIR. The player's words: "you had build the three stockpiles in mid
     air". Furniture floating over a cavern is a bug factory, so this endpoint now reads the
     footprint first and refuses when any tile is not a dug, walkable floor."""
+    body = await _as_dict(request)
     x0, y0, e = int(body["x"]), int(body["y"]), int(body["elev"])
     w, h = max(1, int(body["w"])), max(1, int(body["h"]))
     x1, y1 = x0 + w - 1, y0 + h - 1
@@ -1898,15 +2364,48 @@ async def create_stockpile(body: dict):
                 "gate": "no rock/wall/hidden/open, to_dig == 0", "measured": st}
     try:
         dec = await world._dec(await world._gen())
-        res = await LO.create_stockpile(dec, x0, y0, e, w, h)
+        # Idempotency gate: if an active stockpile already occupies this exact footprint,
+        # reuse it instead of creating a duplicate overlapping pile.
+        existing = None
+        try:
+            for sp in await LO.list_stockpiles(dec):
+                if (not sp.get("marked_for_removal")
+                        and int(sp["x0"]) == x0 and int(sp["x1"]) == x1
+                        and int(sp["y0"]) == y0 and int(sp["y1"]) == y1
+                        and int(sp["elev"]) == e):
+                    existing = sp
+                    break
+        except Exception:
+            existing = None
+        if existing is not None:
+            res = {"building_id": int(existing["id"]), "extent": existing["extent"],
+                   "already_exists": True}
+        else:
+            res = await LO.create_stockpile(dec, x0, y0, e, w, h)
+        has_cfg = any(body.get(k) is not None for k in (
+            "allow", "deny", "max_wheelbarrows", "max_barrels", "max_bins"
+        )) or bool(body.get("all_categories", False))
+        if has_cfg and res.get("building_id") is not None:
+            cfg = await LO.configure_stockpile(
+                dec, int(res["building_id"]),
+                allow=body.get("allow"), deny=body.get("deny"),
+                all_categories=bool(body.get("all_categories", False)),
+                max_wheelbarrows=body.get("max_wheelbarrows"),
+                max_barrels=body.get("max_barrels"),
+                max_bins=body.get("max_bins"),
+            )
+            res["configured"] = cfg.get("line")
     except (LO.LuaOpError, DFHackError, DFHackTransportError) as e2:
         return {"success": False, "error": str(e2)}
+    world.cache.reset()
+    world.forget_band()
     return {"success": True, "site_gate": f"dug {dug}/{total}", **res}
 
 
 @app.post("/resize-building", operation_id="resize_building")
-async def resize_building(body: dict):
+async def resize_building(request: ResizeBuildingRequest):
     """Resize a building - stockpiles included - with the game's own setSize. constructBuilding with nominal=true makes a 1x1 stockpile no matter what w/h you pass (measured), so big piles need this call afterwards."""
+    body = await _as_dict(request)
     try:
         dec = await world._dec(await world._gen())
         return await LO.resize_building(dec, int(body["building_id"]), int(body["w"]), int(body["h"]))
@@ -1915,8 +2414,9 @@ async def resize_building(body: dict):
 
 
 @app.post("/repair-stockpile-settings", operation_id="repair_stockpile_settings")
-async def repair_stockpile_settings(body: dict):
+async def repair_stockpile_settings(request: BuildingIdRequest):
     """Allocate the per-category material arrays the game's stockpile custom-settings UI walks. Writing only settings.flags leaves them size 0 while the category flag is true, and the UI then dereferences an empty vector - that is the crash (SIGSEGV at 0xa in render_things with overlay on the stack) the player hit by clicking Custom on a Lua-configured pile. Call this after configure-stockpile; the acceptance test is the custom button opening."""
+    body = await _as_dict(request)
     try:
         dec = await world._dec(await world._gen())
         return await LO.repair_stockpile_settings(dec, int(body["building_id"]))
@@ -1936,7 +2436,7 @@ async def list_stockpiles():
 
 
 @app.post("/configure-stockpile", operation_id="configure_stockpile")
-async def configure_stockpile(body: dict):
+async def configure_stockpile(request: ConfigureStockpileRequest):
     """Set a stockpile's accepted categories, container limits and wheelbarrows.
 
     Body: {"building_id": 12, "allow": ["wood"], "deny": ["stone"], "all_categories": false,
@@ -1946,6 +2446,7 @@ async def configure_stockpile(body: dict):
     with a deny list is the general pile (take everything except stone and wood, per the
     quickstart). A wood pile near the entrance is allow=["wood"].
     """
+    body = await _as_dict(request)
     try:
         dec = await world._dec(await world._gen())
         return await LO.configure_stockpile(
@@ -2057,9 +2558,9 @@ async def list_zones():
 
 
 @app.post("/remove-zone", operation_id="remove_zone")
-async def remove_zone(request: Request):
+async def remove_zone(request: BuildingIdRequest):
     """Mark an activity zone for removal by id ({"building_id": N}). remove_building goes through findAtTile, which does not see zones."""
-    body = await request.json()
+    body = await _as_dict(request)
     dec = await world._dec(await world._gen())
     try:
         res = await LO.remove_zone(dec, int(body["building_id"]))
@@ -2070,7 +2571,7 @@ async def remove_zone(request: Request):
 
 
 @app.post("/create-zone", operation_id="create_zone")
-async def create_zone(request: Request):
+async def create_zone(request: CreateZoneRequest):
     """CREATE AN ACTIVITY ZONE - the meeting area, pasture, pit/pond, dump - at an exact rectangle.
 
     Body: {"kind": "meeting" | "pasture" | "pit" | "pond" | "dump" | "watersource" | any
@@ -2083,7 +2584,7 @@ async def create_zone(request: Request):
     no commands (SETUP-LINUX notes), so until now zones were UI-only and uncreatable by
     an agent. Dig the room out FIRST: a zone on unmined rock marks nothing.
     """
-    body = await request.json()
+    body = await _as_dict(request)
     # ZONE WRITES ARE OPT-IN. Measured twice on this fort (2026-11-21): the game crashed
     # after `create_zone` calls - allocInstance -> setSize -> constructAbstract -> write
     # z.type -> notifyCivzoneModified. A zone made that way is not created through the
@@ -2097,10 +2598,32 @@ async def create_zone(request: Request):
                 "hint": "place it in-game (z -> Meeting Area -> draw rect -> Accept), or "
                         "pass acknowledge_risk: true after testing on a THROWAWAY save",
                 "requires": "acknowledge_risk"}
+    x0, y0, e = int(body["x"]), int(body["y"]), int(body["elev"])
+    w, h = max(1, int(body.get("w", 5))), max(1, int(body.get("h", 5)))
+    x1, y1 = x0 + w - 1, y0 + h - 1
+    kind_str = str(body["kind"]).strip().lower()
+    if body.get("check_site", True) is not False and kind_str not in ("watersource", "water", "fishing", "pond", "pit"):
+        gate_err = await _verify_footprint_ground(e, x0, y0, w, h, label="zone")
+        if gate_err is not None:
+            return gate_err
     try:
         dec = await world._dec(await world._gen())
-        res = await LO.create_zone(dec, str(body["kind"]), int(body["x"]), int(body["y"]),
-                                   int(body["elev"]), int(body.get("w", 5)), int(body.get("h", 5)))
+        # Idempotency check (tool_missing.md #16): if an active zone already occupies
+        # this exact footprint, return it instead of creating a duplicate zone.
+        try:
+            for zz in await LO.list_zones(dec):
+                if (not zz.get("marked_for_removal")
+                        and int(zz["x0"]) == x0 and int(zz["x1"]) == x1
+                        and int(zz["y0"]) == y0 and int(zz["y1"]) == y1
+                        and int(zz["elev"]) == e):
+                    return {"success": True, "already_exists": True,
+                            "building_id": int(zz["id"]), "kind": kind_str,
+                            "zone_type": zz.get("type_name"),
+                            "extent": f"{x0}..{x1},{y0}..{y1}",
+                            "rect_tiles": w * h}
+        except Exception:
+            pass
+        res = await LO.create_zone(dec, str(body["kind"]), x0, y0, e, w, h)
     except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
         return {"success": False, "error": str(e)}
     world.cache.reset()
@@ -2116,9 +2639,9 @@ async def labor_list():
     return {"count": len(labors), "labors": sorted(labors.values())}
 
 @app.post("/set-unit-labors", operation_id="set_unit_labors")
-async def set_unit_labors(request: Request):
+async def set_unit_labors(request: SetUnitLaborsRequest):
     """THE LABOR MENU (`y`), driven. changes: [{unit_id, labor, value}] where labor is a name from labor_list (MINE, MASON, ...) or a labor id, value true/false. This is how the fort gets miners: SetUnitLabors is RPC, so no cursor is involved. Verify with world_objects/look: the `miners` count in the ladder header is read from the same labors."""
-    body = await request.json()
+    body = await _as_dict(request)
     dec = await world._dec(await world._gen())
     by_name = {v: k for k, v in dec.flags.get("unit_labor", {}).items()}
     changes, bad = [], []
@@ -2143,9 +2666,9 @@ async def set_unit_labors(request: Request):
     return {"applied": len(changes), "unknown": bad, "success": True}
 
 @app.post("/work-order", operation_id="work_order")
-async def work_order(request: Request):
+async def work_order(request: WorkOrderRequest):
     """THE MANAGER'S WORK-ORDER SCREEN (`j-m-q`), driven. Body: {"job":"MakeBarrel","amount":5} (translated to the JSON form this build requires) or raw {"json":"{\"job\":\"MilkCreature\"}"}. Jobs are df.job_type names (MakeCharcoal, MakeTable, MakeChair, MakeBarrel, MakeRockBag, SmeltOre, FurnaceSmelt, CraftBoneCarving, ...). Use this to keep blocks/barrels/beds in production - the usual reason a planned building never gets built. Verify with the server log: it prints "Queuing <job> xN"."""
-    body = await request.json()
+    body = await _as_dict(request)
     # Verified live: this build's workorder.lua parses its FIRST argument as JSON, so the
     # documented `workorder <jobtype> <amount>` positional form fails with
     # "can't parse JSON at byte 1 of: CollectRock 10". Build the JSON form ourselves.
@@ -2184,16 +2707,125 @@ async def world_cache_reset():
             "note": "every derived view is gone; the next read re-fetches the world from the game"}
 
 
+@app.get("/game-paths", operation_id="game_paths")
+async def game_paths():
+    """Discover the running game's filesystem paths (df_path, save_path, crashlogs_dir,
+    blueprints_dir, scripts_dir) and whether `deployables/scripts/dfhack_mcp.lua` is deployed
+    to `<gamedir>/hack/scripts/`."""
+    try:
+        res = await LO.game_paths()
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/building-status", operation_id="building_status")
+async def building_status(building_id: int | None = Query(None, description="Specific building ID to inspect; omit to list unfinished/planned buildings"),
+                          only_incomplete: bool = Query(True, description="When True (default), list only buildings still under construction / awaiting materials"),
+                          limit: int = Query(25, ge=1, le=100, description="Max buildings to return")):
+    """Diagnose why a planned building (Well, Workshop, Furniture) or dig is not finishing:
+    reports build_stage/max_build_stage, attached items, active construction jobs, whether
+    suspended, missing item filters (e.g. 'needs mechanisms'), crew labor/pick bottlenecks,
+    and recent cancellation announcements from the game report log. Powered by
+    deployables/scripts/dfhack_mcp.lua."""
+    try:
+        res = await LO.building_status(building_id=building_id,
+                                       only_incomplete=only_incomplete,
+                                       limit=limit)
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+    # Enrich with crew labor/pick bottlenecks and recent cancellation announcements
+    diagnostics: dict = {"crew": {}, "bottlenecks": [], "recent_cancellations": []}
+    try:
+        gen = await world._gen()
+        dec = await world._dec(gen)
+        units = await WM.load_units(dec, gen, world._state)
+        citizens = [u for u in units if u.get("race") == "dwarf" and not u.get("hostile")]
+        miners = sum(1 for u in citizens if "MINE" in u.get("labors", []))
+        masons = sum(1 for u in citizens if "MASON" in u.get("labors", []))
+        carpenters = sum(1 for u in citizens if "CARPENTER" in u.get("labors", []))
+        mechanics = sum(1 for u in citizens if "DETAIL" in u.get("labors", []) or "SIEGE_OPERATE" in u.get("labors", []) or "MECHANIC" in " ".join(u.get("labors", [])))
+        obs_st = {}
+        try:
+            obs_st = await LO.observe_status_module()
+        except Exception:
+            pass
+        picks = obs_st.get("picks")
+        diagnostics["crew"] = {
+            "dwarves": len(citizens),
+            "miners": miners,
+            "picks": picks,
+            "masons": masons,
+            "carpenters": carpenters,
+        }
+        if miners == 0:
+            diagnostics["bottlenecks"].append("no miners assigned (MINE labor = 0)")
+        if picks is not None and picks < miners:
+            diagnostics["bottlenecks"].append(f"pick shortage: {picks} pick(s) for {miners} designated miner(s)")
+        for b in res.get("buildings", []):
+            if not b.get("complete"):
+                if b.get("suspended"):
+                    diagnostics["bottlenecks"].append(f"building #{b['id']} ({b['name']}) construction job is SUSPENDED")
+                if b.get("missing_item_filters"):
+                    need = ", ".join(f"{f['item_type']}x{f['quantity_needed']}" for f in b["missing_item_filters"])
+                    diagnostics["bottlenecks"].append(f"building #{b['id']} ({b['name']}) awaiting materials: {need}")
+        reps = await WM.load_reports(gen, world._state, limit=30)
+        cancellations = [
+            r for r in reps
+            if any(k in r.lower() for k in ("cancels", "unable to complete", "needs ", "inaccessible", "damp", "warm"))
+        ]
+        diagnostics["recent_cancellations"] = cancellations[-10:]
+    except Exception as ex:
+        diagnostics["notes"] = f"partial diagnostics: {ex}"
+    return {"success": True, **res, "diagnostics": diagnostics}
+
+
+@app.get("/transitions", operation_id="transitions")
+async def transitions(e0: int | None = Query(None, description="Optional lowest in-game Elevation to filter"),
+                      e1: int | None = Query(None, description="Optional highest in-game Elevation to filter")):
+    """Report transition-verified excavated tiles (`wall/fog -> floor/stair/ramp`) from the
+    persistent SQLite TransitionStore (`PLAN-MODEL.md` Technique 1). Unlike a raw floor census,
+    this counts only tiles observed transitioning from solid rock/fog to floor or stairs, so
+    natural subterranean caverns are never mistaken for player-dug tunnels."""
+    sig = await world.signature()
+    skey = (sig or {}).get("key", "default")
+    return {"success": True, **world.transitions.summary(skey, elev0=e0, elev1=e1)}
+
+
+@app.post("/configure-farmplot", operation_id="configure_farmplot")
+async def configure_farmplot(request: ConfigureFarmplotRequest):
+    """Set or inspect a Farm Plot's seasonal crops (default: plump helmets in all seasons,
+    `crop='MUSHROOM_HELMET_PLUMP'`, `all_seasons=True`), with full read-back of all four
+    seasons and available plant raws. Powered by deployables/scripts/dfhack_mcp.lua."""
+    body = await _as_dict(request)
+    try:
+        res = await LO.configure_farmplot(
+            building_id=body.get("building_id"),
+            crop=body.get("crop"),
+            all_seasons=bool(body.get("all_seasons", True)),
+            spring=bool(body.get("spring", False)),
+            summer=bool(body.get("summer", False)),
+            autumn=bool(body.get("autumn", False)),
+            winter=bool(body.get("winter", False)),
+        )
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
 mcp = FastApiMCP(
     app,
     name="Dwarf Fortress MCP Server",
     description="A MCP server that uses the dfhack_client_python package to connect to a locally running Dwarf Fortress game through DFHack's RPC connection.",
-    # game_lua stays an HTTP debug endpoint only. Raw Lua in the tool list invites a
-    # local model to write arbitrary game state; the typed operations in luaops.py are
-    # the supported way in.
-    # observe is the df-observer plugin's composite read (machine-shaped JSON, ~2-4k
-    # tokens): a plugin transport, not a model tool - it stays HTTP-only too.
-    exclude_operations=["game_lua", "observe", "observe_stats"]
+    # Pruned MCP tool surface (PLAN-TOOLS.md Phase 1):
+    # - game_lua / observe / observe_stats / game_paths stay HTTP-only for debug and the df-observer plugin.
+    # - get_block_list (~147k tokens/z) and world_raw (file dump) are operator HTTP endpoints.
+    # - get_versions / get_world_info / get_map_info / get_view_info are folded into get_status.
+    # - get_unit_list is a verbose raw dump; play uses unit_counts, list_units, and look.
+    # - world_zone is subsumed by look's per-elevation strip; building_at is inside tile_at.
+    # - make_stockpile is unified into create_stockpile (site gate + categories);
+    #   resize_building and repair_stockpile_settings stay HTTP-only.
+    exclude_operations=["game_lua", "observe", "observe_stats", "game_paths", "get_block_list", "world_raw", "get_versions", "get_world_info", "get_map_info", "get_view_info", "get_unit_list", "world_zone", "building_at", "make_stockpile", "resize_building", "repair_stockpile_settings"]
 )
 # Streamable HTTP (POST/GET /mcp) - the transport dsh-mcp-client speaks.
 # mcp.mount() is deprecated and mounts the legacy SSE pair (GET /mcp + POST /mcp/messages/).

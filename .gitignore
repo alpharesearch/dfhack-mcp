@@ -209,6 +209,7 @@ __marimo__/
 # start.sh runtime files
 dfhack-mcp.log
 .dfhack-mcp.pid
+.dfhack-transitions.sqlite3*
 tests/mock_*.log
 
 # raw dumps written by world_raw (files, not context)

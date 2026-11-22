@@ -99,13 +99,12 @@ Every projection prints the in-game elevation (`ui` = z−129) next to ours, plu
 - **Waits are background jobs**, never model turns (the watcher scripts).
 
 ## Next build order
-1. `worldstore.py` (sqlite) + transition logging in the refresh path → `dug_floors`,
-   `dug_stairs`, flood detection, honest ladder rungs.
+1. ✅ **BUILT (2026-11-22):** `TransitionStore` in [`worldmodel.py`](worldmodel.py) (`.dfhack-transitions.sqlite3`) + transition logging in `levels_z` → `dug_floors`, `dug_stairs`, `dug_ramps`, exposed via `GET /transitions` (`transitions` MCP tool) and annotated on `FortFacts` / `fort_progress`, with automatic reset on save reload.
 2. `mirror_structure` (read a dug footprint, re-place it with clearance from existing
-   structures, validate per part, order designations middle-first).
+   structures, validate per part, order designations middle-first — middle-first box and multi-z `stair_shaft` ordering are now built into `send_dig_command`).
 3. Geology inference + `survey` (accepted/rejected counts with reasons: fog, damp, hot,
-   no-access, water, slope) as the gate before any designation.
-4. Game-side announcer script in `deployables/scripts/` feeding `get_reports`.
+   no-access, water, slope) as the gate before any designation (`_verify_footprint_ground` now gates `place_building`, `create_stockpile`, `make_stockpile`, and `create_zone`).
+4. Server-side Lua module [`deployables/scripts/dfhack_mcp.lua`](deployables/scripts/dfhack_mcp.lua) deployed to `<gamedir>/hack/scripts/dfhack_mcp.lua` (✅ built 2026-11-22) + game-side announcer script feeding `get_reports`.
 5. Then the deferred RAG phase — with the store, embedding tiles/events is trivial.
 
 ## Correction from the player (measured right after): designations are not gated by fog

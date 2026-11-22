@@ -502,5 +502,4 @@ DF_GAMEDIR=/x/df ./scripts/deploy.sh deploy
 - 20 pre-existing blueprints were copied out of the game directory into
   `deployables/blueprints/`, so the player's designs are versioned too. `deploy.sh check`
   reported all 19 remaining as `same`.
-- Lua scripts: none shipped. If any are added, they go in `deployables/scripts/` and need a
-  game restart (DFHack loads scripts at start).
+- Lua scripts: `deployables/scripts/dfhack_mcp.lua` is deployed to `<gamedir>/hack/scripts/dfhack_mcp.lua` via `./scripts/deploy.sh deploy` (or discovered via `GET /game-paths`) and hot-loaded on first use via `reqscript('dfhack_mcp')`.

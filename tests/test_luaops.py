@@ -67,10 +67,12 @@ def test_stockpile_config_initialises_the_ui_arrays():
 
 def test_templates_only_emit_a_single_status_line():
     import inspect
-    for fn in ("place_building", "building_at", "remove_building", "walkable_between"):
+    for fn in ("place_building", "building_at", "walkable_between"):
         src = inspect.getsource(getattr(LO, fn))
         assert 'print("FAIL' in src, fn
         assert 'print("OK ' in src, fn
+    rb_src = inspect.getsource(LO.remove_building)
+    assert 'ERR|' in rb_src and 'VERDICT|' in rb_src, "remove_building"
 
 
 def test_place_template_carries_the_resolved_ids_and_coords():
@@ -123,6 +125,222 @@ def test_no_lua_is_reachable_from_the_mcp_surface():
     for op in ("place_building", "remove_building", "building_at", "walkable_between",
                "job_queue", "unit_counts"):
         assert f'operation_id="{op}"' in main_src
+
+
+def test_concurrent_lua_calls_do_not_crosstalk_or_lose_output():
+    """Regression test for the _reply_log race condition:
+    Previously, _invoke appended RPC_REPLY_TEXT frames to a global _reply_log and _lua
+    slept for 0.5-0.8s after releasing _io_lock before calling drain_replies(). Any
+    concurrent caller (/observe polling OBSERVE_PICKS_LUA, list_zones, list_stockpiles,
+    or an agent tool call) wiped _reply_log on entry and injected its own output into the
+    sleeping caller's reply stream.
+    """
+    import asyncio
+    import os
+    import struct
+    from dfhack_client_python import dfhack_remote
+    from dfhack_client_python.py_export.CoreProtocol_pb2 import (
+        CoreBindRequest, CoreBindReply, CoreRunCommandRequest,
+        CoreTextNotification, CoreTextFragment, EmptyMessage,
+    )
+
+    def frame(id_, payload=b""):
+        return struct.pack("<hhi", id_, 0, len(payload)) + payload
+
+    def text_frame(s: str) -> bytes:
+        msg = CoreTextNotification(fragments=[CoreTextFragment(text=s)])
+        return frame(-3, msg.SerializeToString())
+
+    async def handle(reader, writer):
+        try:
+            head = await reader.read(12)
+            if head[:8] != b"DFHack?\n":
+                writer.close()
+                return
+            writer.write(b"DFHack!\n" + struct.pack("<i", 1))
+            await writer.drain()
+            while True:
+                try:
+                    h = await reader.readexactly(8)
+                except asyncio.IncompleteReadError:
+                    return
+                mid, _pad, size = struct.unpack("<hhi", h)
+                body = await reader.readexactly(size) if size else b""
+                if mid == -4:
+                    return
+                if mid == 0:
+                    req = CoreBindRequest()
+                    req.ParseFromString(body)
+                    writer.write(frame(-1, CoreBindReply(assigned_id=42).SerializeToString()))
+                    await writer.drain()
+                elif mid == 42:
+                    cmd = CoreRunCommandRequest()
+                    cmd.ParseFromString(body)
+                    tag = cmd.arguments[0] if cmd.arguments else ""
+                    if tag == "FAIL_ME":
+                        writer.write(text_frame("ERR|script failed detail"))
+                        writer.write(struct.pack("<hhi", -2, 0, 1))  # RPC_REPLY_FAIL (CR_FAILURE=1)
+                        await writer.drain()
+                    else:
+                        # Stream two text frames with a brief yield between them, then result
+                        writer.write(text_frame(f"HEAD|{tag}"))
+                        await writer.drain()
+                        await asyncio.sleep(0.005)
+                        writer.write(text_frame(f"TAIL|{tag}"))
+                        writer.write(frame(-1, EmptyMessage().SerializeToString()))
+                        await writer.drain()
+        finally:
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    async def run_scenario():
+        srv = await asyncio.start_server(handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        old_port = os.environ.get("DFHACK_PORT")
+        os.environ["DFHACK_PORT"] = str(port)
+        dfhack_remote.drop_connection()
+        try:
+            async with srv:
+                tags = [
+                    "OBS2 PICKS 3 SITE 677 DATE 100-0-22",
+                    "ROW|1|87|MeetingHall|66|67|110|111|165|0",
+                    "PILE 12 id=12 found=1 x0=52 x1=57",
+                    "OK building='Still' bt=13 type=building_workshopst id=14",
+                ] * 6  # 24 concurrent calls
+
+                async def worker(idx: int, tag: str):
+                    out = await LO._lua(f"call_{idx}:{tag}")
+                    # Yield after _lua returns and verify drain_replies() is empty in this task
+                    await asyncio.sleep(0.01)
+                    assert dfhack_remote.drain_replies() == []
+                    return idx, tag, out
+
+                results = await asyncio.gather(*(worker(i, t) for i, t in enumerate(tags)))
+                for idx, tag, out in results:
+                    expected = f"HEAD|call_{idx}:{tag}\nTAIL|call_{idx}:{tag}"
+                    assert out == expected, f"cross-talk on call {idx}: got {out!r}, expected {expected!r}"
+
+                # Also verify error text is preserved on RPC_REPLY_FAIL
+                try:
+                    await LO._lua("FAIL_ME")
+                    raise AssertionError("expected LuaOpError on FAIL_ME")
+                except LO.LuaOpError as e:
+                    assert "ERR|script failed detail" in str(e), f"missing error text: {e}"
+                await dfhack_remote.close()
+        finally:
+            dfhack_remote.drop_connection()
+            if old_port is None:
+                os.environ.pop("DFHACK_PORT", None)
+            else:
+                os.environ["DFHACK_PORT"] = old_port
+
+    asyncio.run(run_scenario())
+
+
+def test_pruned_mcp_surface_and_run_command_allowlist():
+    """Verify Phase 1 tool hygiene (PLAN-TOOLS.md):
+    1. Raw/footgun and redundant tools are excluded from FastApiMCP.
+    2. run_command enforces an allowlist and explicitly denies raw lua/script, cheats,
+       and destructive commands.
+    3. make_stockpile delegates to create_stockpile so the mid-air site gate cannot be bypassed.
+    """
+    main_src = pathlib.Path(__file__).resolve().parents[1].joinpath("main.py").read_text()
+    m = re.search(r'exclude_operations=\[([^\]]*)\]', main_src)
+    assert m is not None
+    excluded = m.group(1)
+    for op in ("game_lua", "observe", "observe_stats", "get_block_list", "world_raw",
+               "get_versions", "get_world_info", "get_map_info", "get_view_info",
+               "get_unit_list", "world_zone", "building_at", "make_stockpile",
+               "resize_building", "repair_stockpile_settings"):
+        assert f'"{op}"' in excluded, f"{op} should be excluded from the MCP tool surface"
+
+    assert "RUN_COMMAND_DENY_EXACT" in main_src and "RUN_COMMAND_ALLOWLIST" in main_src
+    for denied in ('"lua"', '"luap"', '"script"', '"die"', '"exterminate"', '"dig-now"', '"build-now"'):
+        assert denied in main_src, f"{denied} must be in RUN_COMMAND_DENY_EXACT"
+
+    # make_stockpile must route through create_stockpile so the site gate runs
+    i = main_src.index('operation_id="make_stockpile"')
+    ms_seg = main_src[i:main_src.index('@app.post("/create-stockpile"', i)]
+    assert "return await create_stockpile(" in ms_seg
+
+
+def test_post_endpoints_use_typed_pydantic_models_and_fog_dig_helpers():
+    """Verify POST endpoints expose typed Pydantic schemas, fog docstrings reflect
+    the proven fog designation workflow, and send_dig_command supports box/boxes/stair_shaft.
+    """
+    main_src = pathlib.Path(__file__).resolve().parents[1].joinpath("main.py").read_text()
+    for model_name in (
+        "ListUnitsRequest", "RunCommandRequest", "PassKeyboardEventRequest",
+        "ApplyBlueprintRequest", "SetPauseStateRequest", "CutTreesRequest",
+        "DigBox", "StairShaftSpec", "SendDigCommandRequest",
+        "PlaceBuildingRequest", "RemoveBuildingRequest", "CreateStockpileRequest",
+        "ConfigureStockpileRequest", "CreateZoneRequest", "SetUnitLaborsRequest",
+        "WorkOrderRequest",
+    ):
+        assert f"class {model_name}(BaseModel):" in main_src, f"missing Pydantic schema {model_name}"
+
+    dig_idx = main_src.index('operation_id="send_dig_command"')
+    dig_seg = main_src[dig_idx:main_src.index('@app.post("/get-block-list"', dig_idx)]
+    assert "FOG WORKFLOW" in dig_seg and "WORKS and is the intended workflow" in dig_seg
+    assert "unexplored tiles are rejected SILENTLY" not in dig_seg
+    assert '"mode": "stair_shaft"' in dig_seg
+    assert '"DOWN_STAIR_DIG"' in dig_seg and '"UP_DOWN_STAIR_DIG"' in dig_seg and '"UP_STAIR_DIG"' in dig_seg
+    assert "_expand_dig_box(" in dig_seg
+
+
+def test_server_side_lua_module_bridge_and_json_dispatch():
+    """Verify deployables/scripts/dfhack_mcp.lua and luaops.call_module:
+    1. dfhack_mcp.lua exists in deployables/scripts/ and defines the JSON dispatcher + OPS.
+    2. call_module auto-bootstraps _G.__dfhack_mcp once, sends JSON arguments, and parses
+       MCP_JSON|{...} replies into dicts (or raises LuaOpError on ok=false).
+    """
+    import asyncio
+    import json
+
+    assert LO.LUA_MODULE_PATH.is_file(), f"missing {LO.LUA_MODULE_PATH}"
+    lua_src = LO.LUA_MODULE_PATH.read_text(encoding="utf-8")
+    for required in ("--@ module = true", "M.VERSION", "function M.dispatch(",
+                     "function OPS.game_paths(", "function OPS.observe_status(",
+                     "function OPS.building_status(", "function OPS.configure_farmplot(",
+                     "MCP_JSON|"):
+        assert required in lua_src, f"dfhack_mcp.lua missing {required}"
+
+    calls = []
+
+    async def fake_lua(expr, settle=0.0):
+        calls.append(expr)
+        if "load(" in expr and "dfhack_mcp.lua" in expr:
+            return 'MCP_JSON|{"ok":true,"result":{"bootstrapped":true,"version":"2026.11.22-v1"}}'
+        if '"game_paths"' in expr:
+            return 'MCP_JSON|{"ok":true,"op":"game_paths","result":{"df_path":"/df","save_path":"/df/data/save/region1","script_deployed":true}}'
+        if '"building_status"' in expr:
+            return 'MCP_JSON|{"ok":true,"op":"building_status","result":{"count":1,"only_incomplete":true,"buildings":[{"id":30,"name":"Well","complete":false,"missing_item_filters":[{"item_type":"TRAPPARTS","quantity_needed":1}]}]}}'
+        if '"configure_farmplot"' in expr:
+            if "NO_SUCH_PLANT" in expr:
+                return 'MCP_JSON|{"ok":false,"op":"configure_farmplot","error":"no plant raw matching \'NO_SUCH_PLANT\'"}'
+            return 'MCP_JSON|{"ok":true,"op":"configure_farmplot","result":{"building_id":19,"crop_set":"MUSHROOM_HELMET_PLUMP","seasons_updated":["spring","summer","autumn","winter"]}}'
+        raise AssertionError(f"unexpected lua call: {expr[:120]}")
+
+    real_lua = LO._lua
+    LO._lua = fake_lua
+    LO._module_gen = -1
+    LO._module_sha = ""
+    try:
+        gp = asyncio.run(LO.game_paths())
+        assert gp["df_path"] == "/df" and gp["script_deployed"] is True
+        bs = asyncio.run(LO.building_status(building_id=30))
+        assert bs["count"] == 1 and bs["buildings"][0]["name"] == "Well"
+        fp = asyncio.run(LO.configure_farmplot(building_id=19, crop="MUSHROOM_HELMET_PLUMP"))
+        assert fp["crop_set"] == "MUSHROOM_HELMET_PLUMP"
+        try:
+            asyncio.run(LO.configure_farmplot(building_id=19, crop="NO_SUCH_PLANT"))
+            raise AssertionError("expected LuaOpError on unknown plant")
+        except LO.LuaOpError as e:
+            assert "NO_SUCH_PLANT" in str(e)
+    finally:
+        LO._lua = real_lua
 
 
 if __name__ == "__main__":

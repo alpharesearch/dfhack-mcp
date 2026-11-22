@@ -9,7 +9,7 @@ dependency is versioned with it (`pyproject.toml` points the editable path here)
 |---|---|
 | Upstream | https://github.com/oleksiy-korniychuk/dfhack-client-python |
 | Upstream base commit | `de6e584` (Oleksiy, 2025-07-11) |
-| Local commits on top | `69aa79e` RPC_REPLY_TEXT carries `fragments`, not `.text`<br>`410aea3` capture RPC_REPLY_TEXT frames + `drain_replies()` |
+| Local commits on top | `69aa79e` RPC_REPLY_TEXT carries `fragments`, not `.text`<br>`410aea3` capture RPC_REPLY_TEXT frames + `drain_replies()`<br>`2026-11-22` per-call task-local `ContextVar` (`_call_replies`) + `DFHackError.replies` + serialize `ensure_connection()`/`_drop()` under `_io_lock` (fixes concurrent reply cross-talk) |
 | Vendored | 2026-11-20, as a file copy (no `.git`) |
 
 ## Why a copy and not a submodule/subtree

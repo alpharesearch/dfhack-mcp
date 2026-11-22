@@ -33,12 +33,17 @@ Conventions
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import pathlib
 import sys
 import uuid
 import re
 
 from dfhack_client_python.dfhack import RunCommand
-from dfhack_client_python.dfhack_remote import DFHackError, DFHackTransportError, drain_replies
+from dfhack_client_python.dfhack_remote import (
+    DFHackError, DFHackTransportError, connection_generation, drain_replies
+)
 from dfhack_client_python.py_export.CoreProtocol_pb2 import CoreRunCommandRequest
 
 from worldmodel import GAME_Z_OFFSET   # 129: in-game Elevation = z - 129 (one unit, one source)
@@ -72,15 +77,21 @@ class LuaOpError(Exception):
     pass
 
 
-async def _lua(expr: str, settle: float = 0.5) -> str:
-    """Run one Lua chunk through DFHack's `lua` command and return its printed text."""
-    drain_replies()                                  # drop stragglers from earlier calls
+async def _lua(expr: str, settle: float = 0.0) -> str:
+    """Run one Lua chunk through DFHack's `lua` command and return its printed text.
+
+    DFHack streams every RPC_REPLY_TEXT frame before RPC_REPLY_RESULT on the same
+    serialized RPC call. dfhack_remote._invoke collects those frames per call into a
+    task-local ContextVar while holding _io_lock, so draining immediately after
+    RunCommand returns this call's exact output with zero sleep and no cross-talk
+    from concurrent polls (/observe, list_zones, list_stockpiles).
+    """
+    drain_replies()                                  # clear any prior task-local state
     try:
         await RunCommand(input=CoreRunCommandRequest(command="lua", arguments=[expr]))
     except (DFHackError, DFHackTransportError) as e:
-        out = "\n".join(drain_replies())
+        out = "\n".join(getattr(e, "replies", None) or drain_replies())
         raise LuaOpError(f"{e}" + (f" | {out}" if out else ""))
-    await asyncio.sleep(settle)                       # let RPC_REPLY_TEXT frames arrive
     out = "\n".join(drain_replies()).strip()
     if not out:
         raise LuaOpError("lua produced no output; the chunk printed nothing")
@@ -96,7 +107,7 @@ def _one(out: str) -> str:
     status line is found by prefix, and only then do we fall back to the last line.
     """
     lines = [l.strip() for l in out.splitlines() if l.strip()]
-    prefixes = ("OK ", "FAIL ", "OK|", "ERR|", "ROW|", "DONE|")
+    prefixes = ("OK ", "FAIL ", "OK|", "ERR|", "ROW|", "DONE|", "VERDICT|", "REFUSED ")
     for l in lines:
         if l.startswith(prefixes) or l in ("OK", "FAIL"):
             return l
@@ -576,13 +587,7 @@ def _usable(tiles: int, area: int) -> tuple[int | None, str]:
 
 
 async def _lua_read(expr: str, attempts: int = 3) -> str:
-    """Run a READ-ONLY chunk, retrying the empty answers.
-
-    `lua produced no output` on a scan is usually the reply stream, not the fort: the drain
-    waits 0.5s and under load the RPC_REPLY_TEXT frames land later than that. Measured
-    2026-11-21 on one fort: `/zones` printed the 25-tile MeetingHall and the ladder read
-    "no zones" a second later, so the meeting rung flipped open on a fort that has one.
-    Retrying with a longer settle turns most flakes into measurements.
+    """Run a READ-ONLY chunk, retrying transient empty answers.
 
     READ-ONLY by contract: a write chunk must never be replayed (a doubled build is worse
     than a missing row), so only pure readers call this.
@@ -590,10 +595,11 @@ async def _lua_read(expr: str, attempts: int = 3) -> str:
     last: Exception | None = None
     for i in range(max(1, attempts)):
         try:
-            return await _lua(expr, settle=0.5 + 0.7 * i)
+            return await _lua(expr)
         except (LuaOpError, DFHackError, DFHackTransportError) as e:
             last = e
-            await asyncio.sleep(0.4)
+            if i + 1 < max(1, attempts):
+                await asyncio.sleep(0.05 * (i + 1))
     assert last is not None
     raise last
 
@@ -645,7 +651,8 @@ async def list_zones(dec) -> list[dict]:
            "  pcall(function() if names[zz.type] ~= nil then tname = names[zz.type] end end)\n"
            '  print(string.format("ROW|%d|%d|%s|%d|%d|%d|%d|%d|%d", zz.id, zz.type,\n'
            '    tostring(tname), zz.x1, zz.x2, zz.y1, zz.y2, zz.z, rm))\n'
-           "end")
+           "end\n"
+           'print("DONE|" .. tostring(#df.global.world.buildings.other.ANY_ZONE))')
     try:
         out = await _lua_read(lua)
     except LuaOpError as e:
@@ -725,6 +732,7 @@ for _,sp in ipairs(df.global.world.buildings.other.STOCKPILE) do
   end)
   if ok and line then print(line) end
 end
+print("DONE|" .. tostring(#df.global.world.buildings.other.STOCKPILE))
 """.strip()
     try:
         out = await _lua_read(lua)
@@ -1214,3 +1222,130 @@ print("OK id=" .. tostring(sp.id) .. " " .. table.concat(fixed, " "))
     if line.startswith("FAIL"):
         raise LuaOpError(line)
     return {"success": True, "line": line[:900]}
+
+
+# ---------------------------------------------------------------------------
+# Server-side RPC Lua module bridge (deployables/scripts/dfhack_mcp.lua)
+#
+# Why: instead of interpolating parameters into ad-hoc multi-line Lua strings and
+# parsing pipe-delimited stdout, new operations live in a real git-tracked Lua
+# module (`deployables/scripts/dfhack_mcp.lua`), deployed to `<gamedir>/hack/scripts/`
+# via `./scripts/deploy.sh deploy` and auto-bootstrapped into `_G.__dfhack_mcp` per
+# connection generation if not yet deployed or updated in-repo.
+# Every call passes a JSON argument table and returns one `MCP_JSON|{...}` line.
+# ---------------------------------------------------------------------------
+
+LUA_MODULE_PATH = pathlib.Path(__file__).resolve().parent / "deployables" / "scripts" / "dfhack_mcp.lua"
+_module_gen: int = -1
+_module_sha: str = ""
+
+
+def _parse_mcp_json(out: str) -> dict:
+    """Extract and parse the `MCP_JSON|{...}` payload printed by dfhack_mcp.lua."""
+    for line in reversed(out.splitlines()):
+        s = line.strip()
+        if s.startswith("MCP_JSON|"):
+            raw = s[len("MCP_JSON|"):]
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as e:
+                raise LuaOpError(f"malformed MCP_JSON payload: {e}: {raw[:160]!r}") from e
+            if not data.get("ok", False):
+                raise LuaOpError(str(data.get("error") or f"dfhack_mcp {data.get('op')} failed"))
+            res = data.get("result")
+            return res if isinstance(res, dict) else {"value": res}
+    raise LuaOpError(f"dfhack_mcp produced no MCP_JSON line: {out[:200]!r}")
+
+
+async def _ensure_lua_module(force: bool = False) -> None:
+    """Ensure `_G.__dfhack_mcp` is loaded in the running game for the current connection
+    generation and matches `deployables/scripts/dfhack_mcp.lua`."""
+    global _module_gen, _module_sha
+    src = LUA_MODULE_PATH.read_text(encoding="utf-8")
+    sha = hashlib.sha256(src.encode("utf-8")).hexdigest()[:12]
+    gen = connection_generation()
+    if not force and _module_gen == gen and _module_sha == sha:
+        return
+    # Load the module chunk into _G.__dfhack_mcp and print a confirmation line
+    bootstrap = (
+        f"local fn, err = load({json.dumps(src)}, 'dfhack_mcp.lua')\n"
+        "if not fn then print('MCP_JSON|{\"ok\":false,\"error\":' .. string.format('%q', tostring(err)) .. '}') return end\n"
+        "local m = fn()\n"
+        "_G.__dfhack_mcp = m\n"
+        "print('MCP_JSON|{\"ok\":true,\"result\":{\"bootstrapped\":true,\"version\":' .. string.format('%q', tostring(m and m.VERSION or '?')) .. '}}')"
+    )
+    out = await _lua(bootstrap)
+    _parse_mcp_json(out)
+    _module_gen = connection_generation()
+    _module_sha = sha
+
+
+async def call_module(op: str, args: dict | None = None) -> dict:
+    """Invoke `OPS.<op>(args)` in `deployables/scripts/dfhack_mcp.lua` with JSON arguments
+    and parse its `MCP_JSON|{...}` response. Auto-bootstraps `_G.__dfhack_mcp` if needed."""
+    await _ensure_lua_module()
+    op_lit = json.dumps(str(op))
+    args_lit = json.dumps(json.dumps(args or {}))
+    invoke = (
+        "if _G.__dfhack_mcp == nil then\n"
+        "  local ok, m = pcall(reqscript, 'dfhack_mcp')\n"
+        "  if ok and m then _G.__dfhack_mcp = m end\n"
+        "end\n"
+        "if _G.__dfhack_mcp == nil then print('MCP_JSON|{\"ok\":false,\"error\":\"MODULE_NOT_LOADED\"}') return end\n"
+        f"_G.__dfhack_mcp.dispatch({op_lit}, {args_lit})"
+    )
+    try:
+        out = await _lua(invoke)
+        return _parse_mcp_json(out)
+    except LuaOpError as e:
+        if "MODULE_NOT_LOADED" in str(e):
+            await _ensure_lua_module(force=True)
+            out = await _lua(invoke)
+            return _parse_mcp_json(out)
+        raise
+
+
+async def game_paths() -> dict:
+    """Discover the live game's DF directory, save path, crashlogs, blueprints, and scripts
+    via `dfhack_mcp.lua` (closes tool_missing.md #5)."""
+    return await call_module("game_paths", {})
+
+
+async def building_status(building_id: int | None = None,
+                          only_incomplete: bool = True,
+                          limit: int = 25) -> dict:
+    """Inspect unfinished/planned (or specific) buildings, build stages, attached items,
+    and missing job item filters via `dfhack_mcp.lua` (closes tool_missing.md #15)."""
+    payload: dict = {"only_incomplete": bool(only_incomplete), "limit": int(limit)}
+    if building_id is not None:
+        payload["building_id"] = int(building_id)
+    return await call_module("building_status", payload)
+
+
+async def configure_farmplot(building_id: int | None = None,
+                             crop: str | None = None,
+                             all_seasons: bool = True,
+                             spring: bool = False,
+                             summer: bool = False,
+                             autumn: bool = False,
+                             winter: bool = False) -> dict:
+    """Read or set a farm plot's seasonal crops with read-back via `dfhack_mcp.lua`
+    (closes tool_missing.md #6)."""
+    payload: dict = {
+        "all_seasons": bool(all_seasons),
+        "spring": bool(spring),
+        "summer": bool(summer),
+        "autumn": bool(autumn),
+        "winter": bool(winter),
+    }
+    if building_id is not None:
+        payload["building_id"] = int(building_id)
+    if crop is not None:
+        payload["crop"] = str(crop)
+    return await call_module("configure_farmplot", payload)
+
+
+async def observe_status_module() -> dict:
+    """Structured status-bar probe (picks, site_id, date, seeds, alcohol, meals, raw_food)
+    via `dfhack_mcp.lua`."""
+    return await call_module("observe_status", {})

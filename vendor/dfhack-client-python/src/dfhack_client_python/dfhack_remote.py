@@ -17,6 +17,7 @@ Endpoint resolution honours DFHack's own precedence: ``DFHACK_PORT`` overrides
 """
 
 import asyncio
+from contextvars import ContextVar
 import os
 import sys
 from enum import IntEnum
@@ -60,22 +61,20 @@ def decode_fragments(fragments) -> str:
     return "".join(out)
 
 
-_reply_log: list[str] = []                     # DFHack console text, per call (see drain_replies)
+_call_replies: ContextVar[tuple[str, ...]] = ContextVar("_call_replies", default=())
 
 
 def drain_replies() -> list[str]:
-    """Return and clear the DFHack console text captured since the last drain.
+    """Return and clear the DFHack console text captured by the current task's last RPC call.
 
     CoreProtocol.RunCommand answers EmptyMessage; everything the command printed
-    arrives as RPC_REPLY_TEXT frames. Those frames are consumed inside _invoke, so
-    without this hook a tool can only say "sent" - the caller never sees `autochop
-    status`, `buildingplan status`, `quickfort orders --dry-run`, `workorder -l`,
-    or `help`, which is exactly the feedback a player acts on.
-    Calls are serialized under _io_lock, so draining right after a call attributes
-    the text to that call.
+    arrives as RPC_REPLY_TEXT frames before RPC_REPLY_RESULT. _invoke collects those
+    frames into a per-call list while holding _io_lock and stores them in the calling
+    task's ContextVar (_call_replies), so concurrent tasks (e.g. /observe polling and
+    an agent tool call) never overwrite or drain each other's output.
     """
-    out = list(_reply_log)
-    _reply_log.clear()
+    out = list(_call_replies.get())
+    _call_replies.set(())
     return out
 
 
@@ -97,8 +96,9 @@ def _locks():
 class DFHackError(Exception):
     """Exception raised when a DFHack command fails"""
 
-    def __init__(self, code, message=None):
+    def __init__(self, code, message=None, replies=None):
         self.code = code
+        self.replies = list(replies) if replies else []
         try:
             self.code_name = CoreErrorNotification.ErrorCode.Name(code)
         except ValueError:
@@ -354,48 +354,59 @@ def remote(func=None, *, plugin=''):
         output_type = get_param_type(params.get('output'))
 
         async def _invoke(**kwargs):
+            call_replies: list[str] = []
+            _call_replies.set(())
             _id = await BindMethod(f.__name__, input_type, output_type, plugin=plugin)
             input_value = kwargs.get('input') if kwargs.get('input') is not None else input_type()
             _writer.write(request(_id, input_value))
             await _writer.drain()
 
             # The server may send zero or more RPC_REPLY_TEXT frames, then
-            # RPC_REPLY_RESULT or RPC_REPLY_FAIL.
-            while True:
-                id, size = await get_header()
+            # RPC_REPLY_RESULT or RPC_REPLY_FAIL. Collect frames into call_replies
+            # and publish to the task-local ContextVar so concurrent callers never cross-talk.
+            try:
+                while True:
+                    id, size = await get_header()
 
-                if id == DFHackReplyCode.RPC_REPLY_TEXT:
-                    buffer = await _read_exact(_reader, size, "a text notification")
-                    text_obj = CoreTextNotification()
-                    text_obj.ParseFromString(buffer)
-                    text = decode_fragments(text_obj.fragments)
-                    print("[INFO] DFHack: " + text)
-                    _reply_log.append(text)          # so a caller can return it to the model
-                    continue
-                elif id == DFHackReplyCode.RPC_REPLY_RESULT:
-                    buffer = await _read_exact(_reader, size, "a result payload")
-                    obj = output_type()
-                    obj.ParseFromString(buffer)
-                    return obj
-                elif id == DFHackReplyCode.RPC_REPLY_FAIL:
-                    raise DFHackError(size)
-                else:
-                    raise DFHackError(f"Unexpected reply code: {id}")
+                    if id == DFHackReplyCode.RPC_REPLY_TEXT:
+                        buffer = await _read_exact(_reader, size, "a text notification")
+                        text_obj = CoreTextNotification()
+                        text_obj.ParseFromString(buffer)
+                        text = decode_fragments(text_obj.fragments)
+                        print("[INFO] DFHack: " + text)
+                        call_replies.append(text)
+                        continue
+                    elif id == DFHackReplyCode.RPC_REPLY_RESULT:
+                        buffer = await _read_exact(_reader, size, "a result payload")
+                        obj = output_type()
+                        obj.ParseFromString(buffer)
+                        return obj
+                    elif id == DFHackReplyCode.RPC_REPLY_FAIL:
+                        raise DFHackError(size, replies=call_replies)
+                    else:
+                        raise DFHackError(f"Unexpected reply code: {id}", replies=call_replies)
+            except DFHackError as e:
+                if not getattr(e, "replies", None) and call_replies:
+                    e.replies = list(call_replies)
+                raise
+            finally:
+                _call_replies.set(tuple(call_replies))
 
         async def wrapper(*args, **kwargs):
+            _locks()
             last = None
             for _ in range(MAX_CALL_ATTEMPTS):
-                gen = await ensure_connection()
-                try:
-                    async with _io_lock:
+                async with _io_lock:
+                    gen = await ensure_connection()
+                    try:
                         return await _invoke(**kwargs)
-                except DFHackTransportError as e:
-                    # The socket we just used is gone. Drop it only if nobody else
-                    # already replaced this generation.
-                    last = e
-                    if _generation == gen:
-                        _drop()
-                    continue
+                    except DFHackTransportError as e:
+                        # The socket we just used is gone. Drop it while still holding _io_lock
+                        # so the next queued caller reconnects cleanly on its first attempt.
+                        last = e
+                        if _generation == gen:
+                            _drop()
+                        continue
             raise last
 
         return update_wrapper(wrapper, f)
