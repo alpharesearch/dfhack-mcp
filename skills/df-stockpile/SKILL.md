@@ -147,3 +147,11 @@ helmets and plump helmet spawn are stored as **food** - so the farm chain wants
 helmet spawn") is a *reachability/hauling* problem (the spawn is not where the sowing
 dwarf can path to it), not a missing category. Do not add category names from a wiki
 list: a name the writer cannot set answers "success" and changes nothing.
+
+## 13. "Pile 3" in the panel is not id 3 in the tools
+
+The in-game panel numbers piles 1, 2, 3... in the order you made them; the tools report the
+**building id**, which is a different number on the same fort (measured 2026-11-21: "the
+food stock pile #3 next to the still" - my reads listed ids 1/4/21/22/23, and id 3 does not
+exist). When you and an agent talk about a pile, quote the **extent and elevation**
+("37..39,120..124 @40") - that is unambiguous, the numbers are not.
