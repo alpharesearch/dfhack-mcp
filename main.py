@@ -634,6 +634,64 @@ async def _designate(designation: str, locations: list[list[int]]) -> int:
     return len(locations)
 
 
+@app.get("/find-water", operation_id="find_water")
+async def find_water(elev0: int = Query(...), elev1: int = Query(...),
+                     cell: int = Query(16), min_depth: int = Query(3), max_levels: int = Query(8)):
+    """Where the water IS, per elevation - the census a well plan needs before any digging.
+
+    The wiki's rule is exact: a well is 1x1 on a floor with a CLEAR line to water >=3/7
+    deep, and it does not work through a staircase. So the questions are: which tiles hold
+    water, how deep, and is there a floor above them. This reads the map blocks and reports
+    clusters per `cell` with the depth range, per elevation - the answer to "the fort keeps
+    cancelling Give water: No water source" is a coordinate, not a guess.
+    """
+    from worldmodel import GAME_Z_OFFSET
+    gen = await world._gen()
+    dec = await world._dec(gen)
+    step = max(4, int(cell))
+    mind = int(min_depth)
+    levels = range(int(elev0), int(elev0) + min(int(max_levels), 12))
+    cells: dict[tuple[int, int, int], dict] = {}
+    total = 0
+    for e in levels:
+        z = e + GAME_Z_OFFSET
+        blocks = await world.cache.blocks(z, z + 1, gen)
+        for b in blocks:
+            if int(b.map_z) != z:
+                continue
+            # map_x/map_y are TILE coordinates (multiples of 16)
+            base_x, base_y = int(b.map_x), int(b.map_y)
+            for idx, tile in enumerate(b.tiles):
+                x, y = base_x + (idx % 16), base_y + (idx // 16)
+                hid = bool(b.hidden[idx]) if idx < len(b.hidden) else False
+                if hid:
+                    continue
+                w = int(b.water[idx]) if idx < len(b.water) else 0
+                if w < mind:
+                    continue
+                total += 1
+                cls = str(dec.tile_class(tile).key)
+                key = (e, x // step, y // step)
+                c = cells.setdefault(key, {"elev": e, "x0": (x // step) * step, "y0": (y // step) * step,
+                                           "x1": (x // step) * step + step - 1, "y1": (y // step) * step + step - 1,
+                                           "water_tiles": 0, "max_depth": 0, "sample": None,
+                                           "classes": set()})
+                c["water_tiles"] += 1
+                c["max_depth"] = max(c["max_depth"], w)
+                c["classes"].add(cls)
+                if c["sample"] is None:
+                    c["sample"] = [x, y, w]
+    out = []
+    for c in cells.values():
+        c["classes"] = sorted(c["classes"])
+        out.append(c)
+    out.sort(key=lambda c: (-c["water_tiles"], -c["max_depth"]))
+    return {"success": True, "levels_scanned": list(levels), "water_tiles_found": total,
+            "clusters": out[:40], "min_depth": mind,
+            "note": "a well needs a floor tile with a clear line to water >=3/7 below it - "
+                    "use a cluster sample, and gate with /hazards before digging toward it"}
+
+
 @app.get("/find-trees", operation_id="find_trees")
 async def find_trees(elev0: int = Query(...), elev1: int = Query(...),
                      cell: int = Query(16), max_levels: int = Query(8)):

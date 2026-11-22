@@ -344,6 +344,21 @@ def test_pile_categories_are_the_flags_the_game_exposes_not_a_wiki_list():
     assert "plants" not in names, "this build has no plants flag - plump helmets are FOOD"
 
 
+def test_the_water_census_answers_where_the_well_can_stand():
+    """"No water source" is a fact about the fort, not a plan. The wiki's well rule is exact:
+    1x1 on a floor with a CLEAR line to water >=3/7 deep, never through a staircase. So the
+    tool must answer WHERE, from the map, before anyone spends a week digging. Measured
+    2026-11-21 on this fort: all 1030 water tiles are at elev 35, 7/7 deep, in the caverns
+    (nearest big pool x160-175 y112-127) - which is why the adit got driven east."""
+    main = pathlib.Path("main.py").read_text()
+    i = main.index('operation_id="find_water"')
+    seg = main[i:main.index("@app.", i + 10)]
+    assert "b.water[idx]" in seg, "depth comes from the map's water array"
+    assert "if w < mind" in seg, "and the min_depth filter is the wiki's 3/7 line"
+    assert "map_x), int(b.map_y)" in seg, "tile coordinates, not block coordinates"
+    assert '"max_depth"' in seg and '"sample"' in seg, "a cluster reports depth and a sample tile"
+
+
 def test_a_pile_row_reports_unread_categories_and_its_panel_number():
     """Two naming/labeling facts from 2026-11-21:
       * A pile whose flag lookups failed printed an EMPTY accepts list, identical to the
