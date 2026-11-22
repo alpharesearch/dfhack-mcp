@@ -136,3 +136,14 @@ A 3x4 still (the wiki's early brewery) is a multi-tile **plan**: the game create
 mason builds it with real materials. It is not an abstract building - asking for the abstract
 route is refused (`constructAbstract ... expected !bld->isActual()`). Keep the workshop's
 footprint clear of stairs and of other piles' footprints, and give the mason a path.
+
+## 12. This build has 17 pile flags, and `plants` is not one of them
+
+Enumerated live from the game (`pairs(sp.settings.flags)` on a real pile, 2026-11-21):
+ammo, animals, armor, bars_blocks, cloth, coins, corpses, finished_goods, food, furniture,
+gems, leather, refuse, sheet, stone, weapons, wood. **No plants category exists.** Plump
+helmets and plump helmet spawn are stored as **food** - so the farm chain wants
+`food` on the pile that feeds the still, and a planting cancellation ("Needs plump
+helmet spawn") is a *reachability/hauling* problem (the spawn is not where the sowing
+dwarf can path to it), not a missing category. Do not add category names from a wiki
+list: a name the writer cannot set answers "success" and changes nothing.

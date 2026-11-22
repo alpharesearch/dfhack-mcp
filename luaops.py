@@ -33,6 +33,7 @@ Conventions
 from __future__ import annotations
 
 import asyncio
+import sys
 import re
 
 from dfhack_client_python.dfhack import RunCommand
@@ -366,6 +367,14 @@ print("OK living="..living.." dwarves="..dwarves.." citizens="..citizens.." pets
 # The 17 flags the game's stockpile_group_set actually exposes (measured: writing
 # `settings.flags.misc` throws - "Cannot write field stockpile_group_set.misc: not
 # found" - and aborts the loop, so misc is a mats struct, not a category flag).
+# These are the 17 flag fields the game EXPOSES on a stockpile - enumerated live from
+# `pairs(sp.settings.flags)` on 2026-11-21 (pile 4 of fort start): animals, ammo, armor,
+# bars_blocks, cloth, coins, corpses, finished_goods, food, furniture, gems, leather,
+# refuse, sheet, stone, weapons, wood. There is NO `plants` field on this build, so adding
+# "plants" to make room for plump helmets is a name the writer cannot set (measured:
+# `sp.settings.flags.plants = true` fails, `flags.wood` reads NOFIELD under that spelling
+# while the enumeration shows wood - the flag names must come from the game, never from a
+# wiki category list). Plump helmets and their spawn are stored under `food`.
 CATEGORIES = ["ammo", "animals", "armor", "bars_blocks", "cloth", "coins", "corpses",
               "finished_goods", "food", "furniture", "gems", "leather", "refuse",
               "sheet", "stone", "weapons", "wood"]
@@ -671,22 +680,39 @@ async def list_stockpiles(dec) -> list[dict]:
 local CATS = {"ammo","animals","armor","bars_blocks","cloth","coins","corpses",
               "finished_goods","food","furniture","gems","leather","misc","refuse",
               "sheet","stone","weapons","wood"}
+-- The in-game panel numbers piles "Pile 1, Pile 2, ..." and that number is NOT the
+-- building id (measured 2026-11-21: the player's "pile #3 next to the still" vs my ids
+-- 1/4/21/22/23 - we were naming two different objects). ui.main.stockpile.items IS the
+-- panel order, so report both.
+local panel = {}
+pcall(function()
+  for i2, entry in ipairs(df.global.world.ui.main.stockpile.items) do
+    if entry.build then panel[entry.build.id] = i2 end
+  end
+end)
 for _,sp in ipairs(df.global.world.buildings.other.STOCKPILE) do
   local ok, line = pcall(function()
     local on = {}
+    local okn = 0
     for _, c in ipairs(CATS) do
       local okf, v = pcall(function() return sp.settings.flags[c] end)
+      if okf then okn = okn + 1 end
       if okf and v == true then on[#on + 1] = c end
     end
+    -- An EMPTY accepts list is two different facts: the pile takes nothing (a rectangle of
+    -- paint, worth alerting) and the flag reads FAILED (NO DATA). Measured 2026-11-21: a
+    -- pile configured to `food` read as [] three times in a row and the plugin alerted
+    -- "pile accepts NOTHING", while a raw probe on the same pile read food=true.
+    local acc = (okn == 0) and "UNREAD" or table.concat(on, "+")
     local rm = 0
     pcall(function() rm = (sp.flags.marked_for_removal and 1) or 0 end)
     local bins, wbar, bars = -1, -1, -1
     pcall(function() bins = sp.storage.max_bins end)
     pcall(function() wbar = sp.storage.max_wheelbarrows end)
     pcall(function() bars = sp.storage.max_barrels end)
-    return string.format("ROW|%d|%d..%d,%d..%d|%d|%d|%s|%d|%d|%d",
-      sp.id, sp.x1, sp.x2, sp.y1, sp.y2, sp.z, rm, table.concat(on, "+"),
-      bins, wbar, bars)
+    return string.format("ROW|%d|%d..%d,%d..%d|%d|%d|%s|%d|%d|%d|%s",
+      sp.id, sp.x1, sp.x2, sp.y1, sp.y2, sp.z, rm, acc,
+      bins, wbar, bars, tostring(panel[sp.id] or "-"))
   end)
   if ok and line then print(line) end
 end
@@ -698,6 +724,7 @@ end
             raise NoData("the pile scan printed no rows: NO DATA (not a pile-free fort)")
         raise
     rows = []
+    notes: list[str] = []
     for line in _rows(out):
         if not line.startswith("ROW|"):
             continue
@@ -707,20 +734,32 @@ end
         # and silently dropped EVERY pile: /stockpiles answered count 0 for a fort with three
         # piles standing, and the plugin's pile tests could never flip. A row count that
         # mismatches must be reported, not skipped.
-        if len(parts) < 9:
-            print  # malformed: skip loudly below via the length check
+        if len(parts) < 10:
+            notes.append(f"unparsable pile row skipped: {line[:70]!r}")
             continue
-        _, bid, extent, z, rm, on, bins, wbar, barrels = parts[:9]
-        xs, ys = extent.split(",")
+        _, bid, extent, z, rm, on, bins, wbar, barrels, pan = parts[:10]
+        # "UNREAD" is the row's own marker: the flag lookups failed for THIS pile, so the
+        # category list is unknown - it is not an empty list, and an alert that says the
+        # pile accepts nothing on the strength of it is a false alarm.
+        unread = (on == "UNREAD")
+        bits = extent.split(",")
+        if len(bits) != 2:
+            notes.append(f"pile {bid}: unparsable extent {extent!r} (row skipped, not guessed)")
+            continue
+        xs, ys = bits
         x_lo, x_hi = xs.split("..")
         y_lo, y_hi = ys.split("..")
         rows.append({"id": int(bid), "extent": extent,
                      "x0": int(x_lo), "x1": int(x_hi), "y0": int(y_lo), "y1": int(y_hi),
                      "elev": int(z) - GAME_Z_OFFSET,
                      "marked_for_removal": rm == "1",
-                     "accepts": sorted(on.split("+")) if on else [],
+                     "accepts": (None if unread else (sorted(on.split("+")) if on else [])),
+                     "categories_measured": (not unread),
                      "max_bins": int(bins), "max_wheelbarrows": int(wbar),
-                     "max_barrels": int(barrels)})
+                     "max_barrels": int(barrels),
+                     "panel_number": (None if pan == "-" else int(pan))})
+    if notes:
+        print("[list_stockpiles] " + "; ".join(notes), file=sys.stderr)
     return rows
 
 

@@ -6,6 +6,7 @@
 The live-game assertions run only when DFHack RPC answers on :5000.
 """
 import json
+import re
 import os
 import pathlib
 import socket
@@ -326,6 +327,40 @@ def test_a_stockpile_request_must_not_lie_about_its_size():
         "the pile path must report the game's own usable/rect tile counts"
     # The pile route must invalidate the caches the extents are read from.
     assert "world.cache.reset()" in fn and "world.forget_band()" in fn, "cache + memo dropped"
+
+
+def test_pile_categories_are_the_flags_the_game_exposes_not_a_wiki_list():
+    """`plants` looked like an obvious gap (the farm chain needs it) and I added it. The
+    game's own flag enumeration has 17 fields and none of them is `plants`; writing
+    `flags.plants = true` fails, and the tool reported success while changing nothing.
+    Category names must come from the game."""
+    lo = pathlib.Path("luaops.py").read_text()
+    i = lo.index("CATEGORIES = [")
+    block = lo[i:lo.index("]", i) + 1]
+    names = [w.strip().strip('"') for w in re.findall(r'"([^"]+)"', block)]
+    measured = {"ammo","animals","armor","bars_blocks","cloth","coins","corpses","finished_goods",
+                "food","furniture","gems","leather","refuse","sheet","stone","weapons","wood"}
+    assert set(names) == measured, f"the category list must match the 17 flags the game exposes, got {set(names) ^ measured}"
+    assert "plants" not in names, "this build has no plants flag - plump helmets are FOOD"
+
+
+def test_a_pile_row_reports_unread_categories_and_its_panel_number():
+    """Two naming/labeling facts from 2026-11-21:
+      * A pile whose flag lookups failed printed an EMPTY accepts list, identical to the
+        pile that truly accepts nothing - the plugin alerted "pile accepts NOTHING" about a
+        pile configured to `food`, and a raw probe on the same pile read food=true.
+      * The player said "the food stock pile #3 next to the still has plants" while my
+        reads listed ids 1/4/21/22/23 - the in-game panel number is NOT the building id.
+    The row now carries UNREAD for failed reads and a panel_number that stays null when the
+    game does not expose the panel order, instead of a made-up index."""
+    lo = pathlib.Path("luaops.py").read_text()
+    i = lo.index("async def list_stockpiles(")
+    body = lo[i:lo.index("async def ", i + 10)]
+    assert 'local acc = (okn == 0) and "UNREAD"' in body, "a failed flag read is UNREAD, not an empty list"
+    assert '"categories_measured": (not unread)' in body, "and the row says whether it measured"
+    assert '"panel_number"' in body, "the row carries the in-game panel number too"
+    assert "unparsable extent" in body and "row skipped, not guessed" in body, \
+        "a malformed extent is skipped with a note, never parsed into a 500"
 
 
 def test_the_tree_tools_target_the_trunk_and_read_the_wood_for_real():
