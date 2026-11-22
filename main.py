@@ -1018,6 +1018,35 @@ async def place_building(request: Request):
     world.forget_band()
     return {"success": True, **res}
 
+async def _building_present(building_id: int) -> bool | None:
+    """Is this id still in the live pile/zone lists? None = the reads produced nothing.
+
+    A WRITE that prints nothing is not a failed write: the RPC reply stream flakes on
+    write calls constantly ("lua produced no output; the chunk printed nothing" - measured
+    on /remove-building x3 and /place-building), which left the player with an unverified
+    removal and me reporting a pile as leftover. The lists are the authority, so every
+    write gets a read-back that does not depend on the write's own reply.
+    """
+    seen_any = False
+    for _ in range(4):
+        dec = await world._dec(await world._gen())
+        rows = []
+        try:
+            rows += await LO.list_stockpiles(dec)
+        except LO.LuaOpError:
+            pass
+        try:
+            rows += await LO.list_zones(dec)
+        except LO.LuaOpError:
+            pass
+        if rows:
+            seen_any = True
+            if not any(int(r["id"]) == int(building_id) for r in rows):
+                return False
+        await asyncio.sleep(2.0)
+    return True if seen_any else None
+
+
 @app.post("/remove-building", operation_id="remove_building")
 async def remove_building(request: Request):
     """Deconstruct a building - by tile (x, y, elev) OR by building_id.
@@ -1059,10 +1088,31 @@ async def remove_building(request: Request):
                              "nothing was removed"}
     try:
         res = await LO.remove_building(x, y, elev)
+        write_note = None
     except LO.LuaOpError as e:
-        return {"success": False, "error": str(e)}
+        # The write's own reply is allowed to be silent; it is not evidence about the game.
+        res, write_note = {"error": str(e)}, str(e)
     world.cache.reset()
-    return {"success": True, "resolved_from_tile": [x, y, elev], **res}
+    bid = res.get("building_id")
+    if bid is None:
+        # The reply never named the building; resolve it from the tile we were given.
+        at = await LO.building_at(x, y, elev)
+        bid = at.get("building_id") if isinstance(at, dict) else None
+    present = await _building_present(int(bid)) if bid is not None else None
+    if present is False:
+        return {"success": True, "verdict": "removed", "building_id": bid,
+                "resolved_from_tile": [x, y, elev],
+                "verified_by": "the id is absent from the live pile/zone lists",
+                "write_reply": write_note}
+    if present is None:
+        return {"success": False, "verdict": "UNVERIFIED", "building_id": bid,
+                "resolved_from_tile": [x, y, elev],
+                "error": "the pile/zone reads produced NO DATA: removal not proven",
+                "write_reply": write_note}
+    return {"success": False, "verdict": "still present", "building_id": bid,
+            "resolved_from_tile": [x, y, elev],
+            "error": res.get("error") or "the building is still in the live lists",
+            "write_reply": write_note}
 
 @app.get("/tile-at", operation_id="tile_at")
 async def tile_at(x: int = Query(...), y: int = Query(...),

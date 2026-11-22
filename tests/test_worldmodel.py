@@ -344,6 +344,25 @@ def test_pile_categories_are_the_flags_the_game_exposes_not_a_wiki_list():
     assert "plants" not in names, "this build has no plants flag - plump helmets are FOOD"
 
 
+def test_a_write_is_verified_by_reading_the_game_not_by_its_own_reply():
+    """Write replies are the flaky part, not the writes. Measured 2026-11-21: /remove-building
+    answered "lua produced no output; the chunk printed nothing" three times for pile 28 while
+    the pile was in fact gone - so I reported a leftover pile that did not exist, and a
+    placement that had not happened. The endpoint now answers from the live pile/zone lists:
+    removed / UNVERIFIED (NO DATA) / still present, and it says what the write's own reply
+    said, so silence is never read as success or as failure."""
+    main = pathlib.Path("main.py").read_text()
+    i = main.index("async def _building_present(")
+    helper = main[i:main.index("@app.post", i)]
+    assert "list_stockpiles" in helper and "list_zones" in helper, "the live lists are the authority"
+    assert "return True if seen_any else None" in helper, "NO DATA stays NO DATA - it is not 'present'"
+    j = main.index('@app.post("/remove-building"')
+    seg = main[j:main.index("@app.", j + 30)]
+    assert '"verdict": "removed"' in seg and "verified_by" in seg, "removal is proven by a read-back"
+    assert '"verdict": "UNVERIFIED"' in seg, "a silent write plus silent reads is reported as unverified"
+    assert '"write_reply": write_note' in seg, "and the write's own silence is carried in the answer"
+
+
 def test_the_water_census_answers_where_the_well_can_stand():
     """"No water source" is a fact about the fort, not a plan. The wiki's well rule is exact:
     1x1 on a floor with a CLEAR line to water >=3/7 deep, never through a staircase. So the
