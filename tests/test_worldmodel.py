@@ -179,9 +179,18 @@ def test_ladder_reports_the_first_broken_rung_with_keys():
                    {"type_name": "Dump", "tiles": 25, "marked_for_removal": False},
                    {"type_name": "Pen", "tiles": 100, "marked_for_removal": False}]
     # The refuse rung reads pile CATEGORIES (the wiki builds it with p -> corpses+refuse
-    # outdoors), so the stub has to answer that question the way the game does.
+    # outdoors), so the stub has to answer that question the way the game does. And the
+    # general-pile rung reads categories too - a pile eating stone+wood is not a general
+    # pile, so the stub must show the wiki's recipe, not just "some stockpile exists".
     facts.piles = [{"id": 2, "x0": 77, "x1": 79, "y0": 126, "y1": 128, "tiles": 9,
-                    "accepts": ["corpses", "refuse"], "elev": 38}]
+                    "accepts": ["corpses", "refuse"], "elev": 38},
+                   {"id": 1, "x0": 72, "x1": 75, "y0": 122, "y1": 124, "tiles": 12,
+                    "elev": 38,
+                    "accepts": ["ammo", "animals", "armor", "bars_blocks", "cloth", "coins",
+                                 "finished_goods", "food", "furniture", "leather", "sheet",
+                                 "weapons"]},
+                   {"id": 3, "x0": 69, "x1": 70, "y0": 120, "y1": 121, "tiles": 4,
+                    "elev": 38, "accepts": ["wood"]}]
     txt2 = "\n".join(WM.progress_lines(facts))
     assert "every quickstart rung is satisfied" in txt2, txt2[-400:]
 
@@ -317,6 +326,33 @@ def test_a_stockpile_request_must_not_lie_about_its_size():
         "the pile path must report the game's own usable/rect tile counts"
     # The pile route must invalidate the caches the extents are read from.
     assert "world.cache.reset()" in fn and "world.forget_band()" in fn, "cache + memo dropped"
+
+
+def test_the_general_pile_rung_measures_categories_not_a_pile_count():
+    """A wood-only pile flipped the GENERAL pile rung DONE (measured 2026-11-21, rung #4:
+    the fort had one pile accepting `wood`). `count_built("stockpile") >= 1` cannot tell a
+    general pile from any pile - and the rung's own why-line is about categories.
+    Prove the behaviour on stub facts, not on source text."""
+    import sys, pathlib as _p
+    sys.path.insert(0, str(_p.Path(__file__).resolve().parent.parent))
+    import worldmodel as WM
+    f = WM.FortFacts.__new__(WM.FortFacts)
+    f.piles = [{"id": 1, "accepts": ["wood"], "x0": 66, "x1": 67, "y0": 112, "y1": 113}]
+    assert not f.pile_general(), "a wood-only pile is NOT a general pile"
+    f.piles = [{"id": 1, "accepts": ["stone"], "x0": 0, "x1": 1, "y0": 0, "y1": 1}]
+    assert not f.pile_general(), "a stone pile is not one either"
+    f.piles = [{"id": 1, "accepts": ["food", "stone", "wood", "cloth", "leather",
+                                      "weapons", "armor", "ammo", "furniture"]}]
+    assert not f.pile_general(), "and one that eats stone+wood fails the wiki's recipe"
+    f.piles = [{"id": 1, "accepts": ["ammo", "animals", "armor", "bars_blocks", "cloth",
+                                      "coins", "finished_goods", "food", "furniture",
+                                      "leather", "sheet", "weapons"]}]
+    assert f.pile_general(), "12 categories, none of the cloggers: that IS the general pile"
+    f.piles = []
+    assert not f.pile_general(), "no pile read is NO DATA - the rung stays open"
+    wm = pathlib.Path("worldmodel.py").read_text()
+    i = wm.index('("stockpile", "General stockpile')
+    assert "lambda f: f.pile_general()" in wm[i:i+320], "the rung must use it"
 
 
 def test_tile_counts_and_removal_verdicts_come_from_the_game():

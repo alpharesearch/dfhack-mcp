@@ -2573,6 +2573,24 @@ class FortFacts:
     def built(self, *keywords) -> bool:
         return self.count_built(*keywords) > 0
 
+    def pile_general(self, min_categories: int = 8,
+                     exclude=("stone", "wood", "corpses", "refuse", "gems")) -> bool:
+        """A pile with the wiki's GENERAL recipe: many categories, and not the ones that
+        clog workshops (stone, wood, corpses, refuse, gems).
+
+        The rung used to read `count_built("stockpile") >= 1`, so a wood-only pile flipped
+        it DONE (measured 2026-11-21: rung #4 satisfied with wood [wood] as the only pile).
+        "A general pile that eats stone and wood clogs every workshop" is the rung's own
+        why-line - so the categories are the measurement.
+        """
+        bad = set(exclude)
+        for p in getattr(self, "piles", []) or []:
+            acc = set(p.get("accepts") or [])
+            if len(acc) >= min_categories and not (acc & bad):
+                return True
+        return False
+
+
     def pile_accepts(self, categories, min_tiles: int = 0) -> bool:
         """True when some stockpile accepts ALL of `categories` over `min_tiles` tiles.
 
@@ -2675,7 +2693,9 @@ _LADDER = [
      lambda f: sum(f.stairs.values()) >= 2, "m -> t: click the room floor, scroll one level down, click again",
      "designate EVERY z the shaft passes: top=down-stairs, middle=up-down, bottom=up-stairs"),
     ("stockpile", "General stockpile, excluding Corpses/Refuse/Stone/Gems/Wood",
-     lambda f: f.count_built("stockpile") >= 1, "p -> draw rect -> Accept -> Custom: All, then None on Corpses/Refuse/Stone/Gems/Wood",
+     # Categories, not a pile count: a wood-only pile is not a general pile (measured: the
+     # rung flipped done on one). No pile read = NO DATA, rung stays open.
+     lambda f: f.pile_general(), "p -> draw rect -> Accept -> Custom: All, then None on Corpses/Refuse/Stone/Gems/Wood",
      "a general pile that eats stone and wood clogs every workshop"),
     ("meeting", "Meeting area inside the fort, 5x5-7x7, on the 2nd level below ground",
      lambda f: f.zone_built("meeting", 25), "z -> Meeting Area -> draw rect filling the room -> Accept",
