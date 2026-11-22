@@ -1,0 +1,35 @@
+# Tool gaps: every time raw Lua had to be used
+
+Rule this log enforces: the MCP surface exposes **typed tools only** - `main.py` builds the
+tool list from its endpoints and deliberately excludes `game_lua` and `observe`
+(`exclude_operations=["game_lua", "observe", "observe_stats"]`). So when a capability is
+missing, an MCP-connected agent has **no** supported way to do the job, and the only escape
+is the HTTP `game_lua` debug endpoint, which writes live game state with no contract. Each
+entry records the gap, what was run by hand, and what tool (if any) replaced it.
+
+Measured session 2026-11-21, fort `start`, world *The Universes of Destiny*, DF 0.53.17 / DFHack 53.17-r1.
+
+| # | Task I was blocked on | Tool that did not exist | What raw Lua cost me | Resolution |
+|---|---|---|---|---|
+| 1 | **Create an activity zone** (ladder rung #5, the wiki's meeting area; also pasture, dump, refuse zone) | `create_zone` - planned in `PLAN-TOOLS.md:104`, never built. `SETUP-LINUX.md:466` records why it mattered: the `zone` plugin "does not implement any commands", so zones were UI-only | 7 probes to find the shape: `buildings.other.ZONE` -> "not found"; `df.enums` -> nil; `df.activity_zone_type` -> nil; `t:base_type()` -> "attempt to call a nil value"; `buildings.building_defs` -> "not found"; `dfhack.buildings.getBuildingNames` -> nil. The mapping finally came from the game's own file `hack/scripts/internal/quickfort/zone.lua` (`type=df.civzone_type.MeetingHall`) | Built `/create-zone`, `/zones`, `/remove-zone`. Kind = `z.type`, set after `allocInstance -> setSize -> constructAbstract` |
+| 2 | **Discover buildable names** | `get_building_def_list` - the resolver's own rejection text told me to call it and **no such endpoint existed** ("no building definition named 'Meeting Area'; get one from get_building_def_list") | 4 wasted `place_building` calls (the resolver rejects cleanly, so no harm; the cost was the dead end) | Built `/building-def-list` (substring filter, returns name + building_type/subtype/custom) |
+| 3 | **Verify a created zone** | no zone read at all; `findAtTile` **does not see zones** | `findAtTile(66,110,165)` -> nil while the zone existed (id 14, extent 66-67,110-111@z165). A first version of `create_zone` reported "nothing live at the tile" for a zone that was live - a caller would have retried into duplicate zones | `list_zones` walks `buildings.other.ANY_ZONE` and matches footprint + id; verification uses the same path |
+| 4 | **Dispose an orphan building** (after the crash) | no tool owns `allocInstance` cleanup | Read `b.flags` on an allocated instance (no `dest` field in this build: `exists`, `almost_deleted`, `room_collision`, `site_blocked`, ...), then `pcall(deconstruct(inst))` on a fresh orphan -> `true nil` (clean) | Every failure path of `create_zone` / `create_building_multi` / `create_stockpile` now `pcall(deconstruct(inst))`; test `test_a_failed_build_must_not_leave_an_orphan_building`. **This gap crashed the fort and lost the save** - see `PLAN-TOOLS.md` |
+| 5 | **Locate the install** (crash logs, quickfort sheets, the zone mapping) | no `/game-paths` tool: `get-status` gives the world signature, not the filesystem paths | `dfhack.getDFPath()` / `dfhack.getSavePath()` by hand -> `/mnt/DATA/SteamLibrary/steamapps/common/Dwarf Fortress` | **STILL MISSING.** Crash-log discovery stays manual (`Config.game_dir` is unset, so the observer says "crash log dir null"). A `/game-paths` endpoint (df_path, save_path, crashlog dir, blueprints dir) is the fix |
+| 6 | **Set a farm plot's crop** (the rung says "plump helmets in ALL seasons") | no tool. `place_building` can create a plot; nothing sets `plot_type`/season flags | Nothing available: I did **not** hand-Lua this (writing `building_farmplotst.plant_flags`/`plot_type` blind on a live fort is exactly the class of write that just crashed the fort). The crop is left to the player in-game | **STILL MISSING** - needs a typed `configure-farmplot` (plant + per-season flags) with read-back, tested on a throwaway save |
+| 7 | **Read the zone flags struct** (`zone_settings.flags`) | - | `T_zone_settings.flags` -> "not found"; the struct is `whole{i1,i2}` raw bitfields + `gather/pen/pond/archery/tomb` sub-structs | Deliberately **not** written by hand. Bitfield guessing on a live fort is how the last crash happened; `create_zone` uses only the named enum (`df.civzone_type.<KIND>`) |
+
+| 8 | **Configure a pile's categories** (the wiki's general pile) | nothing returns a stockpile's **building id**: `building-at` answered null on the pile's own tile, `get-block-list` carries no buildings, `world-objects` prints name+dims only | 2 raw scans of `buildings.other.STOCKPILE` to find the field layout: `pairs(settings.flags)` THROWS on this build, container limits live on `sp.storage`, `building_flags` has **no `marked_for_removal`**, and Lua vector indexing is 0-based | Built `/stockpiles` (id + accepted categories + bins/barrels/wheelbarrows). Verified: 4 piles read back with the wiki's filters (id 1 general, 2 refuse/corpses outdoors, 3 stone + wheelbarrows 3, 4 wood) |
+
+| 9 | **Fell trees for the wood rung** (`ladder #8`: "Trees felled (3-5) and a wood pile") | **nothing**: `grep -i tree main.py` finds no endpoint; the proto list has `cut_trees` and the MCP tool list in README advertises it, but `main.py` never wires it (19 bound methods, none of them tree cutting) | Not attempted - there is no supported write. Trees can only be felled in-game (`m -> t`) or by deconstructing the wagon | **STILL MISSING**: needs `POST /cut-trees {x,y,elev,w,h}` through `CutTrees` RPC, verified by the tree tile census (`get-status` counts trees per elevation). Until then the wood rung is a player action |
+
+| 10 | **A 3x4 workshop (the wiki's still)** | the multi-tile route `constructAbstract` REJECTS workshops (`expected !bld->isActual()`); the 1x1 route cannot size them; quickfort's call was the missing shape | Read `internal/quickfort/build.lua:1259`, reproduced `constructBuilding{type,subtype,custom,pos,width,height,fields.room.extents}` with no abstract flag | Built `luaops.place_building_plan` + routing in `/place-building`. Verified on the live fort: 3x4 Still = `building_workshopst` id 14, census `Still x1`, `drinks` rung satisfied by the read | CLOSED (and its empty-reply reporting fixed with a findAtTile read-back) |
+
+## Standing rule from these entries
+
+- A ladder rung that no typed tool can satisfy is a **tool bug**, not a play problem: log it here,
+  then build the tool, then play it.
+- Raw Lua is read-only reconnaissance on a live fort. Any Lua **write** is tested on a
+  throwaway save first (the `game_lua` docstring says this; entry 4 is what ignoring it cost).
+- When raw Lua becomes the permanent answer, the gap gets a typed endpoint and a test in the
+  same change, and the entry says "Built ...".

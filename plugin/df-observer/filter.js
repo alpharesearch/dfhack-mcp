@@ -89,7 +89,7 @@ const num = (v) => Number(v ?? 0)
  * the log, so the filter's opinion never replaces the facts.
  */
 import { PAYLOAD_PREFIX } from './model.js'
-import { shrinkPayloadLevel, SHRINK_MAX, estimateTokens, withTitleBudget, titleBudget } from './brief.js'
+import { shrinkPayloadLevel, SHRINK_MAX, estimateTokens, withTitleBudget, titleBudget, alertLabel } from './brief.js'
 
 /** Titles are panel sugar: the filtered wire pays for them only when the cap can
  * afford them (measured: 8 titles cost ~50 tokens and a 260-token cap could not).
@@ -186,10 +186,10 @@ export function buildFilteredBriefing(verdict, payload, { maxTokens }) {
 
 export function buildFilterWake(alert, payload, { maxTokens = 420 } = {}) {
   const lines = [
-    `DF-OBSERVER ALERT (filter, tick ${payload.tick}) ${alert.kind}${alert.coord ? ` at ${alert.coord}` : ''}:`,
+    `DF-OBSERVER ALERT ${alertLabel(alert)} (filter, tick ${payload.tick}) ${alert.kind}${alert.coord ? ` at ${alert.coord}` : ''}:`,
     alert.evidence,
     alert.suggested ? `-> ${alert.suggested}` : '',
-    `Detail: df_status({scope:"summary"}); silence repeats: df_alerts({action:"ack"}).`,
+    `Detail: df_status({scope:"summary"}); silence repeats: df_alerts({action:"ack", id:"${alertLabel(alert)}"}).`,
   ].filter(Boolean)
   const text = lines.join('\n')
   for (let level = 0; level <= SHRINK_MAX; level += 1) {

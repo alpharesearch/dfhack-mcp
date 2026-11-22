@@ -98,12 +98,110 @@ drags) - which the APIs above make unnecessary for placement.
 
 Target after this pass: **~24 tools** in the MCP surface.
 
+## Workshops need a PLAN, not an abstract (the 3x4 Still)
+
+`create_building_multi` (allocInstance -> setSize -> constructAbstract) is right for
+stockpiles and wrong for every workshop: placing a 3x4 Still died with
+`constructAbstract(): expected !bld->isActual()`. A workshop is an actual building - the
+game creates a plan and a mason finishes it. Quickfort's own call
+(`internal/quickfort/build.lua:1259`) is one `constructBuilding` with `type/subtype/custom`,
+`width`/`height` and `fields.room.extents`, **no `abstract` flag** - implemented as
+`luaops.place_building_plan`, routed by `/place-building` for any non-stockpile multi-tile
+request. Verified live: the 3x4 Still is `building_workshopst` id 14 at x40-42 y124-127 on
+40, the census reads `Still x1`, and the ladder's `drinks` rung flipped on the read.
+
+Reporting lesson from the same call: it printed nothing on its first run and answered
+"lua produced no output" - while the building had been created. A write tool must answer
+with a read-back, so `place_building_plan` now probes `findAtTile` on the origin when the
+game's reply stream is empty and says which of the two facts it measured (building exists
+with its id, or nothing was placed).
+
+## Crash #2 and #3 resolved: the zone tool is the stockpile path (v3)
+
+The player asked the diagnostic question - **"stock piles and zones should be very similar,
+compare the tools and see where the error is"** - and the comparison *was* the answer:
+
+| tool | call sequence | result |
+|---|---|---|
+| `create_stockpile` | `allocInstance` -> `setSize` -> `constructAbstract` | 12+ piles, never a crash |
+| `create_zone` v1 | same, **then `found.type = <kind>`** (+`notifyCivzoneModified`) | fort crashed |
+| `create_zone` v2 | `constructBuilding{type=Civzone, subtype=<kind>, ...}` (quickfort's call) | fort crashed |
+| **`create_zone` v3** | **`allocInstance(pos, 30, <kind>, -1)`** -> `setSize` -> `constructAbstract` | 3 zones live, fort kept running |
+
+Two things were wrong, and only one of them was the crash:
+1. **The kind was applied after construction.** Zones carry their kind in the **subtype at
+   allocation**; writing `z.type` afterwards on a zone created outside the game's own
+   creation path leaves the zone bookkeeping inconsistent - the prime suspect for the crash.
+2. **A parse bug turned successes into 500s**: `"OK|id|type|extent|tiles|area"[2:]` keeps the
+   leading pipe, so `split("|")` yields 6 fields, not 5. The write had succeeded, three zones
+   were live, and the caller was told the server failed - the worst possible answer during a
+   crash investigation, because it makes a success indistinguishable from a bug.
+
+Pinned by `test_zone_creation_is_the_stockpile_path_with_the_kind_at_allocation`: the kind is
+the subtype, nothing is written to a zone after `constructAbstract`, `constructBuilding` is
+not used, every failure path disposes the orphan, and the row is parsed after the `OK` token.
+`create_zone` stays **opt-in** (`acknowledge_risk: true`) - two saves were the price of
+learning this, and the gate is what keeps a future agent from paying it again.
+
+The remaining zone-state debt on the live fort: the test zones (ids 5, 6, 7 - 2x2 meeting
+areas on the stair landing at 36) must be reduced to one, via `/remove-zone`.
+
+## Crash #2, same tool: zone writes are OPT-IN now
+
+The first entry above fixed the *leak* on the failure path. It did not make the zone write
+safe. A second `create_zone` (a 5x5 meeting area into a fully dug 25-tile room at in-game 36,
+`setSize` accepted) is followed by a game crash with no save, and the RPC never came back
+(tick 212 live read, then "cannot reach DFHack RPC at 127.0.0.1:5000"). The write chain -
+`allocInstance -> setSize -> constructAbstract -> z.type = ... -> notifyCivzoneModified` -
+bypasses the game's own zone creation, and we have no evidence it is survivable on a live
+save. `SETUP-LINUX.md:466` already said zones are UI-only for a reason.
+
+Decision, enforced in code: **`/create-zone` refuses unless the caller passes
+`acknowledge_risk: true`**, and the refusal names the crashes and points at a throwaway save.
+Meeting areas, pastures, dumps and refuse zones are placed in-game (`z -> ...`) and verified
+through the read path (`/zones`, which is safe and does not write).
+
+Also fixed while at it, because the caller could not tell what had happened:
+- transport failures (the RPC dropping mid-call) now answer as JSON
+  `{"success": false, "error": ...}` instead of an HTTP 500;
+- pile ids are **discovered from the game** (`pile_ids: "auto"` in `observe`, and the plugin
+  asks for that when the config lists none). Hand-typed ids from a previous save read
+  "pile id N not found" across every swap and made the pile acceptance tests unrunnable -
+  the player's own words: "should the reset not take care of this, the ids can change from
+  every game". Yes: the game lists them, so `/stockpiles` + `auto` is the supported answer.
+
+## A crash we caused, and the rule it wrote (2026-11-21)
+
+The new `create-zone` call `{"kind":"meeting","w":5,"h":5}` over the unexcavated hub hit its
+`setSize refused` branch. That branch returned an error **without disposing the
+`allocInstance` result**: an allocated `building` that is in no list and has no id stays in
+`world.buildings`, and Dwarf Fortress crashed on a later world operation. No save was made;
+the fort was lost. The in-game check that settled the fix: `dfhack.buildings.deconstruct(inst)`
+on an orphan returns cleanly (pcall true, no error).
+
+Rule for every builder in `luaops.py`, enforced by
+`tests/test_worldmodel.py::test_a_failed_build_must_not_leave_an_orphan_building`: after an
+`allocInstance`, **every** failure return must `pcall(deconstruct(inst))` first (the
+alloc-failure path itself is exempt - there is nothing to dispose).
+
+Discipline this cost us, so it is written down: these are game writes that allocate world
+objects. Run the new build path on a **throwaway save** first - the `game_lua` docstring
+already says exactly that, and the zone tool was pointed at the player's live fort instead.
+
 ## Missing tools, ranked by ladder rungs unblocked
 
 ### P0 - unblocks the mouse-only cluster (6 of the 21 rungs)
-1. **`create_zone`** - `kind: meeting \| pasture \| pit \| pond \| dump \| watersource`, rectangle.
-   `constructAbstract` civzone + type field + `notifyCivzoneModified`; verify with
-   `findCivzonesAt`. Unblocks: meeting area, pasture, refuse pile, garbage dump.
+1. **`create_zone`** - ✅ BUILT 2026-11-21 (`/create-zone`, `/zones`, `/remove-zone`).
+   `allocInstance(pos, 30)` -> `setSize` -> `constructAbstract`, then `z.type =
+   df.civzone_type.<KIND>` + `notifyCivzoneModified`. Measured while building it: the kind is
+   the `type` field (the enum read from `hack/scripts/internal/quickfort/zone.lua`, the game's
+   own tool for zones), and **`findAtTile` does not see zones** - a first version reported
+   "nothing live at the tile" for a zone that existed (id 14, 66-67,110-111@z165), so
+   verification walks `ANY_ZONE` and matches the footprint. Same read backs `/zones`.
+   Consequence for the ladder: rung "meeting area" used `count_built("zone") >= 1`, which a
+   2x2 zone with `type=-1` satisfied - a rung that any empty rectangle passes. The meeting and
+   refuse rungs now require `zone_built("meeting"/"dump", 25)`: the kind AND 5x5, and NO DATA
+   leaves the rung open.
 2. **`create_stockpile` + `configure_stockpile` + `stockpile_contents`** - `constructAbstract`
    (verified live: a 5x5 stockpile at 102,10 elev 37 read back as `building_stockpilest`
    with `findAtTile`), then settings via the building's own fields (bins/barrels, accept

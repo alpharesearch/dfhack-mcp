@@ -14,7 +14,10 @@
  *     agent in this plugin's own effect;
  *   - `agent.inject()` feeds the briefing (logged as inbox splice, enters the
  *     next admitted step, never wakes); `agent.followup()` wakes on Config
- *     whitelisted alerts only;
+ *     whitelisted alerts only. Every inbox boundary takes a MESSAGE OBJECT:
+ *     the object is written verbatim into `agent/inbox/spliced.inserted`, so a
+ *     raw string there makes the stored session unloadable. All plugin output
+ *     goes through `DFObserver.observerMessage()` (see `injectMessage`).
  *   - `ctx.systemPrompt.section()` carries the standing reading rules once;
  *   - `ctx.sessionProjections` unit folds everything the model sees from
  *     committed session events (pure synchronous apply, reference-stable view);
@@ -40,7 +43,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 import { ObserverTransport } from './observer.js'
 import { FortModel, STATE_VERSION, significantChange, dfObserverProjection } from './model.js'
-import { buildBriefing, buildWake, standingRules, compactDesignations, setTitleBudget } from './brief.js'
+import { buildBriefing, buildWake, buildCoalescedWake, standingRules, compactDesignations, setTitleBudget, alertLabel } from './brief.js'
 import { toolDefinitions, jsonSafe } from './tools.js'
 import { FILTER_SYSTEM_PROMPT, STATE_PREFIX, buildFilteredBriefing, buildFilterWake, parseVerdict } from './filter.js'
 
@@ -86,11 +89,25 @@ export const Config = z.object({
   inject_min_spacing_ms: z.number().int().min(0).default(30000),
   /** Force a refresh briefing after this long without one (state is stale by then). */
   inject_max_spacing_ms: z.number().int().min(60000).default(600000),
+  /** How many observer messages may sit UNSPENT at one inbox boundary before the
+   * plugin stops adding to that boundary. An injection is a durable event:
+   * measured 2026-11-21, a filter session took ~400 injections while its driver
+   * was not consuming - hundreds of splices in one log, and its last turn closed
+   * with `reason: null`, which the harness's subagent projection reads unguarded
+   * ("failed to project session"). A boundary that is not draining is a boundary
+   * to stop feeding. 0 disables the cap. */
+  pending_inject_cap: z.number().int().min(0).default(8),
   /** A box to_dig shift smaller than this does not cost the model a briefing. */
   min_to_dig_delta: z.number().int().min(1).default(3),
 
   /** Alert kinds that WAKE the agent (player decision 2026-11-21: water, dig_complete, crash). */
-  alert_wakes: z.array(z.string()).default(['water', 'dig_complete', 'dig_stalled', 'tile_state_lost', 'game_says', 'game_crashed', 'game_offline']),
+  alert_wakes: z.array(z.string()).default(['water', 'dig_complete', 'dig_stalled', 'tile_state_lost', 'game_says', 'game_crashed', 'game_offline', 'save_reloaded']),
+  /** How an alert reaches the Agent. `yield-aware` (default) never takes the
+   * steering slot the player queued: an alert goes to `steer` only for a RUNNING
+   * driver with nothing else pending at that boundary, becomes its own turn
+   * (`followup`) for an idle one, and `inject`s when the player's steering is
+   * already pending. `steer`/`followup`/`inject` force one channel for everything. */
+  alert_delivery: z.enum(['yield-aware', 'steer', 'followup', 'inject']).default('yield-aware'),
   /** Minimum spacing between wakes for one agent. */
   wake_min_spacing_ms: z.number().int().min(10000).default(60000),
 
@@ -199,9 +216,39 @@ export function verdictFromEvent(event) {
   return parseVerdict(data.message?.content ?? data.content ?? event.content)
 }
 
+/**
+ * Where an alert may be delivered, decided against THIS Agent's inbox.
+ *
+ * The contract (dsh-agent runtime-types): `steer` is "steering for the nearest
+ * step - an idle driver starts a turn; a running driver consumes it at its next
+ * step boundary"; `followup` is "an ordinary follow-up turn ... the sole
+ * ordinary message of its own turn"; `inject` is "context for the next pre-step
+ * without waking". So an alert that always steers does three things the player
+ * feels: it queues the observer's text INTO THE PLAYER'S steering slot, it opens
+ * a turn on an idle driver, and stacking several alerts fills the same boundary
+ * with several messages. `yield-aware` refuses all three.
+ */
+export function deliveryPlan(form, agent, { alertDelivery = 'yield-aware' } = {}) {
+  if (form !== 'alert') return { channel: 'inject', why: 'state, not a request' }
+  const canSteer = typeof agent?.steer === 'function'
+  if (alertDelivery === 'steer' && canSteer) return { channel: 'steer', why: 'alert_delivery=steer' }
+  if (alertDelivery === 'followup') return { channel: 'followup', why: 'alert_delivery=followup' }
+  if (alertDelivery === 'inject') return { channel: 'inject', why: 'alert_delivery=inject' }
+  if (!canSteer) return { channel: 'followup', why: 'this Agent has no steer' }
+  const pending = [...(agent?.inbox?.nextStep ?? []), ...(agent?.inbox?.nextTurn ?? [])]
+  const foreign = pending.filter((m) => m?.source?.kind !== 'df-observer')
+  if (foreign.length) {
+    return { channel: 'inject',
+      why: `${foreign.length} message(s) are already pending at this boundary (the player's own input): yield the slot, deliver as context` }
+  }
+  if (agent?.status === 'idle') {
+    return { channel: 'followup', why: 'idle driver: steering would open the turn - an idle wake is an ordinary turn of its own' }
+  }
+  return { channel: 'steer', why: 'running driver with a free boundary: consumed at the next step' }
+}
+
 export function deliveryOf(form, agent) {
-  if (form !== 'alert') return 'inject'
-  return typeof agent?.steer === 'function' ? 'steer' : 'followup'
+  return deliveryPlan(form, agent).channel
 }
 
 export default class DFObserver extends TypertRemoteService {
@@ -235,6 +282,8 @@ export default class DFObserver extends TypertRemoteService {
     this.abort = new AbortController()
     this.lastWakeTick = 0
     this.noteLines = []
+    /** Set by a game swap: the next briefing bypasses the spacing gate once. */
+    this.resetAnnounce = false
     this.filterSessionId = null
     this.filterVerdict = null
     this.filterWokeAt = null
@@ -271,6 +320,7 @@ export default class DFObserver extends TypertRemoteService {
     const sessionFilter = (exec) => this.targetAgent(exec.agent) !== null
     for (const definition of toolDefinitions({
       model: this.model, projection: this.projection, config, sessionFilter,
+      onReset: (why) => this.observerReset({ swapped: true, source: 'tool', why: why || 'reset requested via df_todo' }),
     })) {
       ctx.effect(() => ctx.tools.register(definition, {
         when: ({ agent }) => this.targetAgent(agent) !== null,
@@ -280,7 +330,7 @@ export default class DFObserver extends TypertRemoteService {
     // ---- per-agent behaviour: registered on agent.ctx, disposed both ways ----
     ctx.on('agent/created', ({ agent }) => {
       if (this.targetAgent(agent) === null) return
-      const entry = { lastTick: 0, lastAt: 0, lastSignal: null, lastWakeAt: 0 }
+      const entry = { lastTick: 0, lastAt: 0, lastSignal: null, lastWakeAt: 0, pendingSteerId: null }
       this.agents.set(agent.id, entry)
       const dispose = agent.ctx.effect(() => () => {
         this.agents.delete(agent.id)
@@ -356,6 +406,20 @@ export default class DFObserver extends TypertRemoteService {
     // 30-row ledger), and a third-party client cannot reach an @Remote surface -
     // so the full read goes through the SAME session-command path the Ack uses.
     ctx.effect(() => ctx.commands.register({
+      name: 'df-reset',
+      description: 'Throw out everything the DF observer derived from the current game (to-dos, watched boxes, baselines, alerts, facts - archived, not deleted) and re-read the fort in full. Use it after loading a different save. /df-reset [why]',
+      input: { hint: '[reason, optional]' },
+      handler: async ({ agent, rawInput }) => {
+        const why = String(rawInput ?? '').trim() || 'reset requested by the player'
+        const out = await this.observerReset({ swapped: true, source: 'command', why })
+        void agent
+        const d = out.dropped ?? {}
+        return { kind: 'success', text: `df-reset: observer state thrown out (${d.todos} to-dos archived, `
+          + `${d.boxes} watched boxes, ${d.piles} pile reads, ${d.alerts} alerts) - the next tick re-reads the fort from the game` }
+      },
+    }), 'df-observer: /df-reset command')
+
+    ctx.effect(() => ctx.commands.register({
       name: 'df-panel',
       description: 'Read the observer\'s full current panel payload (ladder, boxes, piles, shafts, ledger, alerts, notes, designation scan) as JSON.',
       input: { hint: '(no arguments)' },
@@ -398,7 +462,7 @@ export default class DFObserver extends TypertRemoteService {
       // Agents created before this plugin activated never emitted `agent/created`
       // for us: adopt them lazily so a live session is not briefing-blind.
       if (!this.agents.has(agent.id)) {
-        this.agents.set(agent.id, { lastTick: 0, lastAt: 0, lastSignal: null, lastWakeAt: 0 })
+        this.agents.set(agent.id, { lastTick: 0, lastAt: 0, lastSignal: null, lastWakeAt: 0, pendingSteerId: null })
         this.disposers.set(agent.id, agent.ctx.effect(() => () => {
           this.agents.delete(agent.id)
           this.disposers.delete(agent.id)
@@ -480,7 +544,11 @@ export default class DFObserver extends TypertRemoteService {
       request.rungs = true
       // The status probe (picks/site/date/seeds) costs a Lua round-trip: deep ticks only.
       request.status_probe = true
-      request.pile_ids = cfg.pile_ids
+      // Pile ids move with every save, so an empty config means ASK THE GAME: the
+      // server resolves "auto" through its own stockpile scan. A hand-typed list from a
+      // previous fort reads "pile id N not found" forever and every pile acceptance test
+      // is unrunnable - exactly what happened after the save swaps on this fort.
+      request.pile_ids = (cfg.pile_ids && cfg.pile_ids.length) ? cfg.pile_ids : 'auto'
       request.reports = cfg.reports
       request.crashlog_files = cfg.crashlog_files
       if (cfg.game_dir) request.crashlog_dir = cfg.game_dir
@@ -508,6 +576,19 @@ export default class DFObserver extends TypertRemoteService {
     } : null
     this.model.ingestFast(data)
     if (isDeep) this.model.ingestDeep(data)
+    // A different game is loaded -> THE RESET ROUTINE, before any rule compares the
+    // new numbers against the old fort's baselines. Order matters: after a save swap
+    // every box/pile/fact read is a FIRST read, so the dig rules treat it as a
+    // baseline, not as a transition - which is precisely what the tile_state_lost,
+    // dig_stalled and todo_reopened storm lacked (measured 2026-11-21).
+    const swap = this.model.gameChange()
+    if (swap.swapped) {
+      await this.observerReset(swap)
+      // A reset must be ANNOUNCED, not folded into the next routine briefing at the
+      // judge's convenience: the agent has to know the numbers just changed source.
+      this.resetAnnounce = true
+    }
+    this.persistSignature()
     const raised = this.model.evaluate({})
     await this.dispatchAlerts(raised)
     const gateNotes = this.filterEnabled()
@@ -540,7 +621,7 @@ export default class DFObserver extends TypertRemoteService {
     const byId = new Map(alerts.map((a) => [a.id, a]))
     if (byId.size) {
       lines.push('  ALERTS RAISED WHILE PAUSED:')
-      for (const a of [...byId.values()].slice(-8)) lines.push(`    !${a.id} ${a.kind}${a.coord ? ` [${a.coord}]` : ''}: ${String(a.evidence ?? '').slice(0, 110)}`)
+      for (const a of [...byId.values()].slice(-8)) lines.push(`    !${alertLabel(a)} ${a.kind}${a.coord ? ` [${a.coord}]` : ''}: ${String(a.evidence ?? '').slice(0, 110)}`)
     }
     const digs = (this.model.digEvents ?? []).filter((e) => (e.tick ?? 0) >= from)
     if (digs.length) {
@@ -559,9 +640,9 @@ export default class DFObserver extends TypertRemoteService {
     lines.push(`  FACTS: ${deltas.length ? deltas.join(', ') : 'no fact moved while paused'}` +
       `${p.facts?.date ? ` | date Y${p.facts.date.year} M${p.facts.date.month} d${p.facts.date.day}` : ''}`)
     const brief = buildBriefing(p, { maxTokens: this.config.briefing_max_tokens + PANEL_FILL_ALLOWANCE })
-    const message = `${lines.join('\n')}\n\n${brief.text}`
+    const text = `${lines.join('\n')}\n\n${brief.text}`
     for (const agent of this.liveTargets()) {
-      try { agent.inject(message) } catch { /* labelled in notes */ }
+      this.injectMessage(agent, { text }, 'catch-up')
     }
     this.note(`catch-up delivered: ${lines.length - 2} summary lines + a ${brief.tokens}-token snapshot (budget ${this.config.briefing_max_tokens + PANEL_FILL_ALLOWANCE}${brief.overBudget ? ', LABELLED overBudget' : ''})`)
     this.mutedFromTick = null
@@ -615,9 +696,81 @@ export default class DFObserver extends TypertRemoteService {
             pauseSource: p.pauseSource, pauseAuthority: p.pauseAuthority, quiet: next,
             suppressed: { ...p.suppressed }, facts: p.facts, todos: (p.todos ?? []).slice(0, 12),
             alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, coord: a.coord, acked: !!a.acked })) } })}`
-      for (const agent of this.liveTargets()) { try { agent.inject(line) } catch { /* labelled in the notes */ } }
+      for (const agent of this.liveTargets()) { this.injectMessage(agent, { text: line }, 'briefing') }
     }
     return { quiet: next, changed, suppressed: { ...this.model.suppressed } }
+  }
+
+  /** The identity of the loaded save, as one storable key (game = the only truth). */
+  signatureKey() {
+    const g = this.model?.game
+    if (!g) return null
+    return [g.save, g.world, g.mode, g.tiles].join('|')
+  }
+
+  /** Remember which game the ledger belongs to, so a swap while we were DOWN is
+   * still detected: at activation we have no previous identity to compare with. */
+  persistSignature() {
+    const key = this.signatureKey()
+    if (!key || !this.ledger?.table?.('todos')) return
+    const sig = { key, ...(this.model.game ?? {}), at: Date.now(), tick: this.model.tick }
+    if (this.lastPersistedSignature === key) return
+    this.lastPersistedSignature = key
+    void this.ledger.table('todos').put('game', sig)
+      .catch((e) => this.note(`signature write failed: ${e?.message ?? e}`))
+  }
+
+  /**
+   * THE OBSERVER RESET ROUTINE (player request 2026-11-21: "when a different game is
+   * detected, even by just reloading a different save, throw everything out and refetch
+   * everything once again").
+   *
+   * Model side: every baseline, tally, event, alert, fact and to-do is dropped
+   * (model.resetForNewGame) and the deep read is forced on the next cycle.
+   * Ledger side: the dropped to-dos are ARCHIVED under non-numeric keys (restoreTodos
+   * skips non-numeric ids - measured as the proven-durable path), then the numeric
+   * records and the watched-box records are deleted, so a restart of the plugin cannot
+   * restore the previous fort's plan into this one.
+   */
+  async observerReset(swap) {
+    const dropped = this.model.resetForNewGame(swap)
+    let archived = 0
+    const table = this.ledger?.table?.('todos')
+    if (table) {
+      const keys = [...table.entries()].map(([k]) => k).filter((k) => /^\d+$/.test(String(k)))
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')
+      for (const k of keys) {
+        const rec = table.get(k)
+        if (!rec) continue
+        void table.put(`arch-${stamp}-${k}`, JSON.parse(JSON.stringify({
+          ...rec, archivedBy: swap.why, archivedAt: Date.now(), archivedSwap: this.model.gameSwaps,
+        }))).catch((e) => this.note(`ledger archive failed: ${e?.message ?? e}`))
+        archived += 1
+      }
+      // Delete the live records: an archive that is still readable as a to-do is
+      // the reopen storm again.
+      try {
+        if (typeof table.deleteMany === 'function') await table.deleteMany(keys)
+        else for (const k of keys) await table.delete(k)
+      } catch (error) {
+        this.note(`ledger wipe failed (the archive holds ${archived} rows; in-memory state is clean): ${error?.message ?? error}`)
+      }
+      const boxTable = this.ledger?.table?.('boxes')
+      if (boxTable) {
+        const boxKeys = [...boxTable.entries()].map(([k]) => k)
+        try {
+          if (typeof boxTable.deleteMany === 'function') await boxTable.deleteMany(boxKeys)
+          else for (const k of boxKeys) await boxTable.delete(k)
+        } catch (error) {
+          this.note(`watched-box wipe failed: ${error?.message ?? error}`)
+        }
+      }
+      this.lastPersistedSignature = null   // force a signature re-write after the wipe
+    }
+    this.note(`observer reset (${swap.source}): ${swap.why} - dropped ${dropped.todos} to-dos `
+      + `(archived ${archived}), ${dropped.boxes} watched boxes, ${dropped.piles} pile reads, `
+      + `${dropped.alerts} alerts; re-seeded from the ladder, re-reading the fort in full`)
+    return { ...swap, dropped, archived }
   }
 
   async openLedger() {
@@ -656,13 +809,30 @@ export default class DFObserver extends TypertRemoteService {
         // while the plugin was in fact muted.
         this.setQuiet(true, 'storage', true)
       }
-      this.note(`ledger restored: ${stored.length} to-dos, ${boxes.length} watched boxes`)
+      // Seed the swap detector with the game THESE records belong to. Without this,
+      // a save swap that happened while the observer was down is invisible on the
+      // first poll (there is no previous identity to compare against), and the
+      // previous fort's plan would be restored into a fort that never had it.
+      const storedGame = domain.table('todos').get('game')
+      if (storedGame?.key) {
+        this.model.lastGame = storedGame
+        this.lastPersistedSignature = storedGame.key
+      }
+      this.note(`ledger restored: ${stored.length} to-dos, ${boxes.length} watched boxes`
+        + (storedGame?.key ? ` (plan of game ${storedGame.key}${storedGame.year ? ` Y${storedGame.year}` : ''})`
+          : (stored.length
+            // The swap detector has nothing to compare against for a ledger written
+            // before the game signature was stored: say so, do not silently trust it.
+            ? ' (NO GAME STAMP: written before signatures were stored - if the loaded save is not the fort these to-dos describe, run /df-reset)'
+            : '')))
     } catch (error) {
       this.note(`ledger load failed (starting fresh, labelled): ${error?.message ?? error}`)
     }
-    // Every ledger mutation lands durably (writes are queued by the domain).
+    // Every ledger mutation lands durably (writes are queued by the domain), and
+    // carries the game it was written for: a to-do is a claim about ONE fort.
     this.model.onLedgerWrite = (todo) => {
-      void domain.table('todos').put(String(todo.id), JSON.parse(JSON.stringify(todo)))
+      const game = this.signatureKey()
+      void domain.table('todos').put(String(todo.id), JSON.parse(JSON.stringify(game ? { ...todo, game } : todo)))
         .catch((e) => this.note(`ledger write failed: ${e?.message ?? e}`))
     }
     this.model.onBoxWatch = (box) => {
@@ -703,7 +873,8 @@ export default class DFObserver extends TypertRemoteService {
       const changed = this.config.briefing_mode === 'always'
         ? ['mode-always']
         : significantChange(entry.lastSignal, payload, { min_to_dig_delta: this.config.min_to_dig_delta })
-      const spaced = now - entry.lastAt >= this.config.inject_min_spacing_ms
+      if (this.resetAnnounce) changed.push(`observer reset (${this.model.gameSwaps})`)
+      const spaced = this.resetAnnounce || now - entry.lastAt >= this.config.inject_min_spacing_ms
       const overdue = now - entry.lastAt >= this.config.inject_max_spacing_ms
       let brief = null
       if (verdict) {
@@ -729,6 +900,7 @@ export default class DFObserver extends TypertRemoteService {
         }
       }
       this.injectMessage(agent, brief, 'briefing')
+      this.resetAnnounce = false
       entry.lastSignal = payload
       entry.lastAt = now
       entry.lastTick = payload.tick
@@ -767,50 +939,117 @@ export default class DFObserver extends TypertRemoteService {
     if (this.quiet) { this.model.suppressed.wakes += alerts.length; return }
     const payload = this.model.payload()
     const now = Date.now()
-    for (const alert of alerts) {
-      if (!this.config.wake_enabled) continue
-      if (!this.config.alert_wakes.includes(alert.kind)) continue
-      for (const agent of this.liveTargets()) {
-        const entry = this.agents.get(agent.id)
-        if (!entry) continue
-        if (alert.wakeSent) continue
-        if (now - entry.lastWakeAt < this.config.wake_min_spacing_ms) continue
-        const wake = buildWake(alert, payload, { maxTokens: this.config.briefing_max_tokens })
-        this.injectMessage(agent, wake, 'alert')
-        alert.wakeSent = true
-        entry.lastWakeAt = now
+    const candidates = alerts.filter((a) =>
+      this.config.wake_enabled && this.config.alert_wakes.includes(a.kind) && !a.wakeSent)
+    if (!candidates.length) return
+    // ONE wake per agent per boundary: N alerts on one tick are one message, not N
+    // steering messages competing for the player's step boundary.
+    for (const agent of this.liveTargets()) {
+      const entry = this.agents.get(agent.id)
+      if (!entry) continue
+      if (now - entry.lastWakeAt < this.config.wake_min_spacing_ms) continue
+      const wake = buildCoalescedWake(candidates, payload, { maxTokens: this.config.briefing_max_tokens })
+      if (!wake?.text) continue
+      const delivered = this.injectMessage(agent, wake, 'alert')
+      for (const a of candidates) a.wakeSent = true
+      entry.lastWakeAt = now
+      if (delivered?.channel === 'inject') {
+        // A wake demoted to context is a wake that did not wake: count it, never hide it.
+        const s = (this.model.suppressed ??= { briefings: 0, wakes: 0 })
+        s.steers = (s.steers ?? 0) + 1
+        this.note(`wake delivered as context (not steering): ${delivered.why}`)
       }
     }
   }
 
+  /**
+   * The ONLY producer of model-facing messages in this plugin.
+   *
+   * `agent.inject/steer/followup` take a message OBJECT, and the object is
+   * written verbatim into the durable log as `agent/inbox/spliced.inserted`.
+   * A raw string therefore corrupts the session beyond repair: the loader
+   * rejects it (`agent/inbox/spliced requires message objects`) and the whole
+   * history becomes unloadable. Measured 2026-11-21 on a play session: two
+   * announce paths passed a string and the session died. So nothing reaches an
+   * inbox boundary except through here, and here refuses to pass a non-message.
+   */
+  observerMessage(text, form, summary) {
+    const body = typeof text === 'string' ? text : String(text ?? '')
+    const message = createUserMessage({
+      source: {
+        kind: 'df-observer',
+        form,
+        summary: summary ?? (form === 'alert' ? 'DF observer alert'
+          : form === 'catch-up' ? 'DF observer catch-up'
+            : 'DF observer briefing'),
+      },
+      content: [{ type: 'text', text: body }],
+    })
+    if (message == null || typeof message !== 'object' || Array.isArray(message)
+      || message.role !== 'user' || !Array.isArray(message.content)
+      || typeof message.id !== 'string' || message.id.length === 0) {
+      throw new Error('df-observer: refusing to deliver a non-message payload')
+    }
+    return message
+  }
+
+  /** Our own messages still unspent at one inbox boundary. */
+  pendingOurs(agent, target) {
+    const list = target === 'next-turn' ? (agent?.inbox?.nextTurn ?? []) : (agent?.inbox?.nextStep ?? [])
+    return [...list].filter((m) => m?.source?.kind === 'df-observer').length
+  }
+
+  /** The boundary an inject channel writes to. */
+  static targetOf(channel) {
+    return channel === 'followup' ? 'next-turn' : 'next-step'
+  }
+
   injectMessage(agent, { text }, form) {
-    const wake = form === 'alert'
+    const plan = deliveryPlan(form, agent, { alertDelivery: this.config.alert_delivery })
     try {
-      // Alerts must WAKE the agent: agent.inject() parks a message in the inbox
-      // until other input arrives (practices.md), which is right for briefings
-      // (state, not a request) and wrong for the wake conditions the plan pays
-      // for - water, a drained face, a crash, the game going offline.
-      const message = createUserMessage({
-        source: { kind: 'df-observer', form, summary: form === 'alert' ? 'DF observer alert' : 'DF observer briefing' },
-        content: [{ type: 'text', text }],
-      })
-      if (deliveryOf(form, agent) === 'steer') {
-        agent.steer(message)
-      } else if (wake) {
-        // An alert must reach a BUSY agent too. Measured (player report): via
-        // `followup` the wake sat above the composer as a queued turn until the
-        // player pressed it. `steer` is the right boundary - "an idle driver
-        // starts a turn; a running driver consumes it at its next step
-        // boundary" - so steer first, and fall back to followup only if this
-        // Agent has no steer.
-        if (typeof agent.steer === 'function') agent.steer(message)
-        else agent.followup(message)
-      } else {
-        // Briefings are state, not a request: inject (never wakes the driver).
-        agent.inject(message)
+      // Alerts must WAKE the agent; briefings are state and park in the inbox
+      // (practices.md). Which channel an alert may use is decided per Agent
+      // against its live inbox - see `deliveryPlan` for the boundary contract.
+      const cap = this.config.pending_inject_cap
+      if (cap > 0 && plan.channel !== 'steer') {
+        const target = DFObserver.targetOf(plan.channel)
+        const pending = this.pendingOurs(agent, target)
+        if (pending >= cap) {
+          // Honest bookkeeping: a dropped injection is counted, never hidden.
+          const s = (this.model.suppressed ??= { briefings: 0, wakes: 0 })
+          s.pending = (s.pending ?? 0) + 1
+          this.note(`injection skipped for ${agent.id}: ${pending} observer messages already unspent at ${target} (cap ${cap}) - the driver is not consuming`)
+          return { channel: 'skipped', why: `${pending} unspent at ${target} (cap ${cap})` }
+        }
       }
+      const message = this.observerMessage(text, form)
+      const entry = this.agents.get(agent.id)
+      if (plan.channel === 'steer') {
+        // Never STACK: if our own observer steer is still pending at this
+        // boundary, replace it with the newer state instead of adding a second
+        // steering message the player has to sit through.
+        const pendingId = entry?.pendingSteerId
+        const pendingList = agent.inbox?.nextStep ?? []
+        if (pendingId && [...pendingList].some((m) => m?.id === pendingId) && typeof agent.inbox?.replace === 'function') {
+          if (agent.inbox.replace(pendingId, message)) {
+            // Same slot, newer state: the id stays pending, the text is the fresh one.
+            return { channel: 'replace', why: 'replaced the pending observer steer at this boundary' }
+          }
+        }
+        agent.steer(message)
+        if (entry) entry.pendingSteerId = message.id
+        return { channel: 'steer', why: plan.why }
+      }
+      if (plan.channel === 'followup') {
+        agent.followup(message)
+        if (entry) entry.pendingSteerId = null
+        return { channel: 'followup', why: plan.why }
+      }
+      agent.inject(message)
+      return { channel: 'inject', why: plan.why }
     } catch (error) {
       this.note(`inject failed for ${agent.id}: ${error?.message ?? error}`)
+      return { channel: 'failed', why: String(error?.message ?? error) }
     }
   }
 
@@ -869,7 +1108,12 @@ export default class DFObserver extends TypertRemoteService {
     })
     ctx.effect(() => () => {
       const agent = this.filterAgent()
-      if (agent) { try { agent.cancel('df-observer: plugin disposed') } catch { /* already gone */ } }
+      // `cancel` takes an AgentCancelCause OBJECT ({kind:'user'|'parent'|'hook'|
+      // 'disposed'}); a bare string is not one, and the loop's cause reader
+      // switches on `cause.kind`. Measured: our string cause left the filter's
+      // last turn closing as `reason: null`, which the harness's subagent
+      // projection reads unguarded -> "failed to project session".
+      if (agent) { try { agent.cancel({ kind: 'disposed' }) } catch { /* already gone */ } }
     }, 'df-observer: filter disposal')
   }
 
@@ -918,18 +1162,16 @@ export default class DFObserver extends TypertRemoteService {
     const gate = gateNotes.length ? ` Numeric gate: ${gateNotes.join(', ')}.` : ''
     const instruction = 'Answer with exactly one [df-verdict] line per your instructions.'
     if (!full) {
-      return createUserMessage({
-        source: { kind: 'df-observer', form: 'filter-tick', summary: `DF observer filter tick ${tick}` },
-        content: [{ type: 'text', text: `Observation tick ${tick}.${gate} No full payload this tick - decide from your log history and df_observe_state if you need it. ${instruction}` }],
-      })
+      return this.observerMessage(
+        `Observation tick ${tick}.${gate} No full payload this tick - decide from your log history and df_observe_state if you need it. ${instruction}`,
+        'filter-tick', `DF observer filter tick ${tick}`)
     }
     let body = JSON.stringify(payload)
     const cap = this.config.filter_state_max_tokens * 4
     if (body.length > cap) body = `${body.slice(0, cap)}…(truncated: labelled, never a fact)`
-    return createUserMessage({
-      source: { kind: 'df-observer', form: 'filter-tick', summary: `DF observer filter tick ${tick} (full)` },
-      content: [{ type: 'text', text: `Observation tick ${tick}.${gate} Full state payload follows; compare with your earlier ticks and rank what changed. ${instruction}\n${STATE_PREFIX}${body}` }],
-    })
+    return this.observerMessage(
+      `Observation tick ${tick}.${gate} Full state payload follows; compare with your earlier ticks and rank what changed. ${instruction}\n${STATE_PREFIX}${body}`,
+      'filter-tick', `DF observer filter tick ${tick} (full)`)
   }
 
   wakeFilter(gateNotes, isDeep) {
@@ -937,6 +1179,19 @@ export default class DFObserver extends TypertRemoteService {
     void (async () => {
       const live = agent ?? await this.ensureFilterAgent()
       if (!live) return
+      // The measured runaway: followups to a filter driver that is not consuming
+      // piled ~400 durable injections into its log. Its verdict is already
+      // missing, so the rule gate is the live path - say so once, do not stack.
+      const cap = this.config.pending_inject_cap
+      if (cap > 0) {
+        const pending = this.pendingOurs(live, 'next-turn') + this.pendingOurs(live, 'next-step')
+        if (pending >= cap) {
+          this.note(`filter wake paused: ${pending} observer messages unspent in its inbox (cap ${cap}); the rule gate is answering`)
+          this.filterFallback = true
+          void isDeep
+          return
+        }
+      }
       this.filterWokeAt = Date.now()
       const full = this.filterPushTick % this.config.filter_full_every === 0
       this.filterPushTick += 1

@@ -53,7 +53,9 @@ Known DFHack RPC quirks (learned the hard way, encoded into the tools below):
   (floor tiles, known tile below). Room-scale carving through this RPC is
   unreliable - designate big areas in-game (d key) and let miners work, or use
   dig-now with verified designations for surgical cuts.
-* Game elevation = RPC z - 128 on this save (see get_map_info game_z_offset).
+* Game elevation = RPC z - 129 on this save (WM.GAME_Z_OFFSET; measured on the live map:
+  the wagon reads z=167 in DFHack `position` and the panel says Elevation 38, and a stair
+  sent at z=166 registered on Elevation 37. get_map_info publishes the offset as gameZOffset.
 * RemoteFortressReader only reports/designates DISCOVERED tiles; fog areas read
   empty. Run the DFHack `reveal` command first for map work in dark areas.
 * RemoteFortressReader tiletype ids are dynamic per save - resolve names with
@@ -118,8 +120,8 @@ Known DFHack RPC quirks (learned the hard way, encoded into the tools below):
     no blocks at all. Read it as "quickfort's plan", never as "the game's rule".
   - CURSOR ANCHOR (verified): a multi-tile building anchors its footprint CENTRED on the
     cursor, so the top-LEFT lands at (cursor_x-2, cursor_y-2) for a 5x5, and on this map
-    a '#build' apply passed -c 108,9,165 produced a building at x106,y7 ELEV 39 (z167):
-    z lands +2 from what is sent. To target elevation E, send z = E + 128 - 2.
+    a '#build' apply passed -c 108,9,165 produced a building at x106,y7 z167 (ELEV 38):
+    z lands +2 from what is sent. To target elevation E, send z = E + 129 - 2.
   - Queued blueprints DO get built by dwarves given game time (unpause). 'build-now'
     only finishes buildings already under construction.
   - quickfort 'run' DESIGNATES a building; it is then a job that needs a builder dwarf
@@ -224,12 +226,22 @@ async def get_versions():
 
 @app.get("/get-status", operation_id="get_status")
 async def get_status():
-    """Report the DFHack RPC connection state, and the game versions when reachable"""
+    """Report the DFHack RPC connection state, the game versions, and the identity of the
+    loaded save (save name + in-game date). `reloads` counts the save swaps this server has
+    detected and cleared caches for; `reloaded` is the pending swap, reported once."""
     try:
         await ensure_connection()
         out = dict(connection_state())          # read state AFTER connecting
         out["dfhackVersion"] = (await GetVersion()).value
         out["dwarfFortressVersion"] = (await GetDFVersion()).value
+        sig = await world.signature()
+        if sig:
+            out["worldSignature"] = {k: sig.get(k) for k in
+                                     ("save", "world", "mode", "tiles", "year", "tick")}
+        out["reloads"] = world.reloads
+        pending = world.take_reload()
+        if pending:
+            out["reloaded"] = pending
     except DFHackTransportError as e:
         out = dict(connection_state())
         out["connected"] = False
@@ -546,13 +558,16 @@ async def set_pause_state(request: Request):
 
 @app.post("/send-dig-command", operation_id="send_dig_command")
 async def send_dig_command(request: Request):
-    """Designate digging - the `m` menu over RPC, no blueprint and no instant-dig. designation: one of NO_DIG, DEFAULT_DIG, UP_DOWN_STAIR_DIG, CHANNEL_DIG, RAMP_DIG, DOWN_STAIR_DIG, UP_STAIR_DIG; locations: list of [x,y,z] where z = elevation + 128, sent AS GIVEN (measured: lands where you put it). Optional swap:true reproduces the old mirrored behaviour for other builds. Only DISCOVERED, diggable tiles accept designations - unexplored tiles are rejected SILENTLY, and there is no reply, so ALWAYS verify: read `world_objects`/`look` for the dig cluster and its tile count before assuming work was ordered. Use NO_DIG to clear a rectangle."""
+    """Designate digging - the `m` menu over RPC, no blueprint and no instant-dig. designation: one of NO_DIG, DEFAULT_DIG, UP_DOWN_STAIR_DIG, CHANNEL_DIG, RAMP_DIG, DOWN_STAIR_DIG, UP_STAIR_DIG; locations: list of [x,y,z] where z = elevation + 129 (WM.GAME_Z_OFFSET - the SAME number every read tool uses), sent AS GIVEN (measured: lands where you put it; an earlier note here said +128, which is one level LOW - following it digs under your feet). Optional swap:true reproduces the old mirrored behaviour for other builds. Only DISCOVERED, diggable tiles accept designations - unexplored tiles are rejected SILENTLY, and there is no reply, so ALWAYS verify: read `world_objects`/`look` for the dig cluster and its tile count before assuming work was ordered. Use NO_DIG to clear a rectangle."""
     body = await request.json()
     designation = body["designation"].upper()
     if designation not in DIG_DESIGNATIONS:
         return {"error": f"unknown designation '{designation}'", "known": sorted(DIG_DESIGNATIONS)}
     # Measured on 53.17-r1 STEAM (single-tile calibration): a designation sent as
-    # [x=63, y=118, z=167] lands at x63,y118 on elev 39 - AS GIVEN, no transposition.
+    # [x=63, y=118, z=167] lands at x63,y118 - AS GIVEN, no transposition. In elevation
+    # terms z=167 IS elev 38 on this save (the wagon sits at z167, panel 38); the old
+    # note calling it elev 39 came from a view reading, and following it as a rule puts
+    # every designation one level under where you aimed it.
     # The old x/y swap was inherited from an earlier observation and sent whole
     # tunnels to the mirrored coordinates, where unexplored tiles silently rejected
     # them (verified: 87 designated tiles, dig count stayed 0). Passing `swap` is
@@ -615,7 +630,7 @@ async def get_block_list(request: Request):
 #   look / world_objects, whole fort band   : ~2-4 KB      ~500-1,000 tokens
 #   world_minimap, ALL z at once            : ~37 KB       ~9,000 tokens
 # Every tool here returns compact plain text under a token budget and says so when
-# it truncates. Coordinates in and out are GAME ELEVATIONS (rpc_z - 128).
+# it truncates. Coordinates in and out are GAME ELEVATIONS (rpc_z - 129).
 # ---------------------------------------------------------------------------
 
 @app.get("/look", operation_id="look")
@@ -757,6 +772,49 @@ async def place_building(request: Request):
     body = await request.json()
     dec = await world._dec(await world._gen())
     try:
+        # A MULTI-TILE stockpile must not come back 1x1. constructBuilding ignores w/h for
+        # piles (measured twice: pile 1 arrived x66-66,128-128 for a 4x2 request, and the
+        # response said success:true), so a bigger pile goes through the game's own
+        # allocInstance -> setSize -> constructAbstract path, which reports real extents.
+        _w, _h = int(body.get("w") or 1), int(body.get("h") or 1)
+        # ANY multi-tile request goes through the game's own setSize path. Not just
+        # piles: a 3x2 Farm Plot came back 1x1 the same way (measured 2026-11-21, and
+        # the ladder rung still read satisfied - a 1-tile farm quietly starves a fort).
+        if _w > 1 or _h > 1:
+            # Only a stockpile (and other material-free abstracts) is a legal argument for
+            # constructAbstract. A WORKSHOP is not: measured placing a 3x4 Still, the abstract
+            # route died with "constructAbstract(): expected !bld->isActual()". Workshops go
+            # through quickfort's plan call (constructBuilding with width/height + room
+            # extents, no abstract flag) - see luaops.place_building_plan.
+            _name = str(body["building"]).strip().lower()
+            _abstract_family = _name in ("stockpile", "stock_pile", "pile")
+            if not _abstract_family:
+                try:
+                    _pl = await LO.place_building_plan(dec, body["building"], int(body["x"]),
+                                                       int(body["y"]), int(body["elev"]), _w, _h)
+                except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+                    return {"success": False, "error": str(e),
+                            "hint": "workshops are placed as plans; check the site with tile_at "
+                                    "and pass a 1x1 origin that is a dug floor"}
+                world.cache.reset()
+                world.forget_band()
+                return {"success": True, "placed": str(body["building"]),
+                        "at": [int(body["x"]), int(body["y"]), int(body["elev"])],
+                        "route": "place_building_plan (constructBuilding width/height + room.extents, "
+                                 "no abstract) - quickfort's workshop path",
+                        "next": "a builder finishes the plan with real materials; probe the far corner tile",
+                        **_pl}
+            _sp = await LO.create_building_multi(dec, body["building"], int(body["x"]),
+                                                 int(body["y"]), int(body["elev"]), _w, _h)
+            world.cache.reset()
+            world.forget_band()
+            _is_pile = str(body["building"]).strip().lower() in ("stockpile", "stock_pile", "pile")
+            return {"success": True, "placed": str(body["building"]),
+                    "at": [int(body["x"]), int(body["y"]), int(body["elev"])],
+                    "route": "create_building_multi (allocInstance -> setSize -> commit)",
+                    "next": ("configure_stockpile for the categories, then probe the pile"
+                             if _is_pile else "probe the building at its far corner tile"),
+                    **_sp}
         res = await LO.place_building(dec, body["building"], int(body["x"]), int(body["y"]),
                                       int(body["elev"]), w=body.get("w"), h=body.get("h"),
                                       complete=bool(body.get("complete", True)),
@@ -1183,6 +1241,21 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
     except Exception as e:                      # pragma: no cover - defensive
         notes.append(f"generation unavailable: {e}")
 
+    # The identity of the LOADED GAME, and the save-swap event. A save reload does
+    # not change `generation` (the socket survives), so the observer needs the
+    # world's own signature to know the fort it is measuring is a different fort.
+    # `reloaded` is reported ONCE, on the tick the swap is detected.
+    try:
+        reload_evt = await world.check_reload()
+        sig = await world.signature()
+        if sig:
+            out["worldSignature"] = {k: sig.get(k) for k in
+                                     ("save", "world", "mode", "tiles", "year", "tick")}
+        if reload_evt:
+            out["reloaded"] = reload_evt
+    except Exception as e:                      # pragma: no cover - defensive
+        notes.append(f"game signature unavailable: {e}")
+
     if req.get("pause", True):
         try:
             out["paused"] = bool((await GetPauseState()).Value)
@@ -1207,6 +1280,17 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
             levels = await world.levels(int(e0), int(e1))
             facts = WM.FortFacts(levels, await WM.load_units(dec, gen, world._state), dec)
             await world.annotate_depth(facts)
+            # Zone kinds and pile categories come from the injected readers. `progress()`
+            # calls them and `observe` did not, so the SAME rung answered true from
+            # /fort-progress and false from /observe (measured: meeting area + refuse pile
+            # both standing, the plugin reporting both open). One rung, one answer.
+            for attr, field in (("zone_provider", "zones"), ("pile_provider", "piles")):
+                fn = getattr(world, attr, None)
+                if fn is not None:
+                    try:
+                        setattr(facts, field, await fn(dec))
+                    except Exception as e:
+                        notes.append(f"{field} unavailable: {e} (rung reads NO DATA, not false)")
         except Exception as e:                  # cache/RFR/lua failures label, not crash
             notes.append(f"facts unavailable: {e}")
     if facts is not None:
@@ -1334,7 +1418,20 @@ async def observe(q: str = Query("{}", description="JSON observe request, see do
     if obs2["picks"] is None:
         notes.append("status probe produced no pick count: picks UNKNOWN (not 0)")
 
-    pile_ids = [int(i) for i in req.get("pile_ids", [])[:16]]
+    _want_piles = req.get("pile_ids", [])
+    pile_ids = []
+    if _want_piles == "auto" or _want_piles == ["auto"]:
+        # Pile ids change with every save (measured: a profile row carried [18,19,20,24]
+        # from a fort that no longer existed, so every pile alert read "not found" and the
+        # pile acceptance tests could never run). Discover them from the game.
+        try:
+            _ps = await LO.list_stockpiles(await world._dec(gen))
+            pile_ids = [int(p["id"]) for p in _ps][:16]
+            notes.append(f"pile ids discovered from the game: {pile_ids or 'none (no piles)'}")
+        except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+            notes.append(f"pile id discovery failed: {e}; pile health unknown")
+    elif isinstance(_want_piles, list):
+        pile_ids = [int(i) for i in _want_piles[:16]]
     if pile_ids:
         try:
             parsed = observe_parse_piles(await LO._lua(observe_pile_lua(pile_ids),
@@ -1488,13 +1585,37 @@ async def make_stockpile(body: dict):
 
 @app.post("/create-stockpile", operation_id="create_stockpile")
 async def create_stockpile(body: dict):
-    """Create a multi-tile stockpile (abstract -> setSize -> completeBuild). Use this, not place_building, for any pile bigger than 1 tile; then set its categories with /configure-stockpile."""
+    """Create a multi-tile stockpile (abstract -> setSize -> completeBuild). Use this, not place_building, for any pile bigger than 1 tile; then set its categories with /configure-stockpile.
+
+    SITE GATE (measured 2026-11-21, three times on one fort): a pile placed on tiles that
+    are not dug floor - `open` cavern air, unexcavated rock, fog - is accepted by the game
+    and lands IN MID AIR. The player's words: "you had build the three stockpiles in mid
+    air". Furniture floating over a cavern is a bug factory, so this endpoint now reads the
+    footprint first and refuses when any tile is not a dug, walkable floor."""
+    x0, y0, e = int(body["x"]), int(body["y"]), int(body["elev"])
+    w, h = max(1, int(body["w"])), max(1, int(body["h"]))
+    x1, y1 = x0 + w - 1, y0 + h - 1
+    try:
+        st = await world.box_state(e, x0, y0, x1, y1)
+    except Exception as ex:
+        return {"success": False, "error": f"site gate could not read the footprint: {ex}",
+                "hint": "the read failed; nothing was placed"}
+    dug, total = int(st.get("dug", 0)), int(st.get("total_tiles", w * h))
+    to_dig, hidden = int(st.get("to_dig", 0)), int(st.get("hidden", 0))
+    if dug < total:
+        return {"success": False,
+                "error": f"site x{x0}-{x1} y{y0}-{y1} elev{e} is not pile ground: "
+                         f"dug {dug}/{total}, to_dig {to_dig}, hidden/fog {hidden}",
+                "hint": "a pile needs dug, walkable floors under every tile of its footprint - "
+                        "the game happily accepts cavern air and fog, and the pile then floats "
+                        "(measured: 3 piles built in mid air on this fort)",
+                "gate": "dug == w*h", "measured": st}
     try:
         dec = await world._dec(await world._gen())
-        return await LO.create_stockpile(dec, int(body["x"]), int(body["y"]), int(body["elev"]),
-                                         int(body["w"]), int(body["h"]))
-    except LO.LuaOpError as e:
-        return {"success": False, "error": str(e)}
+        res = await LO.create_stockpile(dec, x0, y0, e, w, h)
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e2:
+        return {"success": False, "error": str(e2)}
+    return {"success": True, "site_gate": f"dug {dug}/{total}", **res}
 
 
 @app.post("/resize-building", operation_id="resize_building")
@@ -1515,6 +1636,17 @@ async def repair_stockpile_settings(body: dict):
         return await LO.repair_stockpile_settings(dec, int(body["building_id"]))
     except LO.LuaOpError as e:
         return {"success": False, "error": str(e)}
+
+
+@app.get("/stockpiles", operation_id="list_stockpiles")
+async def list_stockpiles():
+    """Every stockpile with its BUILDING ID, extents, accepted categories and container limits. The id is what configure_stockpile / resize / remove need, and no other read gives it."""
+    dec = await world._dec(await world._gen())
+    try:
+        rows = await LO.list_stockpiles(dec)
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e), "stockpiles": []}
+    return {"success": True, "count": len(rows), "stockpiles": rows}
 
 
 @app.post("/configure-stockpile", operation_id="configure_stockpile")
@@ -1606,6 +1738,90 @@ async def cross_section(axis: str = Query("y", description="'y' fixes y=at and w
             b.note("lines", 1)
     return WM.finish(kept, b)
 
+@app.get("/building-def-list", operation_id="get_building_def_list")
+async def get_building_def_list(query: str = Query("", description="substring filter, e.g. 'meet' or 'zone'")):
+    """THE BUILDABLE NAMES OF THIS BUILD, straight from the game's own definition table.
+
+    place_building resolves a friendly name through this same table, and its rejection
+    text has always said "get one from get_building_def_list" - while no such endpoint
+    existed, so an agent hit a dead end with a pointer to a tool it could not call.
+    RFR gives each activity zone its OWN building type (the lists are named
+    ZONE_MEETING_HALL, ZONE_PASTURE, ...), which is why a request for "Meeting Area"
+    resolved to nothing: the name is not "Meeting Area" in this build.
+    """
+    dec = await world._dec(await world._gen())
+    q = str(query).strip().lower()
+    rows = []
+    for (bt, sub, cus), nm in sorted(dec.building.items(), key=lambda kv: str(kv[1])):
+        if not q or q in str(nm).lower():
+            rows.append({"name": str(nm), "building_type": int(bt),
+                         "subtype": int(sub), "custom": int(cus)})
+    return {"count": len(rows), "query": query, "buildings": rows[:400]}
+
+
+@app.get("/zones", operation_id="list_zones")
+async def list_zones():
+    """Every activity zone with its KIND (meeting/dump/pen/pond/water source/...) and size. The building census calls them all "Zone", so this is the only read that tells a meeting area from an empty marked rectangle."""
+    dec = await world._dec(await world._gen())
+    try:
+        rows = await LO.list_zones(dec)
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e), "zones": []}
+    return {"success": True, "count": len(rows), "zones": rows}
+
+
+@app.post("/remove-zone", operation_id="remove_zone")
+async def remove_zone(request: Request):
+    """Mark an activity zone for removal by id ({"building_id": N}). remove_building goes through findAtTile, which does not see zones."""
+    body = await request.json()
+    dec = await world._dec(await world._gen())
+    try:
+        res = await LO.remove_zone(dec, int(body["building_id"]))
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+    world.cache.reset()
+    return {"success": True, **res}
+
+
+@app.post("/create-zone", operation_id="create_zone")
+async def create_zone(request: Request):
+    """CREATE AN ACTIVITY ZONE - the meeting area, pasture, pit/pond, dump - at an exact rectangle.
+
+    Body: {"kind": "meeting" | "pasture" | "pit" | "pond" | "dump" | "watersource" | any
+    name substring from get_building_def_list, "x": int, "y": int, "elev": GAME ELEVATION,
+    "w": int, "h": int}. Zones are ABSTRACT buildings (no materials), so the pile recipe
+    works: allocInstance -> setSize -> constructAbstract, verified by findAtTile.
+
+    Why this tool exists: the ladder rungs for the meeting area (wiki step 5), the pasture,
+    the garbage dump and the refuse zone all need a zone, and the `zone` plugin implements
+    no commands (SETUP-LINUX notes), so until now zones were UI-only and uncreatable by
+    an agent. Dig the room out FIRST: a zone on unmined rock marks nothing.
+    """
+    body = await request.json()
+    # ZONE WRITES ARE OPT-IN. Measured twice on this fort (2026-11-21): the game crashed
+    # after `create_zone` calls - allocInstance -> setSize -> constructAbstract -> write
+    # z.type -> notifyCivzoneModified. A zone made that way is not created through the
+    # game's own zone-creation path, and we have no evidence it is safe on a live save.
+    # A tool that can destroy a fort must not fire because a caller asked for a rung.
+    if body.get("acknowledge_risk") is not True:
+        return {"success": False,
+                "error": "create_zone is gated: the last two zone writes on this fort "
+                         "crashed the game (allocInstance/constructAbstract is not the "
+                         "game's own zone creation path)",
+                "hint": "place it in-game (z -> Meeting Area -> draw rect -> Accept), or "
+                        "pass acknowledge_risk: true after testing on a THROWAWAY save",
+                "requires": "acknowledge_risk"}
+    try:
+        dec = await world._dec(await world._gen())
+        res = await LO.create_zone(dec, str(body["kind"]), int(body["x"]), int(body["y"]),
+                                   int(body["elev"]), int(body.get("w", 5)), int(body.get("h", 5)))
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+    world.cache.reset()
+    world.forget_band()
+    return {"success": True, **res}
+
+
 @app.get("/labor-list", operation_id="labor_list")
 async def labor_list():
     """Every labor name you can pass to set_unit_labors (the DFHack unit_labor enum, decoded from the game). Use these exact strings - MINING, MASON, CARPENTER, PLANT, IRRIGATE, FARMER, CRAFTSMAN, TRANSPORT, ..."""
@@ -1670,19 +1886,16 @@ async def work_order(request: Request):
 
 @app.get("/world-cache-reset", operation_id="world_cache_reset")
 async def world_cache_reset():
-    """Drop the world-model caches (block cache, decode tables, fort band, delta snapshot). Call after a big in-game change such as `reveal`, a save reload, or a fort redesign."""
-    world.cache.reset()
-    world.forget_band()
-    world._state.clear()
-    world._prev.clear()
-    # DFHack caches map data server-side; ask it to drop its hashes too, or the next
-    # read can be served from stale block data after a big in-game change.
-    try:
-        await ResetMapHashes()
-        reset = "cache + DFHack map hashes"
-    except Exception as e:
-        reset = f"cache only (ResetMapHashes failed: {e})"
-    return {"reset": True, "scope": reset}
+    """Drop the world-model caches (block cache, decode tables, fort band, delta snapshot,
+    stack memo) and DFHack's map hashes. Call after a big in-game change such as `reveal`,
+    a save reload, or a fort redesign - a save swap does this by itself (see `get_status`)."""
+    scope = await world.drop_all_views()
+    world._sig_prev = None          # re-baseline the identity check too
+    sig = await world.signature(force=True)
+    return {"reset": True, "scope": scope, "reloads": world.reloads,
+            "worldSignature": {k: sig.get(k) for k in
+                               ("save", "world", "mode", "tiles", "year", "tick")} if sig else None,
+            "note": "every derived view is gone; the next read re-fetches the world from the game"}
 
 
 mcp = FastApiMCP(
@@ -1698,6 +1911,11 @@ mcp = FastApiMCP(
 )
 # Streamable HTTP (POST/GET /mcp) - the transport dsh-mcp-client speaks.
 # mcp.mount() is deprecated and mounts the legacy SSE pair (GET /mcp + POST /mcp/messages/).
+# Zone kinds (meeting / dump / pen) are readable only through the game's own structures,
+# which live in this layer - the model layer cannot import luaops (luaops imports it).
+world.zone_provider = lambda dec: LO.list_zones(dec)
+world.pile_provider = lambda dec: LO.list_stockpiles(dec)
+
 mcp.mount_http()
 
 if __name__ == "__main__":

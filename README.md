@@ -146,11 +146,48 @@ Then **open a new session** to pick the new tools up. Full routine, the headless
 the `enabled=false phase=null` state that silently disables a row, and the port rule
 are documented in [SETUP-LINUX.md §15](SETUP-LINUX.md).
 
+## Save swaps: the reset routine (three layers, and the game is the only truth)
+
+A **save reload inside a running game never drops the RPC socket**, so the connection
+`generation` — the key every derived view is cached by — does not change. Measured
+2026-11-21: generation stayed 1 while the fort's date moved from Y104 M2 D25 back to
+Y100 M0 D15, and `/survey` went on answering with the pre-reload world ("96 floors,
+dug 96" for a box the game reported as 96 hidden walls).
+
+```bash
+./scripts/observer-reset.sh          # server caches + MCP fiber + probe
+./scripts/observer-reset.sh status   # server, the loaded save's identity, the live probe
+./scripts/observer-reset.sh server   # GET /world-cache-reset without restarting anything
+./scripts/observer-reset.sh probe    # what the game says right now
+```
+
+| Layer | What it holds | Cleared by |
+|---|---|---|
+| Server derived views | block cache, stack memo, fort band, delta snapshot | a server restart, `GET /world-cache-reset`, **or the signature check below** |
+| DSH MCP fiber | the JSON-RPC session id | `scripts/mcp-reload.sh refresh` |
+| The observer's state | to-do ledger, watched boxes, dig baselines, alerts (`~/.dsh/storages/df_observer/`) | `/df-reset`, `df_todo({action:"reset"})`, the panel's ↺ button, **or the swap detector below** |
+
+The server now reads the game's own identity — save name, world, mode, map extent,
+in-game clock — on its read paths (TTL-cached, one probe per 3 s). An identity change
+**or a clock that runs backwards** is a save swap: every derived view is dropped, the
+event is reported once as `reloaded` in `/observe` and `/get-status`, and the log says
+`SAVE SWAP #n: … threw out every derived view`. `/survey` also stops trusting its
+memo when the block data says a tile is unexplored (the disagreement is labelled).
+
+The observer plugin watches the same signature. On a swap it runs the reset routine:
+the ledger (archived to `todos/arch-*.json` then wiped), the watched boxes, every dig
+baseline, the pile reads, facts and alerts are thrown out, the ladder re-seeds, and the
+deep read is forced — so the first reads of the new fort are **baselines**, not a
+storm of `tile_state_lost` / `dig_stalled` / `todo_reopened`. One folded
+`save_reloaded` row names what was dropped. `alert_delivery: yield-aware` (default)
+keeps those rows out of your own steering slot: see [plugin/df-observer/PLAN.md](plugin/df-observer/PLAN.md).
+
 ## Tests
 
 ```bash
 uv run --no-sync python tests/test_worldmodel.py      # 12 tests, live-game ones skip if no game
 uv run --no-sync python tests/test_reconnect.py
+uv run --no-sync python tests/test_save_swap.py             # the save-swap detector + reset
 uv run --no-sync python tests/test_game_restart.py
 uv run --no-sync python tests/test_luaops.py
 uv run --no-sync python tests/test_deployables.py

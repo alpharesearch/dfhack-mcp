@@ -1025,3 +1025,158 @@ restored mute announces itself on activation.
 Game boundary unchanged: `transport.setPause` is spied in the suite and asserted
 **zero** across mute, resume and reload. `pause_authority` (default `off`) is the
 only thing that lets the plugin touch the game, and the button never routes to it.
+
+---
+
+## 12. Save swaps, the reset routine, and the steer boundary (0.1.89–0.1.90)
+
+**Measured (2026-11-21).** The player loaded an older save of the same fort while the
+observer ran. The RPC `generation` stayed **1** (a save reload never drops the socket),
+so the plugin's `save_reloaded` alert — keyed on generation — did not fire, and the
+server kept answering from the pre-reload world. What the player saw in the briefings:
+`dug 0` on nine boxes whose baselines were `dug 96`, four `todo_reopened` rows on
+to-dos closed in a fort that no longer existed, four `dig_stalled` rows, `pile_holes:
+watched pile id 24 not found (renumbered after reload?)`, and a `ledger restored:
+25 to-dos, 2 watched boxes` line that re-imported all of it after every restart.
+
+**The rule the player set:** "when a different game is detected, even by just
+reloading a different save, we should throw everything out and refetch everything
+once again" — because **the only truth is the DF game**.
+
+**Detection, in order of trust:**
+1. the server's own signature of the loaded save (`worldSignature`: save, world, mode,
+   map extent, in-game year/tick) delivered on every `/observe` payload, plus its
+   `reloaded` event (identity change **or** a clock that runs backwards);
+2. plugin-side: the same signature compared tick to tick, and the deep status probe's
+   in-game date as the last resort (a date that goes backwards is a reload).
+Generation is *not* a signal here, and the plugin's own `tick` is not the game's.
+
+**The reset (`FortModel.resetForNewGame` + `DFObserver.observerReset`)** drops: the
+ledger (archived to `todos/arch-<stamp>-<id>.json`, then the numeric records deleted —
+an archive still readable as a to-do is the reopen storm again), watched boxes (memory
++ `boxes` table), every dig baseline (`lastBoxState`, `dugBaseline`), water/crew/report/
+crash counters, facts, piles, buildings, rungs, designations, events, active alerts, and
+`seeded`; it forces the deep read on the next cycle (`lastDeepTick = -Infinity`). Order
+matters: the reset runs **after ingest and before `evaluate`**, so the first reads of
+the new fort are baselines, not transitions — which is exactly what the
+`tile_state_lost` / `dig_stalled` / `todo_reopened` storm lacked. It announces **one**
+folded `save_reloaded` row naming what was dropped, and that row is a wake.
+
+**Durability of the identity:** every ledger write carries the `game` key of the save
+it was written for, and `todos/game.json` records the signature. At activation the
+stored signature seeds the detector, so a swap that happened *while the observer was
+down* is caught on the first poll. A ledger written before this existed has no stamp:
+the restore says so in the panel ("NO GAME STAMP … run /df-reset") instead of trusting it.
+
+**Manual knobs:** `/df-reset` (chat), `df_todo({action:"reset"})` (agent), the panel's
+**↺ reset** button (en/zh), and `scripts/observer-reset.sh` for the layers a shell can
+reach (server caches + MCP fiber; the shell prints the plugin command it cannot run).
+
+**The steer boundary (player report: "the observer plugin messes with the steer msg
+sending").** The contract is explicit — `steer` is "steering for the nearest step; an
+idle driver starts a turn; a running driver consumes it at its next step boundary",
+`followup` is "an ordinary follow-up turn … the sole ordinary message of its own
+turn", `inject` is "context for the next pre-step **without waking**". Alerts used to
+`steer` unconditionally, which meant: observer text queued **into the player's
+steering slot**, turns opened on idle drivers, and N alerts on one tick became N
+messages at one boundary. Now (`alert_delivery: yield-aware`, default):
+
+- N alerts → **one** coalesced wake (`buildCoalescedWake`), the highest-priority alert
+  leads (`WAKE_PRIORITY`), the rest ride as one line each;
+- if `agent.inbox.nextStep`/`nextTurn` holds anything that is not ours → **yield**: the
+  alert goes in as context (`inject`), counted as `suppressed.steers` and announced;
+- idle driver → `followup` (its own turn, not steering);
+- running driver, free boundary → `steer`, and a second wake **replaces** our pending
+  steer in place (`inbox.replace`) rather than stacking.
+
+The game boundary is unchanged: `pause_authority` (default `off`) is still the only way
+this plugin touches the game, and the suite asserts zero `setPause` writes.
+
+## 34. A raw string reaching `agent.inject()` corrupts the session (0.1.91)
+
+**Symptom (player report 2026-11-21):** the GUI refuses to open a play session -
+`stored session "session-e33668b6…" is corrupt: stored log is corrupt:
+SessionFormatError: agent/inbox/spliced requires message objects (raw log:
+…/session.v4.jsonl.zstd) (gateway/internal)`.
+
+**Cause.** `agent.inject/steer/followup` take a **message object**, and the inbox
+facade writes its argument into the durable log verbatim
+(`agent/inbox/spliced.inserted`). Nothing validates it on write. Two announce
+paths passed a plain string - the `/df-quiet` toggle line and the resume
+catch-up - so the log gained `inserted: ["DF-OBSERVER injections PAUSED …"]`.
+On the next open the inbox projection fold rejects the session and the whole
+history becomes unloadable. 84 stored logs in this profile carry 96 such rows,
+all from these two lines of code; 44 of them are the filter's own subagent
+sessions, which is why they vanished from the history list one by one.
+
+**Fix (0.1.91).** Every model-facing message now comes from one choke point,
+`DFObserver.observerMessage(text, form, summary)`, which builds the
+`createUserMessage` wrapper and **refuses to return a non-message payload**;
+the toggle, the catch-up, the wakes, and the filter ticks all go through
+`injectMessage`. The suite enforces the loader's contract in its mocks: every
+mock `inject/steer/followup` throws on a payload that is not a user message
+object with `content` + `id`, and one test scans `index.js` so a boundary call
+may only take a built `message`.
+
+**Salvage (not a plugin change).** The stored logs can be repaired without
+losing a single event: lift each bare string into the message shape the plugin's
+other injections produced - identical text, fresh `id`, `role: "user"`,
+`source.kind: "df-observer"`. Seqs, times and every other event stay untouched.
+`scratch/repair_observer_sessions.mjs` stages the repair, replays the real
+loader gates over it (`sessionFormatCatalog.createRestore` + `decodeRow` +
+`finish`, plus the inbox fold with its splice-range and unique-id rules), and
+only then swaps the artifacts in, keeping the originals under
+`scratch/session-repair/backup/`.
+
+## 35. The filter sessions: a fed inbox, a null turn end, and a projection that throws (0.1.92)
+
+**Symptom (player report 2026-11-21, after §34 was fixed):** the session list shows,
+under ungrouped, `Failed to load history: failed to project session
+"df-observer-filter-mwqy3jr3": Cannot read properties of null (reading 'kind')`.
+
+**What the logs say (measured, 44 filter sessions).** Each filter session's log holds
+**hundreds of `agent/inbox/spliced` rows** (378-476) with a handful of turns: the plugin
+kept injecting ticks/briefings into an inbox whose driver had stopped consuming, every
+injection being a durable event. Each of them ends with one
+`turn/end {"turn":N,"reason":null}` - the turn the disposal cut.
+
+Two harness facts turn that into a session that cannot be listed:
+
+- `dsh-agent-loop` initialises `turnEnds = null` (lib/index.js:749) and appends
+  `turn/end` with `reason: turnEnds` in the `finally` (:832). A path that exits without
+  assigning a reason writes **literal `null`**, and per-row admission accepts it;
+- `dsh-subagent`'s epoch fold switches on `end?.data.reason.kind` (lib/index.js:172) -
+  unguarded. `null.kind` throws, and `dsh-session-query` reports it as
+  `failed to project session "<id>"` (lib/index.js:426). The session is unreadable
+  from the list even though its log is intact.
+
+**Plugin fixes (0.1.92).**
+
+- `Config.pending_inject_cap` (default 8): count OUR unspent messages at the target
+  boundary before writing to it. At the cap the injection is **skipped, counted**
+  (`suppressed.pending`) **and announced in the notes** - the driver is not consuming,
+  so more context is waste, not information. `steer` keeps its replace-in-place rule.
+- The filter wake applies the same rule over both boundaries and flips
+  `filterFallback` so the rule gate is named as the answering path.
+- `agent.cancel({ kind: 'disposed' })`: `cancel` takes an `AgentCancelCause`
+  (`{kind:'user'|'parent'|'hook'|'disposed'}`); our old call passed a bare string,
+  which is not one. The cause object path writes the documented
+  `{kind:'aborted', reason:{kind:'disposed'}}`; a string cause is what left the
+  disposal turn closing with no reason at all.
+- Alert ids (§34 follow-up): the offline / online / transport alerts built bare
+  `{kind, evidence}` objects - no id, never entered `model.alerts`, so every wake
+  printed `DF-OBSERVER ALERT undefined (game_offline)` and its ack advice pointed at
+  an alert `df_alerts` had never seen. `FortModel.raise()` is now the single factory
+  (id, dedupe key, history entry, ackable), the offline/online pair clears each
+  other's key, and every printed id goes through `brief.alertLabel()` - a missing id
+  prints `A?UNLABELLED`, loud, never the word `undefined`.
+
+**Suite.** 85 checks, three of them new: the loader contract on every inbox boundary
+(§34), the alert-factory/id test, and the not-draining-inbox test (cap → skipped +
+counted + announced, drained → injects, filter pause, cause-object scan).
+
+**Salvage.** `scratch/repair_turn_end_reasons.mjs` (`--stage/--prove/--check/--install`)
+rewrites the 35 `reason: null` rows into the canonical `{kind:'aborted',
+reason:{kind:'disposed'}}` and replays the loader gates plus the subagent fold before
+swapping, originals under `scratch/turn-end-repair/backup/`. After it: **304/304
+sessions load clean, 0 rejected by the inbox fold, 0 by the turn-end fold.**

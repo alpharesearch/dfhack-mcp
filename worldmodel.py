@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from collections import Counter, defaultdict, deque
 
 # ONE ELEVATION UNIT: the number in the player's map panel.
@@ -130,6 +131,7 @@ _RULES = [
     ("ConstructedFloor",   "constructed",   "+", False, True,  "constructed floor"),
     ("FloorSmooth",        "smooth_floor",  "'", False, True,  "smoothed floor"),
     ("Floor",              "floor",         ".", False, True,  "floor"),
+    ("FurrowedSoil",       "furrowed",      "s", False, True,  "farm plot soil: a DUG floor that was furrowed"),
     ("SoilWet",            "wet_soil",      "w", False, True,  "wet soil (muddy)"),
     ("Soil",               "soil",          "s", False, True,  "soil (diggable, not minable)"),
     ("Grass",              "grass",         "g", False, True,  "grass"),
@@ -855,7 +857,7 @@ def zone_lines(levels: list[LevelModel], b: Budget) -> list[str]:
     for lv in levels:
         c = lv.census
         wall = c["wall"] + c["smooth_wall"] + c["fortification"] + c["pillar"] + c["boulder"]
-        floor = c["floor"] + c["smooth_floor"] + c["constructed"] + c["soil"] + c["grass"] + c["pebbles"] + c["track"]
+        floor = c["floor"] + c["smooth_floor"] + c["constructed"] + c["soil"] + c["grass"] + c["pebbles"] + c["track"] + c.get("furrowed", 0)
         open_ = c["open"]
         row = (f"{lv.z:4d} {lv.elev:4d} {lv.block_count:3d} | {wall:5d} {floor:5d} {open_:5d} "
                f"{c['tree_cap'] + c['tree_trunk'] + c['tree_branch']:4d} {lv.water_tiles:5d} {lv.magma_tiles:5d} "
@@ -1068,11 +1070,137 @@ class WorldModel:
         self._state: dict = {}
         self._prev: dict[int, dict] = {}
         self._band: tuple[int, int] | None = None
+        # ---- loaded-game identity (see `signature` below) ----
+        self._sig: dict | None = None
+        self._sig_at: float = 0.0
+        self._sig_prev: dict | None = None
+        self._reload: dict | None = None
+        self._sig_lock = asyncio.Lock()
+        self.reloads = 0
 
     async def _gen(self) -> int:
         from dfhack_client_python.dfhack_remote import ensure_connection, connection_state
         await ensure_connection()
+        # The save-swap detector rides the ONE path every read already takes.
+        await self.check_reload()
         return connection_state()["generation"]
+
+    # ------------------------------------------------------------------
+    # The identity of the LOADED GAME, and what invalidates on a swap.
+    #
+    # Measured 2026-11-21: the RPC connection `generation` changes when the game
+    # PROCESS restarts (the socket drops), and NEVER changes when a SAVE is
+    # reloaded inside a running game. Every derived view here is keyed by that
+    # generation - so after the player loaded an older save, /survey kept
+    # answering with the PRE-RELOAD world: a 96-tile box of dug floors read as
+    # 96 floors, and the same box read `hidden 96` in a fresh process. The player
+    # was told "the work is intact" by a cache.
+    #
+    # The only signals that cannot lie are the world's own: the save name, the
+    # map extent, and the in-game clock - time never runs backwards in a fort that
+    # kept playing. So the check is: identity changed, OR the clock regressed.
+    # ------------------------------------------------------------------
+
+    SIGNATURE_TTL_S = 3.0
+    # How long a designation-scan result stays believable (see `designations`).
+    DESIG_SCAN_TTL_S = 25.0
+
+    async def signature(self, force: bool = False) -> dict | None:
+        """Cheap identity of the loaded game: save name, world, mode, map extent,
+        in-game date. TTL-cached - the reload check rides every read path, so one
+        check must not cost one RPC per tool call."""
+        import time
+        now = time.monotonic()
+        if not force and self._sig is not None and (now - self._sig_at) < self.SIGNATURE_TTL_S:
+            return self._sig
+        from dfhack_client_python.dfhack import GetMapInfo, GetWorldMap, GetWorldInfo
+        from dfhack_client_python.py_export.BasicApi_pb2 import GetWorldInfoOut
+        try:
+            mi = await GetMapInfo()
+        except Exception:
+            return self._sig                      # keep the last known identity
+        mode = "unknown"
+        try:
+            mode = GetWorldInfoOut.Mode.Name((await GetWorldInfo()).mode)
+        except Exception:
+            pass
+        year: int | None = None
+        tick: int | None = None
+        try:
+            wm = await GetWorldMap()
+            year, tick = int(wm.cur_year), int(wm.cur_year_tick)
+        except Exception:
+            pass
+        sig = {
+            "save": mi.save_name,
+            "world": mi.world_name_english,
+            "mode": mode,
+            "tiles": f"{mi.block_size_x * 16}x{mi.block_size_y * 16}x{mi.block_size_z}",
+            "year": year,
+            "tick": tick,
+            # The identity WITHOUT the clock: the clock is checked separately, because
+            # two saves of the same fort share a name (measured: both read "start").
+            "key": f"{mi.save_name}|{mi.world_name_english}|{mode}|{mi.block_size_x * 16}"
+                   f"x{mi.block_size_y * 16}x{mi.block_size_z}",
+        }
+        self._sig, self._sig_at = sig, now
+        return sig
+
+    async def drop_all_views(self) -> str:
+        """Throw out EVERY derived view of the world. Same scope as
+        GET /world-cache-reset, in one place."""
+        self.cache.reset()
+        self.forget_band()
+        self._state.clear()
+        self._prev.clear()
+        self._desig_memo = None      # the designation scan is derived too
+        scope = "cache only"
+        try:
+            from dfhack_client_python.dfhack import ResetMapHashes
+            await ResetMapHashes()
+            scope = "cache + DFHack map hashes"
+        except Exception as e:
+            scope = f"cache only (ResetMapHashes failed: {e})"
+        return scope
+
+    async def check_reload(self, force: bool = False) -> dict | None:
+        """Detect a save swap and invalidate everything derived from the old world.
+
+        Returns the swap record (kept for one read, see `take_reload`) when the
+        loaded game changed, else None. A new game means the old world is gone:
+        there is nothing to reconcile, so ALL views are dropped, not patched.
+        """
+        async with self._sig_lock:
+            sig = await self.signature(force=force)
+            if sig is None:
+                return None
+            prev = self._sig_prev
+            self._sig_prev = sig
+            if prev is None or prev is sig:
+                return None
+            why = None
+            if prev.get("key") != sig.get("key"):
+                why = f"identity changed: {prev.get('key')} -> {sig.get('key')}"
+            elif None not in (prev.get("year"), prev.get("tick"), sig.get("year"), sig.get("tick")) \
+                    and (sig["year"], sig["tick"]) < (prev["year"], prev["tick"]):
+                why = (f"the in-game clock ran backwards: "
+                       f"Y{prev['year']} tick {prev['tick']} -> Y{sig['year']} tick {sig['tick']}")
+            if why is None:
+                return None
+            scope = await self.drop_all_views()
+            self.reloads += 1
+            record = {"why": why, "from": prev, "to": sig, "cleared": scope,
+                      "at": time.time(), "count": self.reloads}
+            self._reload = record
+            print(f"[INFO] SAVE SWAP #{self.reloads}: {why} - threw out every derived view "
+                  f"({scope}); the next read re-fetches the world")
+            return record
+
+    def take_reload(self) -> dict | None:
+        """Report the pending save swap ONCE: a reload is an event, not a state."""
+        record = self._reload
+        self._reload = None
+        return record
 
     async def _dec(self, gen: int) -> Decoders:
         return await self.dec.load(gen)
@@ -1085,15 +1213,26 @@ class WorldModel:
     AIR = (" ", "~")          # open air / liquid: nothing to dig through above
 
     async def _stack(self, e0: int, e1: int, gen: int | None = None):
-        """(x,y) -> {elev: glyph} for a band of levels, from the cached grids."""
+        """(x,y) -> {elev: glyph} for a band of levels, from the cached grids.
+
+        The memo is TIME-BOUND, not just generation-bound: a save reload is not the
+        only thing that changes the map. The miners dig, and a glyph memo keyed by
+        (e0, e1, gen) alone served the pre-dig world forever - measured 2026-11-21:
+        after the crew carved the 5x5 hub and the hall at in-game 36, /survey still
+        answered "hidden 25, dug 0" for boxes whose tiles /tile-at reported as
+        MineralFloor2/4 with hidden=false. A pre-flight read that reports fog over
+        finished floors tells an agent to designate over them (§2), so the memo
+        expires on the same trust window as the block cache.
+        """
         if gen is None:
             gen = await self._gen()
         ck = (e0, e1, gen)
         cached = getattr(self, "_stack_cache", None)
         if cached is None:
             cached = self._stack_cache = {}
-        if ck in cached:
-            return cached[ck]          # already the (band, levels) tuple
+        hit = cached.get(ck)
+        if hit is not None and time.time() - hit[2] <= CACHE_TTL_S:
+            return hit[0], hit[1]          # already the (band, levels) tuple
         levels = await self.levels(e0, e1, force=True) if False else await self.levels(e0, e1)
         band = {}
         for lv in levels:
@@ -1104,8 +1243,8 @@ class WorldModel:
                     band.setdefault((ox + x, oy + y), {})[lv.elev] = row[x]
         if len(cached) > 4:
             cached.clear()
-        cached[ck] = (band, levels)
-        return cached[ck]
+        cached[ck] = (band, levels, time.time())
+        return cached[ck][:2]
 
     async def column(self, x: int, y: int, e0: int | None = None,
                      e1: int | None = None) -> dict:
@@ -1316,15 +1455,25 @@ class WorldModel:
         map_w, map_h, _z = await self.cache.extent()  # tiles, from GetMapInfo blocks * 16
         memo = getattr(self, "_desig_memo", None)
         if memo is None or memo.get("gen") != gen:
-            memo = self._desig_memo = {"gen": gen, "cells": {}}
+            memo = self._desig_memo = {"gen": gen, "cells": {}, "at": {}}
         out = []
         for elev in range(int(e0), int(e1) + 1):
             z = elev + GAME_Z_OFFSET
             key = (z, map_w, map_h)
             pts = memo["cells"].get(key)
+            # Measured 2026-11-21: keyed by generation ONLY, this scan was a
+            # once-per-session snapshot - a fort with 4 live designations answered
+            # `designated_total 0` forever, and the observer had to label its own
+            # headline as a conflict. Designations change every time a dwarf digs,
+            # so the scan has an expiry.
+            if pts is not None and (time.monotonic() - memo["at"].get(key, 0.0)) > self.DESIG_SCAN_TTL_S:
+                pts = None
             if pts is None:
                 blocks = await self.cache.blocks(z, z + 1, gen)
-                by_xy = {(int(b.map_x), int(b.map_y)): b for b in blocks}
+                # The window is INCLUSIVE, so it also returns the level ABOVE z. Keying by
+                # (map_x, map_y) alone let that upper block overwrite the one we asked for,
+                # and the scan reported the level above's designations (measured 2026-11-21).
+                by_xy = {(int(b.map_x), int(b.map_y)): b for b in blocks if int(b.map_z) == z}
                 names = dig_names()
                 found = set()
                 for tx in range(map_w):
@@ -1341,6 +1490,7 @@ class WorldModel:
                         if dn and dn != "NO_DIG":
                             found.add((tx, ty))
                 pts = memo["cells"][key] = sorted(found)
+                memo["at"][key] = time.monotonic()
             if not pts:
                 continue
             seen = set()
@@ -1384,9 +1534,16 @@ class WorldModel:
         band, _ = await self._stack(min(elev - 6, 30), max(elev + 6, 43))
         gen = await self._gen()
         blocks = await self.cache.blocks(elev + GAME_Z_OFFSET, elev + GAME_Z_OFFSET + 1, gen)
+        dec = await self._dec(gen)
         bld: dict = {}
         items: dict = {}
         des: dict = {}
+        fog: set = set()
+        # Glyphs from THIS block read, not from the band memo: the miners finish a
+        # tile between two surveys, and a pre-flight that still calls a carved floor
+        # 'fog' tells the caller it is safe to designate over it (measured 2026-11-21:
+        # survey said 'hidden 25, dug 0' over a hub tile-at reported as MineralFloor).
+        live: dict = {}
         want_z = elev + GAME_Z_OFFSET
         for b in blocks:
             # The block window is INCLUSIVE, so it hands us the level above as well - and a
@@ -1405,14 +1562,29 @@ class WorldModel:
             for i, d in enumerate(b.tile_dig_designation):
                 if int(d):
                     des[(b.map_x + (i % 16), b.map_y + (i // 16))] = int(d)
+            # The block's OWN exploration flag, from the same payload we just read. The
+            # glyph below comes from a memo, and a memo can be from a world that no
+            # longer exists (measured 2026-11-21: after the player loaded an older save
+            # the memo said 96 dug floors, the game said 96 hidden walls). The game is
+            # the only truth: when the two disagree, this flag wins.
+            for i, hid in enumerate(b.hidden):
+                if int(hid):
+                    fog.add((b.map_x + (i % 16), b.map_y + (i // 16)))
+            for i, tid in enumerate(b.tiles):
+                live[(b.map_x + (i % 16), b.map_y + (i // 16))] = dec.tile_class(int(tid)).glyph
         cats: dict = {}
         samples: dict = {}
         des_on: dict = {}
         designated = 0
+        fog_over_glyph = 0
         for y in range(y0, y1 + 1):
             for x in range(x0, x1 + 1):
-                g = band.get((x, y), {}).get(elev)
-                if g is None or g == "?":
+                g = live.get((x, y)) or band.get((x, y), {}).get(elev)
+                if (x, y) in fog:
+                    c = "hidden"          # the block says unexplored: nothing is proven there
+                    if g is not None and g != "?":
+                        fog_over_glyph += 1
+                elif g is None or g == "?":
                     c = "hidden"          # '?' is fog - my first version let it fall to "other"
                 elif (x, y) in bld:
                     c = "building"
@@ -1455,12 +1627,24 @@ class WorldModel:
         return {"elev": elev, "ui_elev": ui_elev(elev + GAME_Z_OFFSET),
                 "box": [x0, y0, x1, y1], "counts": cats,
                 "to_dig": cats.get("rock", 0) + cats.get("hidden", 0),
-                "dug": cats.get("floor", 0) + cats.get("stairs", 0) + cats.get("ramp", 0),
+                "dug": (cats.get("floor", 0) + cats.get("stairs", 0) + cats.get("ramp", 0)
+                        + cats.get("furrowed", 0)),
                 "designated": designated, "designated_on": designated_on,
                 "undesignated_diggable": undesignated_rock,
                 "safe_to_designate": undesignated_rock, "blocked": blocked,
-                "building_tiles": len(bld), "item_tiles": len(items),
-                "samples": {k: v[:4] for k, v in samples.items()}}
+                # The block's buildings/items span the whole 16x16 block, and the box is
+                # usually smaller: counting the block made a clear site look occupied
+                # (measured 2026-11-21: a 5x3 shelf reported `building_tiles: 9` - the
+                # wagon, 11 rows north of the box - and an agent reading that will not
+                # place a stockpile there). Report the box.
+                "building_tiles": sum(1 for (xx, yy) in bld if x0 <= xx <= x1 and y0 <= yy <= y1),
+                "item_tiles": sum(1 for (xx, yy) in items if x0 <= xx <= x1 and y0 <= yy <= y1),
+                "samples": {k: v[:4] for k, v in samples.items()},
+                # A disagreement between the memo and the block IS the stale-cache
+                # signature; saying it out loud is what stops an agent trusting the memo.
+                "notes": ([f"{fog_over_glyph} tiles were hidden in the block data and "
+                           "counted as hidden, NOT as the cached glyph claimed"]
+                          if fog_over_glyph else [])}
 
 
     async def hazard_map(self, e0: int | None = None, e1: int | None = None) -> dict:
@@ -1814,8 +1998,17 @@ class WorldModel:
     # designation flag still sitting on it. Measured: the /survey RPC classifies a
     # designated floor as "already_designated", so a box with stale flags showed
     # dug 2 when 13 tiles were floor.
+    # `furrowed` is here because a farm plot is a dug floor with furrows on it. Measured
+    # 2026-11-21: placing 9 plots made the box read dug 54 -> 45, the plugin raised
+    # tile_state_lost ("floors destroyed") and the farm-room to-do reopened - nine tiles
+    # that were working farmland classified as un-dug. Destroying a floor cannot make a
+    # farm plot, so furrowed soil is positive dug state.
+    # `ramp_top` joins the set the same way `furrowed` did: a ramp top IS excavated, walkable
+    # ground (measured 2026-11-21 - the pile site gate refused a legal surface spot at
+    # x66-67 y112-113 elev38 because one of its four tiles was a ramp top and counted as 0).
     DUG_CLASSES = {"floor", "smooth_floor", "constructed", "stairs", "stairs_up",
-                   "stairs_down", "stairs_ud", "ramp", "roots_ramp", "track"}
+                   "stairs_down", "stairs_ud", "ramp", "ramp_top", "roots_ramp", "track",
+                   "furrowed"}
     TO_DIG_CLASSES = {"rock", "wall", "smooth_wall", "wood", "magma", "unused"}
 
     async def box_state(self, elev: int, x0: int, y0: int, x1: int, y1: int) -> dict:
@@ -1826,7 +2019,11 @@ class WorldModel:
         gen = await self._gen()
         dec = await self._dec(gen)
         blocks = await self.cache.blocks(z, z + 1, gen)
-        by_xy = {(int(b.map_x), int(b.map_y)): b for b in blocks}
+        # INCLUSIVE window: it hands us z AND z+1. Keep only the requested level,
+        # or every box number (to_dig/dug/pending) is measured ONE LEVEL ABOVE the
+        # elevation the caller named (measured 2026-11-21: tile-at answers matched the
+        # elev+1 grid 8/9 times, and box_state's rock counts were the floor above).
+        by_xy = {(int(b.map_x), int(b.map_y)): b for b in blocks if int(b.map_z) == z}
         to_dig = dug = pending = hidden = known = 0
         for x in range(int(x0), int(x1) + 1):
             for y in range(int(y0), int(y1) + 1):
@@ -1870,6 +2067,10 @@ class WorldModel:
         blocks = await self.cache.blocks(z, z + 1, gen, force=force)
         bx, by = x - (x % 16), y - (y % 16)
         for b in blocks:
+            # The window spans z and z+1 (inclusive max); without this guard the
+            # loop took whichever block matched x/y first - the level above.
+            if int(b.map_z) != z:
+                continue
             if b.map_x != bx or b.map_y != by:
                 continue
             i = (y % 16) * 16 + (x % 16)
@@ -2153,6 +2354,34 @@ class WorldModel:
         lv = await self.levels(e0, e1)
         facts = FortFacts(lv, await load_units(dec, gen, self._state), dec)
         await self.annotate_depth(facts)        # depth >=2 floors: the tunnel truth
+        # Zone kinds come from the game's own structures, which live in the layer ABOVE
+        # this one (luaops imports worldmodel, not the reverse), so the host injects the
+        # reader. No reader / failed read = NO DATA: the zone rungs stay open instead of
+        # asserting a meeting area nobody measured.
+        if getattr(self, "zone_provider", None) is not None:
+            try:
+                facts.zones = await self.zone_provider(dec)
+            except Exception:
+                facts.zones = []
+        # One building pool for every rung path. The band census misses buildings outside the
+        # surveyed band (measured: 9 Farm Plots at 41 read as no farm in the ladder, while
+        # /observe - which already used the map-wide pool - read `farm` satisfied). Same
+        # input, same answer, on both tools.
+        try:
+            _pool = await self.buildings_mapwide()
+            if _pool:
+                facts.buildings = _pool
+                facts.built_names = [b["name"].lower() for b in _pool]
+        except Exception as e:
+            notes.append(f"map-wide building scan unavailable: {e}; rungs read the band census only")
+        # Pile categories are only visible in the game's own structures, so the host injects
+        # that reader too. No reader / failed read = NO DATA: the pile rungs stay open rather
+        # than asserting a pile nobody measured.
+        if getattr(self, "pile_provider", None) is not None:
+            try:
+                facts.piles = await self.pile_provider(dec)
+            except Exception:
+                facts.piles = []
         b = Budget(max_tokens)
         lines = [f"progress elev {e0}-{e1}"]
         for l in progress_lines(facts):
@@ -2333,12 +2562,48 @@ class FortFacts:
         self.metal = sum(v for k, v in self.item_totals.items() if k in METAL_ITEMS)
         self.barrels = self.item_totals.get("BARREL", 0) + self.item_totals.get("BUCKET", 0)
         self.built_names = [b["name"].lower() for b in self.buildings]
+        # Zones are all named "Zone" in the building census (type 30), so kind -
+        # meeting / dump / pen - lives only in z.type, read separately.
+        self.zones: list[dict] = []
+        self.piles: list[dict] = []   # id, extent, accepts, elev - straight from the game
 
     def count_built(self, *keywords) -> int:
         return sum(1 for n in self.built_names if any(k in n for k in keywords))
 
     def built(self, *keywords) -> bool:
         return self.count_built(*keywords) > 0
+
+    def pile_accepts(self, categories, min_tiles: int = 0) -> bool:
+        """True when some stockpile accepts ALL of `categories` over `min_tiles` tiles.
+
+        Categories are read from the game's pile settings (`/stockpiles` -> accepts). A pile
+        that accepts nothing is not a pile - that is how a general pile can look built and
+        still do no hauling.
+        """
+        want = set(categories)
+        for p in getattr(self, "piles", []) or []:
+            acc = set(p.get("accepts") or [])
+            tiles = int(p.get("tiles") or 0) or (
+                (int(p.get("x1", 0)) - int(p.get("x0", 0)) + 1) *
+                (int(p.get("y1", 0)) - int(p.get("y0", 0)) + 1))
+            if want <= acc and tiles >= min_tiles:
+                return True
+        return False
+
+
+    def zone_built(self, kind: str, min_tiles: int = 1) -> bool:
+        """A zone of THIS kind, at least this big. The census cannot tell zone kinds
+        apart, so `count_built("zone")` counted a type=-1 general zone as a meeting
+        area (measured 2026-11-21: rung #5 read satisfied with no meeting area in the
+        fort). An empty zone list means the read produced nothing - NO DATA, and the
+        rung stays open rather than asserting a kind we cannot see."""
+        k = str(kind).lower()
+        # getattr, not self.zones: FortFacts is also built by stubs (tests, the observe
+        # pool path) that never touch __init__, and an absent list is the same NO DATA
+        # as an empty one - the rung stays open, it does not guess.
+        return any(k in str(z.get("type_name", "")).lower()
+                   and int(z.get("tiles", 0)) >= min_tiles
+                   and not z.get("marked_for_removal") for z in getattr(self, "zones", []))
 
 
 def fort_center(facts: FortFacts) -> tuple[int, int, int] | None:
@@ -2399,7 +2664,12 @@ _LADDER = [
     ("entrance", "Entry tunnel dug with mountain on top (>=20 floor tiles at depth >=2)",
      # floor_tiles >= 40 was satisfied by a fresh embark's 22,105 GRASS floors, so the
      # ladder cried [x] with no tunnel at all. A tunnel is defined by OVERBURDEN.
-     lambda f: getattr(f, "underground_floors", 0) >= 20, "m -> m (mine) in a cliff face, 3 wide, >=10 long, with >=2 levels of rock above every tile",
+     # Overburden alone is NOT enough either: measured 2026-11-21 on the fresh embark of
+     # this same map, 1,645 natural cavern floors at depth >=2 satisfied the rung with
+     # nothing dug. Caverns are not tunnels, and the difference a player can see is the
+     # shaft: a dug entrance is stair-connected to the surface, so the rung requires
+     # >=20 floors at depth >=2 AND at least 2 stairs. Natural caves have no stairs.
+     lambda f: getattr(f, "underground_floors", 0) >= 20 and sum(f.stairs.values()) >= 2, "m -> m (mine) in a cliff face, 3 wide, >=10 long, with >=2 levels of rock above every tile",
      "the entrance is the fort's only defended opening; a cut on the surface is not a tunnel"),
     ("stairwell", "Stairs connecting the levels",
      lambda f: sum(f.stairs.values()) >= 2, "m -> t: click the room floor, scroll one level down, click again",
@@ -2408,10 +2678,14 @@ _LADDER = [
      lambda f: f.count_built("stockpile") >= 1, "p -> draw rect -> Accept -> Custom: All, then None on Corpses/Refuse/Stone/Gems/Wood",
      "a general pile that eats stone and wood clogs every workshop"),
     ("meeting", "Meeting area inside the fort, 5x5-7x7, on the 2nd level below ground",
-     lambda f: f.count_built("zone") >= 1, "z -> Meeting Area -> draw rect filling the room -> Accept",
+     lambda f: f.zone_built("meeting", 25), "z -> Meeting Area -> draw rect filling the room -> Accept",
      "keeps idle dwarves inside; dig the room out FIRST, zones need mined space"),
     ("refuse", "Refuse pile OUTSIDE (miasma)",
-     lambda f: f.count_built("dump") >= 1, "p -> outside the entrance, at least 5x5",
+     # The wiki's rung is a refuse PILE (p -> corpses + refuse outside), not a dump zone.
+     # Demanding a 25-tile dump zone made the rung unfinishable by the method its own keys
+     # describe, while a correct outdoor pile sat measured and uncredited.
+     lambda f: f.pile_accepts(["refuse", "corpses"]),
+     "p -> outside the entrance, 5x5+, Custom -> only corpses + refuse",
      "refuse inside the fort rots and miasma kills"),
     ("farm", "Farm plot (3x3 in a 5x5 soil room), plump helmets in ALL seasons",
      lambda f: f.built("farm plot", "plot"), "b -> o -> f -> p, then click the plot and enable plump helmets in every season tab",

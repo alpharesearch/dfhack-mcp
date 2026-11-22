@@ -39,6 +39,8 @@ const baseCfg = Config.parse({
 
 const fastData = (over = {}) => ({
   schema: 'df-observer/v1', generation: 1, paused: false,
+  worldSignature: { save: 'start', world: 'The Universes of Destiny', mode: 'MODE_DWARF',
+    tiles: '192x192x191', year: 104, tick: 96910 },
   facts: { pop: 7, dwarves: 7, miners: 2, picks: 3, food: 10, drink: 0, wood: 0, stone: 5, metal: 0,
     barrels: 0, pending_dig: 96, underground_floors: 4, water_tiles: 0, magma_tiles: 0 },
   buildings: [{ name: 'Stockpile', count: 2 }],
@@ -77,13 +79,40 @@ function freshModel(cfg = baseCfg) {
   return model
 }
 
+/**
+ * The durable-log contract for inbox payloads, enforced in the mocks.
+ *
+ * `agent.inject/steer/followup` write their argument verbatim into
+ * `agent/inbox/spliced.inserted`. A raw string lands in the stored session and
+ * the loader rejects the whole file: "agent/inbox/spliced requires message
+ * objects" - the history becomes permanently unloadable (measured 2026-11-21,
+ * session-e33668b6, from two announce paths that passed a string). So every
+ * mock inbox boundary validates what it is handed, exactly as the loader does.
+ */
+function assertInboxMessage(message, boundary) {
+  if (message === null || typeof message !== 'object' || Array.isArray(message)) {
+    throw new Error(`${boundary} requires message objects (got ${typeof message}: ${JSON.stringify(message).slice(0, 60)})`)
+  }
+  if (message.role !== 'user') throw new Error(`${boundary} payload must be a user message (got role ${message.role})`)
+  if (!Array.isArray(message.content)) throw new Error(`${boundary} payload requires a content array`)
+  if (typeof message.id !== 'string' || message.id.length === 0) throw new Error(`${boundary} payload requires a message id`)
+  return message
+}
+
+/** The model-facing text of one inbox payload (validates it first). */
+function inboxText(message, boundary = 'agent/inbox/spliced') {
+  return assertInboxMessage(message, boundary).content.map((c) => c?.text ?? '').join('\n')
+}
+
 // ---------------------------------------------------------------------------
 test('config defaults and ranges', () => {
   assert.equal(baseCfg.poll_running_ms, 8000)
   assert.equal(baseCfg.poll_paused_ms, 60000)
   assert.equal(baseCfg.pause_authority, 'off')
   assert.equal(baseCfg.auto_resume, false)
-  assert.deepEqual(baseCfg.alert_wakes, ['water', 'dig_complete', 'dig_stalled', 'tile_state_lost', 'game_says', 'game_crashed', 'game_offline'])
+  // save_reloaded is a WAKE: a game swap throws the whole derived state out, and an
+  // agent that is not told will plan against a fort it is no longer looking at.
+  assert.deepEqual(baseCfg.alert_wakes, ['water', 'dig_complete', 'dig_stalled', 'tile_state_lost', 'game_says', 'game_crashed', 'game_offline', 'save_reloaded'])
   assert.equal(baseCfg.overload_todos, 20, 'a normal embark ledger is not an overload')
   assert.throws(() => Config.parse({ poll_running_ms: 16000 }))
   assert.throws(() => Config.parse({ pause_authority: 'manual_suggestion' }))
@@ -106,16 +135,19 @@ test('model seeds ladder + basics todos', () => {
   const ladder = model.todos.filter((t) => t.origin === 'ladder')
   const auto = model.todos.filter((t) => t.origin === 'auto')
   assert.ok(ladder.length >= 1)
-  assert.equal(auto.length, 8)
+  assert.equal(auto.length, 7)   // 8 -> 7: the early-game stone pile is no longer seeded
   assert.ok(model.todos.every((t) => t.accept && t.accept.kind))
   return `seeded ${ladder.length} ladder + ${auto.length} basics to-dos`
 })
 
 test('acceptance: pile_category passes with quoted evidence', () => {
   const model = freshModel()
-  const stone = model.todos.find((t) => t.origin === 'auto' && t.accept.category === 'stone')
-  assert.equal(stone.state, 'done')
-  assert.match(stone.evidence, /pile 19 .* accepts stone, 13 items/)
+  // Stone is no longer auto-seeded (early-game hauling cost), so the category machinery
+  // is proven on the task the player asks for - which is the only way a stone pile
+  // enters the ledger now.
+  const stone = model.addTodo({ title: 'stone pile on request',
+                                accept: { kind: 'pile_category', category: 'stone', min_items: 1 } })
+  assert.equal(stone.state, 'open')
   const general = model.todos.find((t) => t.origin === 'auto' && t.accept.kind === 'pile_general')
   assert.equal(general.state, 'done')
   return 'stone pile + general pile flip done citing pile reads'
@@ -779,12 +811,12 @@ test('the panel mute pauses injections only - never the game', async () => {
   const injected = []
   // liveTargets() adopts agents through their OWN Context (agent.ctx.effect), so the
   // mock agent must carry one - measured: 'Cannot read properties of undefined (reading effect)'.
-  ctx.agents = { list: () => [{ id: 'play-1', ctx: { effect: () => () => {} }, inject: (t) => injected.push(t) }], on: () => () => {} }
+  ctx.agents = { list: () => [{ id: 'play-1', ctx: { effect: () => () => {} }, inject: (m) => injected.push(assertInboxMessage(m, 'inject')) }], on: () => () => {} }
   const inst2 = new DFObserver(ctx, Config.parse({ panel_pause_button: true }))
   inst2.setQuiet(true, 'test')
   assert.equal(injected.length, 1, `the toggle announces itself once (saw ${injected.length} injected rows)`)
-  assert.match(injected[0], /injections PAUSED/, injected[0].slice(0, 120))
-  assert.match(injected[0], /"quiet":true/, 'the folded row carries the mute state')
+  assert.match(inboxText(injected[0]), /injections PAUSED/, inboxText(injected[0]).slice(0, 120))
+  assert.match(inboxText(injected[0]), /"quiet":true/, 'the folded row carries the mute state')
   const before = injected.length
   inst2.setQuiet(true, 'test')
   assert.equal(injected.length, before, 'a no-change toggle injects nothing')
@@ -797,7 +829,7 @@ test('the panel mute pauses injections only - never the game', async () => {
   await inst2.dispatchAlerts([{ id: 'A9', kind: 'damp_hot', evidence: '4 DAMP tiles', coord: 'x1-2 y3-4 elev5' }])
   const catchUpAt = injected.length
   inst2.setQuiet(false, 'test')
-  const catchUp = injected.slice(catchUpAt).join('\n@@\n')
+  const catchUp = injected.slice(catchUpAt).map((m) => inboxText(m)).join('\n@@\n')
   assert.ok(injected.length > catchUpAt, 'resuming injects the catch-up')
   assert.match(catchUp, /CATCH-UP/, catchUp.slice(0, 120))
   assert.match(catchUp, /briefings and \d+ wakes were suppressed/, 'it counts what was swallowed')
@@ -811,6 +843,81 @@ test('the panel mute pauses injections only - never the game', async () => {
   assert.match(client, /const \[mutedUI, setMutedUI\] = React\.useState\(null\)/, 'the page remembers the click locally')
   assert.match(client, /mutedUI \?\? snap\.quiet/, 'the wire overrides the local echo')
   return 'mute pauses injections, counts them, announces itself, and never writes to the game'
+})
+
+test('every inbox boundary takes a message object - a raw string corrupts the session', async () => {
+  // THE MEASURED FAILURE: two announce paths (the /df-quiet toggle line and the
+  // resume catch-up) passed a plain string to `agent.inject()`. It landed in the
+  // durable log as `agent/inbox/spliced.inserted: ["DF-OBSERVER injections PAUSED ..."]`,
+  // and the session became unloadable - "stored log is corrupt:
+  // SessionFormatError: agent/inbox/spliced requires message objects". The whole
+  // history of a play session was lost to one button click.
+  // The mocks here enforce the loader's contract, so a string cannot pass.
+  const seen = []   // {boundary, message} for EVERY payload the plugin delivered
+  const record = (boundary) => (m) => { seen.push({ boundary, message: assertInboxMessage(m, boundary) }); return m }
+  const agent = {
+    id: 'play-1', session: { header: { origin: 'chat' } }, status: 'running',
+    inbox: { nextStep: [], nextTurn: [], replace: () => false },
+    steer: record('steer'), followup: record('followup'), inject: record('inject'),
+    ctx: { effect: () => () => {} },
+  }
+  const ctx = {
+    reflect: { provide: () => {} }, isolate: {},
+    effect: (fn) => { fn(); return () => {} },
+    commands: { register: () => () => {} },
+    tools: { register: () => () => {} },
+    agents: { list: () => [agent], on: () => () => {} },
+    systemPrompt: { section: () => () => {} },
+    sessionProjections: { register: () => () => {} },
+    timers: { register: () => () => {} },
+    get: () => undefined,
+    storage: { open: async () => ({ table: () => ({ entries: () => [], put: () => {}, get: () => null }), close: () => {} }) },
+  }
+  const inst = new DFObserver(ctx, Config.parse({ wake_min_spacing_ms: 10000, inject_min_spacing_ms: 0 }))
+  inst.model.ingestFast(fastData())
+  inst.model.ingestDeep(deepData())
+  inst.model.evaluate({})
+
+  // 1. Briefings (the delta gate must fire: fresh entry, no prior injection).
+  await inst.dispatchBriefing()
+  // 2. Alert wakes (steer / followup / demoted inject - all three boundaries).
+  await inst.dispatchAlerts([{ id: 'A1', kind: 'water', evidence: 'water in the shaft', coord: 'x50,y123', suggested: 'stop' }])
+  // 3. The two paths that used to inject raw strings.
+  inst.setQuiet(true, 'command')
+  inst.setQuiet(false, 'command')
+
+  const boundaries = new Set(seen.map((s) => s.boundary))
+  assert.ok(boundaries.has('inject'), `the plugin delivered inject payloads (saw ${[...boundaries].join(', ')})`)
+  assert.ok(seen.length >= 4, `every path delivered (saw ${seen.length} payloads)`)
+  const texts = seen.map((s) => inboxText(s.message, s.boundary))
+  assert.ok(texts.some((t) => /DF-OBSERVER/.test(t)), 'briefings carry their header')
+  assert.ok(texts.some((t) => /injections PAUSED/.test(t)), 'the mute announces itself as a message object')
+  assert.ok(texts.some((t) => /CATCH-UP/.test(t)), 'the resume catch-up rides as a message object')
+  assert.ok(seen.every((s) => s.message.source?.kind === 'df-observer'), 'every payload names its producer')
+  assert.ok(seen.every((s) => typeof s.message.source?.form === 'string' && s.message.source.form.length > 0), 'every payload carries its form')
+  assert.ok(new Set(seen.map((s) => s.message.id)).size === seen.length, 'no two injections share a message id (the inbox fold rejects duplicates)')
+
+  // The filter wake path builds its own messages: same contract.
+  for (const full of [false, true]) {
+    const m = inst.filterWakeMessage({ tick: 7, gateNotes: ['to_dig +4'], payload: inst.model.payload(), full })
+    assertInboxMessage(m, 'followup')
+    assert.equal(m.source.form, 'filter-tick')
+  }
+
+  // Single choke point: index.js may call the inbox boundaries only with a
+  // message it built (injectMessage's `message`, or the filter's built wake).
+  const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  const rawCalls = index.split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /\b(agent|live)\.(inject|steer|followup)\(/.test(l) && !l.startsWith('*') && !l.startsWith('//'))
+    .map((l) => l.replace(/\s+/g, ' '))
+  const allowed = /^agent\.(inject|steer|followup)\(message\)$|^live\.followup\(this\.filterWakeMessage\(\{$/
+  const offenders = rawCalls.filter((l) => !allowed.test(l))
+  assert.equal(offenders.length, 0, `inbox boundaries take only built messages (saw: ${offenders.join(' | ')})`)
+  assert.ok(rawCalls.length >= 3, `the boundary-call scan found the calls it guards (saw ${rawCalls.length})`)
+  assert.match(index, /this\.observerMessage\(text, form\)/, 'injectMessage builds through observerMessage')
+  assert.match(index, /refusing to deliver a non-message payload/, 'the choke point refuses a non-message payload')
+  return `${seen.length} payloads, ${boundaries.size} boundaries, all message objects`
 })
 
 test('the Sidebar page body is uncapped; only the dock keeps a cap', () => {
@@ -1541,8 +1648,12 @@ test('filter: default OFF, verdict parsing, filtered briefing within cap, whitel
   assert.match(brief.text, /water entered shaft/)
   assert.match(brief.text, /\[df-observer\] \{/, 'state line still carries the foldable payload')
   const { buildFilterWake } = filterApi
-  const wake = buildFilterWake({ kind: 'water', evidence: 'water elev35:4 in x50,y123', coord: 'x50,y123', suggested: 'stop the shaft' }, model.payload(), { maxTokens: 420 })
-  assert.match(wake.text, /DF-OBSERVER ALERT \(filter, tick \d+\) water/)
+  const wake = buildFilterWake({ id: 'A42', kind: 'water', evidence: 'water elev35:4 in x50,y123', coord: 'x50,y123', suggested: 'stop the shaft' }, model.payload(), { maxTokens: 420 })
+  assert.match(wake.text, /DF-OBSERVER ALERT A42 \(filter, tick \d+\) water/, 'the filter wake carries the alert id')
+  assert.match(wake.text, /df_alerts\(\{action:"ack", id:"A42"\}/, 'and the ack advice quotes it')
+  const bare = buildFilterWake({ kind: 'water', evidence: 'x', coord: '' }, model.payload(), { maxTokens: 420 })
+  assert.match(bare.text, /A\?UNLABELLED/, 'an id-less alert is labelled, never printed as undefined')
+  assert.ok(!/\bundefined\b/.test(bare.text), 'no literal undefined in the filter wake')
   assert.ok(wake.tokens <= 420 || wake.overBudget === true,
     `wake ${wake.tokens} tokens: must fit its cap, or arrive labelled overBudget`)
   return 'verdict parse + <=260-token filtered briefing + bounded wake; whitelist enforced by the plugin (dispatchFilterWakes)'
@@ -1731,6 +1842,509 @@ test('bundle manifest and patch are coherent', () => {
 })
 
 // ---------------------------------------------------------------------------
+// THE OBSERVER RESET ROUTINE (player request 2026-11-21: a save reload must throw
+// everything out and refetch, because the only truth is the DF game).
+//
+// The measured incident: the player loaded an older save of the same fort while the
+// observer ran. `generation` stayed 1 (a save reload keeps the RPC socket), the
+// in-game date went 104-2-25 -> 100-0-15, nine boxes reported dug 0 against
+// baselines of dug 96, and the ledger reopened 20+ done to-dos in four
+// `todo_reopened` rows plus four `dig_stalled` rows - all of it bookkeeping about a
+// fort that no longer exists.
+test('reset: a server save-swap event is detected once and names the cause', () => {
+  const m = freshModel()
+  const swap = m.gameChange()
+  assert.equal(swap.swapped, false, 'no event, no swap')
+  m.ingestFast(fastData({ reloaded: { why: 'the in-game clock ran backwards: Y104 tick 1234 -> Y100 tick 15',
+    from: { save: 'start', year: 104, tick: 1234 }, to: { save: 'start', year: 100, tick: 15 },
+    cleared: 'cache + DFHack map hashes' } }))
+  const s2 = m.gameChange()
+  assert.equal(s2.swapped, true)
+  assert.equal(s2.source, 'server')
+  assert.match(s2.why, /backwards/)
+  assert.equal(m.gameChange().swapped, false, 'an event is consumed exactly once')
+  return `server event detected once (${s2.why.slice(0, 40)}...)`
+})
+
+test('reset: signature change is a swap; a clock that runs backwards is a swap', () => {
+  const W = 'The Universes of Destiny'
+  const m = freshModel()
+  m.gameChange()
+  // Same fort, later clock: NOT a swap (time moving forward is just playing).
+  m.ingestFast(fastData({ worldSignature: { save: 'start', world: W, mode: 'MODE_DWARF',
+    tiles: '192x192x191', year: 104, tick: 97999 } }))
+  assert.equal(m.gameChange().swapped, false, 'forward time is not a swap')
+  // A different save name: swap.
+  m.ingestFast(fastData({ worldSignature: { save: 'fort2', world: W, mode: 'MODE_DWARF',
+    tiles: '192x192x191', year: 104, tick: 10 } }))
+  const s = m.gameChange()
+  assert.equal(s.swapped, true, 'save identity changed')
+  assert.match(s.why, /identity changed/)
+  // The nasty case: the SAME save name, the clock behind us.
+  m.ingestFast(fastData({ worldSignature: { save: 'fort2', world: W, mode: 'MODE_DWARF',
+    tiles: '192x192x191', year: 100, tick: 15 } }))
+  const s2 = m.gameChange()
+  assert.equal(s2.swapped, true, 'an older save of the same fort')
+  assert.match(s2.why, /backwards/)
+  return 'identity + clock-regression detection, forward time silent'
+})
+
+test('reset: plugin-side fallback reads the game date (no signature in the payload)', () => {
+  const m = new FortModel(baseCfg)
+  m.ingestFast(fastData({ worldSignature: undefined }))
+  m.ingestDeep(deepData())
+  m.facts = { ...m.facts, date: { year: 104, month: 2, day: 25 } }
+  m.gameChange()
+  m.facts = { ...m.facts, date: { year: 100, month: 0, day: 15 } }
+  const s = m.gameChange()
+  assert.equal(s.swapped, true, 'Y104 -> Y100 is a swap even without a server signature')
+  assert.equal(s.source, 'plugin')
+  assert.match(s.why, /104.*100/)
+  return `date regression caught plugin-side (${s.why})`
+})
+
+test('reset: everything derived from the old game is thrown out', () => {
+  const m = freshModel()
+  m.watchBox([27, 121, 42, 126, 36])
+  m.evaluate({})
+  assert.ok(m.lastBoxState.size > 0 && m.dugBaseline.size > 0, 'baselines exist before the reset')
+  const dropped = m.resetForNewGame({ why: 'test swap', source: 'plugin' })
+  assert.equal(m.todos.length, 0, 'the previous fort plan is gone')
+  assert.equal(m.extraBoxes.length, 0, 'watched boxes are gone')
+  assert.equal(m.lastBoxState.size, 0, 'box baselines cleared')
+  assert.equal(m.dugBaseline.size, 0, 'dug baselines cleared')
+  assert.equal(m.boxes.length, 0, 'box tallies cleared')
+  assert.equal(m.facts, null, 'facts cleared: they measured a world that is gone')
+  assert.equal(m.piles.length, 0, 'pile reads cleared')
+  assert.equal(m.alerts.length, 0, 'alerts cleared')
+  assert.equal(m.seeded, false, 'ladder seeds re-run for the new fort')
+  assert.equal(m.lastDeepTick, -Infinity, 'the deep refetch is forced on the next cycle')
+  assert.equal(m.gameSwaps, 1)
+  assert.equal(dropped.todos > 0, true, 'the drop counts are reported for the announcement')
+  return `dropped ${dropped.todos} to-dos, ${dropped.boxes} boxes, ${dropped.alerts} alerts; all baselines cleared`
+})
+
+test('reset: the first reads of the new game are baselines, not a storm', () => {
+  const m = freshModel()
+  // The incident shape: a monitored box that read dug 39 now reads dug 0.
+  const swap = m.gameChange()
+  m.ingestFast(fastData({ reloaded: { why: 'identity changed: start -> start (older save)',
+    from: { save: 'start', year: 104, tick: 96910 }, to: { save: 'start', year: 100, tick: 15 } } }))
+  const s = m.gameChange()
+  assert.equal(s.swapped, true)
+  m.resetForNewGame(s)
+  // A done to-do whose test now fails must NOT fire its own reopen alert on the
+  // swap tick - the swap row says it all.
+  m.ingestDeep(deepData())
+  m.evaluate({})
+  m.addTodo({ title: 'Stone pile', accept: { kind: 'pile_category', category: 'stone', min_items: 1 } })
+  m.closeTodo(m.todos.at(-1).id, 'proved in the previous fort')
+  const doneId = m.todos.at(-1).id
+  m.ingestFast(fastData({
+    worldSignature: { save: 'start', world: 'The Universes of Destiny', mode: 'MODE_DWARF',
+      tiles: '192x192x191', year: 100, tick: 15 },
+    boxes: [
+      { elev: 36, box: [27, 121, 42, 126], to_dig: 96, dug: 0, pending: 0, water: 0, open: 0, building: 0, other: 0, total_tiles: 96 },
+      { elev: 36, box: [43, 122, 49, 124], to_dig: 21, dug: 0, pending: 0, water: 0, open: 0, building: 0, other: 0, total_tiles: 21 },
+    ],
+    piles: [{ id: 19, found: 0, accepts: 'stone' }],
+  }))
+  const s2 = m.gameChange()
+  assert.equal(s2.swapped, true, 'the clock regression is the swap')
+  m.resetForNewGame(s2)
+  // The new game's FIRST reads (the plugin forces a deep read on the next cycle).
+  m.ingestFast(fastData({
+    worldSignature: { save: 'start', world: 'The Universes of Destiny', mode: 'MODE_DWARF',
+      tiles: '192x192x191', year: 100, tick: 15 },
+    boxes: [
+      { elev: 36, box: [27, 121, 42, 126], to_dig: 96, dug: 0, pending: 0, water: 0, open: 0, building: 0, other: 0, total_tiles: 96 },
+      { elev: 36, box: [43, 122, 49, 124], to_dig: 21, dug: 0, pending: 0, water: 0, open: 0, building: 0, other: 0, total_tiles: 21 },
+    ],
+    piles: [{ id: 19, found: 0, accepts: 'stone' }],
+  }))
+  assert.equal(m.gameChange().swapped, false, 'the new identity is now the baseline: one swap, one row')
+  m.ingestDeep(deepData({ piles: [{ id: 19, found: 0, accepts: 'stone' }] }))
+  const raised = m.evaluate({})
+  assert.equal(raised.filter((a) => a.kind === 'tile_state_lost').length, 0,
+    'dug 39 -> 0 across a reset must not read as destroyed tile state')
+  assert.equal(raised.filter((a) => a.kind === 'todo_reopened').length, 0,
+    'the reset clears the ledger: no per-to-do reopen rows')
+  assert.equal(raised.filter((a) => a.kind === 'dig_stalled').length, 0,
+    'stagnation counters restart: an idle new fort is not a stalled face')
+  const swaps = raised.filter((a) => a.kind === 'save_reloaded')
+  assert.equal(swaps.length, 1, 'exactly ONE folded swap row')
+  assert.match(swaps[0].evidence, /Thrown out: \d+ to-dos/)
+  assert.equal(m.lastBoxState.get('36|27,121,42,126').dug, 0, 'the new read became the baseline')
+  void doneId
+  return `one folded swap row; 0 tile_state_lost, 0 dig_stalled, 0 todo_reopened (${swaps[0].evidence.slice(0, 60)}...)`
+})
+
+test('reset: game and gameSwaps ride the payload wire and the projection', () => {
+  assert.ok(STATE_FIELDS.includes('game') && STATE_FIELDS.includes('gameSwaps'),
+    'the shared field set carries the identity')
+  const m = freshModel()
+  const payload = m.payload()
+  assert.equal(payload.game.save, 'start')
+  assert.equal(payload.gameSwaps, 0)
+  const line = `[df-observer] ${JSON.stringify({ form: 'briefing', tick: payload.tick, data: payload })}`
+  const parsed = parsePayload([{ type: 'text', text: line }])
+  assert.ok(parsed, 'the payload row parses')
+  const view = dfObserverProjection(z).view
+  const folded = view(dfObserverProjection(z).apply(
+    dfObserverProjection(z).init(),
+    { type: 'user/message', data: { content: [{ type: 'text', text: line }] } }))
+  assert.equal(folded.game.save, 'start', 'the session fold carries which game it describes')
+  return `payload+projection carry game/gameSwaps (${payload.game.save})`
+})
+
+test('reset: /df-reset command and the df_todo reset action are wired', () => {
+  const index = execFileSync('node', ['-e',
+    `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(path.join(pluginDir, 'index.js'))},'utf8'))`]).toString()
+  assert.match(index, /name: 'df-reset'/, 'the /df-reset command is registered')
+  assert.match(index, /async observerReset\(swap\)/, 'the routine lives in one method')
+  assert.match(index, /this\.model\.gameChange\(\)/, 'the poll cycle asks the game identity every tick')
+  assert.match(index, /resetAnnounce/, 'a reset bypasses the briefing spacing gate once')
+  const tools = execFileSync('node', ['-e',
+    `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(path.join(pluginDir, 'tools.js'))},'utf8'))`]).toString()
+  assert.match(tools, /'list', 'add', 'done', 'why', 'reset'/, "df_todo's enum carries reset")
+  const client = execFileSync('node', ['-e',
+    `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(path.join(pluginDir, 'client.js'))},'utf8'))`]).toString()
+  assert.match(client, /'\/df-reset'/, 'the panel has the reset button')
+  assert.match(client, /'reset\.button': '↺ reset'/, 'en label')
+  assert.match(client, /'reset\.button': '↺ 重置'/, 'zh label')
+  return '/df-reset + df_todo reset + panel button + en/zh labels'
+})
+
+test('reset: observerReset archives the ledger and wipes the live records', async () => {
+  const rows = new Map([['19', { id: 19, title: 'Tunnel', state: 'done' }],
+    ['84', { id: 84, title: 'General pile', state: 'done' }],
+    ['quiet', { kind: 'quiet', quiet: false }]])
+  const boxRows = new Map([['box-36-27-121-42-126', [27, 121, 42, 126, 36]]])
+  const mkTable = (data) => ({
+    entries: () => [...data.entries()],
+    get: (k) => data.get(k) ?? null,
+    put: async (k, v) => { data.set(k, v) },
+    delete: async (k) => data.delete(k),
+    deleteMany: async (ks) => { for (const k of ks) data.delete(k); return ks.length },
+  })
+  const registered = []
+  const ctx = {
+    reflect: { provide: () => {} }, isolate: {},
+    effect: (fn) => { fn(); return () => {} },
+    commands: { register: (def) => { registered.push(def.name); return () => {} } },
+    tools: { register: () => () => {} },
+    agents: { list: () => [], on: () => () => {} },
+    systemPrompt: { section: () => () => {} },
+    sessionProjections: { register: () => () => {} },
+    timers: { register: () => () => {} },
+    get: () => undefined,
+    storage: { open: async () => ({ table: () => ({ entries: () => [], put: () => {}, get: () => null }), close: () => {} }) },
+  }
+  const inst = new DFObserver(ctx, Config.parse({}))
+  inst.ledger = { table: (name) => name === 'todos' ? mkTable(rows) : mkTable(boxRows), close: () => {} }
+  inst.model.ingestFast(fastData())
+  inst.model.ingestDeep(deepData())
+  inst.model.evaluate({})
+  const out = await inst.observerReset({ swapped: true, source: 'command', why: 'test reset' })
+  assert.equal(out.dropped.todos > 0, true, 'the live ledger was counted before the drop')
+  assert.equal(rows.has('19'), false, 'the live to-do record is deleted')
+  assert.equal(rows.has('84'), false, 'both live records are deleted')
+  assert.equal(rows.has('quiet'), true, 'the mute record is NOT a to-do and survives')
+  const archived = [...rows.keys()].filter((k) => k.startsWith('arch-'))
+  assert.equal(archived.length, 2, 'both dropped to-dos are archived')
+  assert.equal(rows.get(archived[0]).archivedBy, 'test reset', 'the archive names its cause')
+  assert.equal(boxRows.size, 0, 'watched boxes wiped')
+  assert.equal(inst.model.todos.length, 0, 'in-memory ledger empty')
+  assert.equal(inst.model.lastDeepTick, -Infinity, 'refetch forced')
+  assert.ok(inst.noteLines.some((n) => /observer reset/.test(n.message)), 'the reset announced itself')
+  return `ledger: ${archived.length} archived + wiped, boxes wiped, reset announced`
+})
+
+// ---------------------------------------------------------------------------
+// THE STEER BOUNDARY (player report 2026-11-21: "the observer plugin messes with
+// the steer msg sending"). The contract (dsh-agent runtime-types): `steer` is
+// "steering for the nearest step - an idle driver starts a turn; a running driver
+// consumes it at its next step boundary". An alert that always steers therefore
+// queues observer text into the player's steering slot, opens turns on idle
+// drivers, and stacks several messages at one boundary.
+test('delivery: yield-aware picks the channel per Agent inbox, never the player slot', async () => {
+  const { deliveryPlan } = await import(path.join(pluginDir, 'index.js'))
+  const eq = (got, want, name) => assert.equal(got, want, `${name}: got ${got} want ${want}`)
+  const playerMsg = { id: 'p1', source: { kind: 'user' } }
+  const running = { id: 'a', status: 'running', inbox: { nextStep: [], nextTurn: [] }, steer() {}, followup() {}, inject() {} }
+  const busyWithPlayer = { ...running, inbox: { nextStep: [playerMsg], nextTurn: [] } }
+  const idle = { ...running, status: 'idle' }
+  const ours = { ...running, inbox: { nextStep: [{ id: 'o1', source: { kind: 'df-observer' } }], nextTurn: [] } }
+  eq(deliveryPlan('briefing', running).channel, 'inject', 'briefing -> inject')
+  eq(deliveryPlan('tool', running).channel, 'inject', 'tool row -> inject')
+  eq(deliveryPlan('alert', running).channel, 'steer', 'alert to a running driver with a free boundary -> steer')
+  eq(deliveryPlan('alert', busyWithPlayer).channel, 'inject', 'alert yields when the player has steering pending')
+  assert.match(deliveryPlan('alert', busyWithPlayer).why, /player/)
+  eq(deliveryPlan('alert', idle).channel, 'followup', 'alert to an idle driver is its own turn, not steering')
+  eq(deliveryPlan('alert', ours).channel, 'steer', 'our own pending steer does not count as the player slot')
+  eq(deliveryPlan('alert', { id: 'x', followup() {}, inject() {} }).channel, 'followup', 'no steer -> followup')
+  eq(deliveryPlan('alert', busyWithPlayer, { alertDelivery: 'steer' }).channel, 'steer', 'forced channel wins')
+  return 'steer only for a running driver with a free boundary; yield to pending player input; followup when idle'
+})
+
+test('delivery: N alerts coalesce into ONE wake with the priority alert leading', () => {
+  const { buildCoalescedWake, WAKE_PRIORITY } = briefApi
+  const payload = freshModel().payload()
+  const alerts = [
+    { id: 'A1', kind: 'dig_complete', evidence: 'box dug', coord: 'x27-42', suggested: 'verify' },
+    { id: 'A2', kind: 'water', evidence: 'water in column x50,y123', coord: 'x50,y123', suggested: 'stop' },
+    { id: 'A3', kind: 'crew', evidence: 'picks 1 < miners 3', coord: '', suggested: 'recheck' },
+  ]
+  const w = buildCoalescedWake(alerts, payload, { maxTokens: 700 })
+  assert.match(w.text, /3 ALERTS in one message/, 'one message, not three')
+  assert.ok(w.text.indexOf('A2') < w.text.indexOf('A1'), 'water leads the wake')
+  assert.ok(w.text.includes('A3'), 'the rest ride as one line each')
+  assert.ok(w.text.includes('df_alerts({action:"ack"'), 'the ack advice rides once')
+  assert.ok(estimateTokens(w.text) <= 700, `within the budget (${estimateTokens(w.text)})`)
+  assert.ok(WAKE_PRIORITY.indexOf('water') < WAKE_PRIORITY.indexOf('dig_complete'), 'priority order')
+  const single = buildCoalescedWake([alerts[1]], payload, { maxTokens: 700 })
+  assert.match(single.text, /^DF-OBSERVER ALERT A2 \(water\)/, 'a lone alert keeps the old header')
+  return `3 alerts -> 1 wake (${w.tokens} tokens), water leads`
+})
+
+test('delivery: the plugin replaces its pending steer instead of stacking one', async () => {
+  const queued = []      // the agent's next-step steering slot
+  const turns = []       // followup turns
+  const injected = []    // pre-step context (the inbox splice path)
+  const agent = {
+    id: 'a1', session: { header: { origin: 'chat' } }, status: 'running',
+    inbox: {
+      nextStep: queued, nextTurn: turns,
+      replace: (id, m) => { const i = queued.findIndex((x) => x.id === id); if (i < 0) return false; queued[i] = m; return true },
+    },
+    steer: (m) => queued.push(m), followup: (m) => turns.push(m), inject: (m) => injected.push(m),
+  }
+  const registered = []
+  const ctx = {
+    reflect: { provide: () => {} }, isolate: {},
+    effect: (fn) => { fn(); return () => {} },
+    commands: { register: (def) => { registered.push(def.name); return () => {} } },
+    tools: { register: () => () => {} },
+    agents: { list: () => [agent], on: () => () => {} },
+    systemPrompt: { section: () => () => {} },
+    sessionProjections: { register: () => () => {} },
+    timers: { register: () => () => {} },
+    get: () => undefined,
+    storage: { open: async () => ({ table: () => ({ entries: () => [], put: () => {}, get: () => null }), close: () => {} }) },
+  }
+  const inst = new DFObserver(ctx, Config.parse({ wake_min_spacing_ms: 10000 }))
+  inst.model.ingestFast(fastData())
+  inst.model.ingestDeep(deepData())
+  inst.model.evaluate({})
+  inst.agents.set('a1', { lastTick: 0, lastAt: 0, lastSignal: null, lastWakeAt: 0, pendingSteerId: null })
+  await inst.dispatchAlerts([
+    { id: 'A1', kind: 'water', evidence: 'water in the shaft', coord: 'x50,y123', suggested: 'stop' },
+    { id: 'A2', kind: 'dig_complete', evidence: 'box dug', coord: 'x27-42 elev36', suggested: 'verify' },
+  ])
+  assert.equal(queued.length, 1, 'two alerts, one steering message at the boundary')
+  const firstId = queued[0].id
+  assert.match(queued[0].content[0].text, /2 ALERTS in one message/)
+  // The player steers: the next alert must NOT add to their boundary.
+  queued.push({ id: 'p1', source: { kind: 'user' }, content: [{ type: 'text', text: 'player steer' }] })
+  inst.agents.get('a1').lastWakeAt = 0
+  await inst.dispatchAlerts([{ id: 'A3', kind: 'water', evidence: 'water rising', coord: 'x50,y123', suggested: 'stop' }])
+  assert.equal(queued.length, 2, 'the player slot is untouched: no second steer appended')
+  assert.equal(injected.length, 1, 'the alert rode as pre-step context instead')
+  assert.match(inst.noteLines.map((n) => n.message).join('\n'), /wake delivered as context/, 'the demotion is announced')
+  // Player input consumed; a new alert replaces OUR pending steer rather than adding.
+  queued.splice(1, 1)
+  inst.agents.get('a1').lastWakeAt = 0
+  await inst.dispatchAlerts([{ id: 'A4', kind: 'water', evidence: 'water again', coord: 'x50,y123', suggested: 'stop' }])
+  assert.equal(queued.length, 1, 'replaced in place, not appended')
+  assert.match(queued[0].content[0].text, /water again/, 'the pending slot carries the newer state')
+  return 'coalesced wake; yields to pending player input; replaces its own pending steer'
+})
+
+test('alerts are factory-made: ids, feed entries, ackable - never "ALERT undefined"', async () => {
+  // MEASURED 2026-11-21 (player paste): every wake from the offline/online paths
+  // read "DF-OBSERVER ALERT undefined (game_offline)". Those paths built bare
+  // {kind, evidence} objects: no id, never added to model.alerts, so the header
+  // printed `undefined`, the ack advice pointed at an alert df_alerts never had,
+  // and a flooded chat had no way to silence it.
+  const model = freshModel()
+  const off = model.markOffline({ offlineMs: 122000, lastError: new Error('fetch failed') })
+  assert.equal(off.length, 1, 'the offline transition raises once')
+  assert.match(off[0].id, /^A\d+$/, `the offline alert carries an id (got ${JSON.stringify(off[0].id)})`)
+  assert.ok(model.alerts.some((a) => a.id === off[0].id), 'it lands in the alert feed df_alerts lists')
+  assert.ok(model.alertHistory.some((h) => h.id === off[0].id), 'and in the alert history')
+  assert.ok(off[0].suggested.length > 0, 'with its advice')
+
+  // A drop that never left online raises nothing (no storm while the server is down).
+  assert.deepEqual(model.markOffline({ offlineMs: 200000, lastError: new Error('fetch failed') }), [],
+    'a continuing outage stays quiet')
+
+  // Coming back: the outage alert is CLEARED (the ack contract: silence "until the
+  // condition clears"), and the return is its own alert with its own id.
+  const back = model.markOnline(180000)
+  assert.equal(back.length, 1, 'the return raises once')
+  assert.match(back[0].id, /^A\d+$/, 'the return alert has an id too')
+  assert.notEqual(back[0].id, off[0].id, 'a fresh id for the new condition')
+  assert.ok(model.alerts.find((a) => a.id === off[0].id)?.cleared, 'the outage alert is cleared')
+  // A second markOnline with the same evidence is a repeat on the same key: the
+  // same alert, counted, not announced again.
+  const repeat = model.markOnline(180000)
+  assert.deepEqual(repeat, [], 'an unchanged repeat is not re-announced')
+  assert.equal(model.alerts.find((a) => a.key === 'game-online').count, 2, 'it is counted on the active alert')
+
+  // Ack silences repeats until the condition clears.
+  const second = model.markOffline({ offlineMs: 60000, lastError: new Error('fetch failed') })
+  assert.equal(second.length, 1, 'the new outage is a new alert')
+  assert.ok(model.ackAlert(second[0].id), 'df_alerts ack finds it by the id we printed')
+  model.online = true
+  const third = model.markOffline({ offlineMs: 30000, lastError: new Error('fetch failed') })
+  assert.deepEqual(third, [], 'acked: its repeats are silenced until it clears')
+
+  // The transport-bug alert rides the same factory.
+  const bug = model.markOffline({ bug: Object.assign(new Error('400 bad'), { status: 400 }) })
+  assert.equal(bug.length, 1, 'a transport bug raises')
+  assert.match(bug[0].id, /^A\d+$/, 'with an id')
+
+  // Nothing the model prints may say "undefined" - including an alert that
+  // skipped the factory (loud label, never a silent word).
+  const payload = model.payload()
+  const foreign = { kind: 'water', evidence: 'water in the shaft x50,y123', coord: 'x50,y123' }
+  const texts = [
+    buildWake(second[0], payload, { maxTokens: 700 }).text,
+    buildWake(foreign, payload, { maxTokens: 700 }).text,
+    buildWake(foreign, payload, { maxTokens: 120 }).text,
+    briefApi.buildCoalescedWake([second[0], foreign], payload, { maxTokens: 700 }).text,
+    briefApi.buildCoalescedWake([foreign], payload, { maxTokens: 700 }).text,
+    briefApi.buildCoalescedWake([foreign], payload, { maxTokens: 140 }).text,
+    filterApi.buildFilterWake(foreign, payload, { maxTokens: 420 }).text,
+    buildBriefing(payload, { maxTokens: 700 }).text,
+  ]
+  for (const t of texts) {
+    assert.ok(!/\bundefined\b/.test(t), `no literal "undefined" in printed output: ${t.slice(0, 90)}`)
+    assert.ok(!/\[object/.test(t), `no stringified object in printed output: ${t.slice(0, 90)}`)
+  }
+  assert.match(texts[1], /A\?UNLABELLED/, 'an id-less alert is labelled loudly')
+  assert.match(texts[1], /df_alerts\(\{action:"ack", id:"A\?UNLABELLED"\}/, 'and the ack line says so, in both places')
+  assert.match(texts[6], /A\?UNLABELLED/, 'the filter wake carries an ackable id too')
+  return `ids ${[...new Set(model.alerts.map((a) => a.id))].size} active alerts, every wake ackable`
+})
+
+test('the observer stops feeding an inbox that is not draining (measured: 400 splices)', async () => {
+  // MEASURED 2026-11-21 in 44 filter sessions: briefings/ticks piled up to ~400
+  // `agent/inbox/spliced` events in a session whose driver had stopped consuming,
+  // and the last turn of each closed with `turn/end {"reason": null}` - which
+  // `dsh-subagent`'s epoch fold reads as `end?.data.reason.kind` and throws
+  // "Cannot read properties of null (reading 'kind')" -> the session appears in
+  // the list as "failed to project session".
+  const turns = []      // the filter's next-turn boundary
+  const steps = []      // its next-step boundary
+  const agent = {
+    id: 'play-1', session: { header: { origin: 'chat' } }, status: 'running',
+    inbox: { nextStep: steps, nextTurn: turns, replace: () => false },
+    steer: (m) => steps.push(assertInboxMessage(m, 'steer')),
+    followup: (m) => turns.push(assertInboxMessage(m, 'followup')),
+    inject: (m) => steps.push(assertInboxMessage(m, 'inject')),
+    ctx: { effect: () => () => {} },
+  }
+  const ctx = {
+    reflect: { provide: () => {} }, isolate: {},
+    effect: (fn) => { fn(); return () => {} },
+    commands: { register: () => () => {} },
+    tools: { register: () => () => {} },
+    agents: { list: () => [agent], get: (id) => (id === agent.id ? agent : undefined), on: () => () => {} },
+    systemPrompt: { section: () => () => {} },
+    sessionProjections: { register: () => () => {} },
+    timers: { register: () => () => {} },
+    get: () => undefined,
+    storage: { open: async () => ({ table: () => ({ entries: () => [], put: () => {}, get: () => null }), close: () => {} }) },
+  }
+  const cfg = Config.parse({ inject_min_spacing_ms: 0, wake_min_spacing_ms: 10000, pending_inject_cap: 4 })
+  const inst = new DFObserver(ctx, cfg)
+  inst.model.ingestFast(fastData())
+  inst.model.ingestDeep(deepData())
+  inst.model.evaluate({})
+
+  // Fill the boundary to the cap with our own pending messages.
+  for (let i = 0; i < 4; i++) steps.push({ id: `seed-${i}`, role: 'user', source: { kind: 'df-observer', form: 'briefing' }, content: [{ type: 'text', text: 'x' }] })
+  const before = steps.length
+  const res = inst.injectMessage(agent, { text: 'DF-OBSERVER briefing' }, 'briefing')
+  assert.equal(res.channel, 'skipped', `a boundary at the cap takes no more (saw ${res.channel})`)
+  assert.equal(steps.length, before, 'no new durable injection was written')
+  assert.equal(inst.model.suppressed.pending, 1, 'the skipped injection is counted, not hidden')
+  assert.match(inst.noteLines.map((n) => n.message).join('\n'), /observer messages already unspent/, 'and it is announced in the notes')
+  // The player's own messages at the same boundary do not count against our cap.
+  steps.push({ id: 'p1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'player' }] })
+  const ours = inst.pendingOurs(agent, 'next-step')
+  assert.equal(ours, 4, 'the cap counts OUR unspent messages only')
+  // Draining releases the cap.
+  steps.splice(0, 4)
+  const res2 = inst.injectMessage(agent, { text: 'DF-OBSERVER briefing' }, 'briefing')
+  assert.equal(res2.channel, 'inject', 'a drained boundary injects again')
+
+  // The filter wake path applies the same rule and says which path is answering.
+  inst.filterSessionId = agent.id
+  for (let i = 0; i < 6; i++) turns.push({ id: `f-${i}`, role: 'user', source: { kind: 'df-observer', form: 'filter-tick' }, content: [{ type: 'text', text: 'x' }] })
+  const t0 = turns.length
+  inst.wakeFilter(['to_dig +4'], true)
+  await new Promise((r) => setTimeout(r, 60))
+  assert.equal(turns.length, t0, 'a full filter inbox gets no more ticks')
+  assert.equal(inst.filterFallback, true, 'the rule gate is marked as the live path')
+  assert.match(inst.noteLines.map((n) => n.message).join('\n'), /filter wake paused/, 'and the pause is announced')
+
+  // Disposal must pass the documented cause OBJECT: a string cause is not an
+  // AgentCancelCause, and it is what left the filter's turn closing with no reason.
+  const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  const cancels = index.split('\n').map((l) => l.trim()).filter((l) => /\.cancel\(/.test(l) && !l.startsWith('*') && !l.startsWith('//'))
+  assert.ok(cancels.length > 0, 'the disposal cancel exists')
+  assert.ok(cancels.every((l) => /cancel\(\{ kind: '(disposed|parent|user)'/.test(l)), `cancel takes a cause object (saw: ${cancels.join(' | ')})`)
+  return `cap ${cfg.pending_inject_cap}: pile-up skipped, counted, announced; cause object on disposal`
+})
+
+test('a tiles_progress test built from `box` runs its survey check (measured: xundefined)', () => {
+  // MEASURED 2026-11-21: `df_todo add` with accept {kind:"tiles_progress"} + box
+  // [x0,y0,x1,y1,elev] stored the rectangle in todo.box only, while the acceptance
+  // test reads accept.x0..accept.elev -> the first check answered
+  // "no survey read for box xundefined-undefined yundefined-undefined elevundefined",
+  // i.e. a test that can never pass, and a to-do whose evidence is a lie about coords.
+  const model = freshModel()
+  const t = model.addTodo({ title: 'stair box', accept: { kind: 'tiles_progress', min_dug: 2 }, box: [27, 121, 42, 126, 36] })
+  assert.deepEqual([t.accept.x0, t.accept.y0, t.accept.x1, t.accept.y1, t.accept.elev], [27, 121, 42, 126, 36],
+    'the box lands in the test the runner reads')
+  model.watchBox([27, 121, 42, 126, 36])
+  const r = runAcceptance(t, model.snapshot())
+  assert.ok(!/undefined/.test(r.evidence), `the evidence never prints undefined: ${r.evidence}`)
+  assert.match(r.evidence, /x27-42 y121-126 elev36/, 'it names the real rectangle')
+  // A test with no coordinates at all is labelled incomplete, not silently unpassable.
+  const bare = model.addTodo({ title: 'no coords', accept: { kind: 'tiles_progress', min_dug: 1 } })
+  const rb = runAcceptance(bare, model.snapshot())
+  assert.ok(!/undefined/.test(rb.evidence), `bare test evidence stays clean: ${rb.evidence}`)
+  assert.match(bare.incomplete ?? '', /box \[x0,y0,x1,y1,elev\]/, 'and it says what it is missing')
+  return 'box -> accept coordinates filled; evidence names the real box; gaps labelled'
+})
+
+// ---------------------------------------------------------------------------
+// Pile ids move with every save: an empty config must ask the game (the server resolves
+// "auto" through its own stockpile scan). A typed list from a previous fort reads
+// "pile id N not found" forever and no pile acceptance test can ever run.
+test('pile ids are discovered from the game when the config names none', () => {
+  const src = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  const line = src.split('\n').find((l) => l.includes('request.pile_ids'))
+  assert(line && line.includes('cfg.pile_ids.length') && line.includes("'auto'"),
+         'empty pile_ids must request "auto" from the server')
+  assert(Config.parse({}).pile_ids.length === 0, 'the shipped default is the empty list')
+})
+// The player's rule, 2026-11-21: no stone pile in early game - it buys hauling labor for
+// nothing on a 7-dwarf embark. The ledger must not nag for it on every fresh fort.
+test('the auto-seeded basics do not push an early-game stone pile', () => {
+  const src = fs.readFileSync(path.join(pluginDir, 'model.js'), 'utf8')
+  const i = src.indexOf('export const BASIC_TODOS')
+  const list = src.slice(i, src.indexOf('];', i))
+  assert(!/key: 'stone-pile'/.test(list), 'BASIC_TODOS must not seed a stone pile task')
+  assert(!/category: 'stone'/.test(list), 'no stone category acceptance in the basics')
+  assert(/key: 'wood-pile'/.test(list) && /key: 'refuse-pile'/.test(list),
+         'the pile basics that DO pay off are still seeded')
+  assert(/deliberately NO stone pile/i.test(src.slice(0, i)),
+         'and the reason is written where the next reader looks')
+})
 for (const [name, fn] of queue) {
   try {
     const out = await fn()
@@ -1739,6 +2353,7 @@ for (const [name, fn] of queue) {
     results.push([name, 'FAIL', error?.message ?? String(error)])
   }
 }
+
 let failed = 0
 for (const [name, status, detail] of results) {
   console.log(`${status === 'ok' ? 'PASS' : 'FAIL'}  ${name}${detail ? `  -  ${detail}` : ''}`)

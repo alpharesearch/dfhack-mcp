@@ -17,6 +17,10 @@
 #  game_dir                          game directory for the crash-log watch
 #                                    (names/sizes only; contents out of scope)
 #  briefing_max_tokens               hard cap on one injected briefing
+#  pending_inject_cap                how many observer messages may sit unspent at
+#                                    ONE inbox boundary before we stop feeding it
+#                                    (0 = unlimited; a boundary that is not draining
+#                                    is a boundary that is not consuming)
 #  alert_wakes                       the ONLY kinds that wake the agent
 #  pause_authority                   off | events (default off: the game
 #                                    self-pauses; the plugin attributes pauses)
@@ -34,7 +38,12 @@
         monitored_boxes:
           - [27, 121, 42, 126, 36]
           - [43, 122, 49, 124, 36]
-        pile_ids: [15, 17, 18, 19, 20, 24]
+        # Pile ids are DISCOVERED FROM THE GAME (the plugin sends pile_ids:"auto" when this
+        # list is empty and the server resolves it through its own stockpile scan). Typed ids
+        # are per-save: [15,17,18,19,20,24] came from forts that no longer exist, so every
+        # pile alert read "pile id N not found" and no pile acceptance test could ever flip
+        # - through four save swaps in one session. Fill this in only to pin specific ids.
+        pile_ids: []
         shafts:
           - [50, 123]
           - [43, 121]
@@ -52,6 +61,7 @@
         briefing_mode: on
         inject_min_spacing_ms: 30000
         inject_max_spacing_ms: 600000
+        pending_inject_cap: 8
         min_to_dig_delta: 3
         alert_wakes: [water, dig_complete, dig_stalled, tile_state_lost, game_says, game_crashed, game_offline]
         wake_min_spacing_ms: 60000

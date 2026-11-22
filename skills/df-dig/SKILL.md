@@ -25,6 +25,15 @@ kind of elevation number; if you see "elev" in this repo it means the panel numb
 | **Damp** | `hazards` | no aquifer or standing water in the column **at/above** the dig level. Aquifers flood the works; this world's band is in-game 32-34 |
 | **Hot** | `hazards` + `magma-depth` | magma below. Worldgen first: `getGlobalInitFeature` volcano flags (this map: none). Tile scans see **explored tiles only** - "no magma found" in fog proves nothing, so `magma-depth` reports `scanned_to` |
 
+**Soil is a layer of its own, and it is thin.** Farm plots need a **soil floor**, and the
+soil band sits under the surface - so a room dug **one level under the surface floor** lands
+on soil, and two levels down you are *sometimes* still in it. The player's own words:
+"sometimes soil is available, but that is more luck". Never plan a farm from the elevation
+alone: read the tile class where the floor will be (`tile-at` -> `class`, or `survey`'s
+`soil`/`floor` counts) and pick the columns where the dig leaves soil underfoot. Measured
+2026-11-21 on this fort: at in-game 40 the walls are `SoilWall` (soil floors when dug) along
+x44-x51 and `StoneWall` at x52 - one column of difference is a farmable room vs a stone one,
+and cover at 40 is depth 2 under the 42 plateau, so the room is legal for both reasons.
 Roof rule: **fog above is normal** inside a mountain (the player's own room has fog over it).
 Refuse only an **explored void directly above** - that is breaching a cavern/pool.
 
@@ -54,7 +63,10 @@ Related: count plans **in rooms, not tiles**, and subtract the existing dug foot
 
 `m`-menu semantics (`send_dig_command`): `DEFAULT_DIG`, `UP_DOWN_STAIR_DIG`, `DOWN_STAIR_DIG`,
 `UP_STAIR_DIG`, `RAMP_DIG`, `CHANNEL_DIG`, `NO_DIG` to clear. Locations are `[x, y, z]` with
-`z = elev + 128`, and land **as given** on this build.
+`z = elev + 129` — the SAME unit as §0, one number, one source — and land **as given** on this build.
+(An earlier revision of this line said `+ 128`; the server's own tool docstring repeated it, so an agent following
+§2 designated one level UNDER what it aimed at, and nothing downstream could catch it. Measured
+2026-11-21: a stair sent at z166 reads as Elevation 37, at z167 as Elevation 38.)
 
 ## 3. Labour before time (no dig-now, no blueprints for play)
 `set_unit_labors` with **`MINE`** (not `MINING`; the enum has `MINE`, `CUTWOOD`,
@@ -73,6 +85,18 @@ ladder rung is literally *"Stairs connecting the levels"*. So:
   and you have dug a cliff - nothing walks down into the shaft.
   stairs, bottom = up-stairs. A gap in the middle is not a shaft, it is two shafts that
   reach nothing. Order per level as the dig advances (measured caveat in references).
+- **Do not pre-mine the way for a stairwell: designate the stairs into fog.** Measured
+  2026-11-21 on this fort, the player's shaft at x39,y127: `UP_DOWN_STAIR_DIG` was ordered at
+  in-game 38, 39, 40 - all fog at the time - and every one of them is dug: 36,37,38,39,40 read
+  `MineralStairUD`/`SoilStairUD` and 41 is `SoilStairD`. The game queues stair designations and
+  carves them as the tunnel advances underneath. An earlier note in this file claimed up-down
+  stairs "need a walkable tile above AND below" so a shaft from below "can never start": that is
+  **false for designated wall mining** (it is the rule for *constructed* stair items), and
+  believing it costs a round of pointless "fixes" to a shaft that was already working.
+  Design the whole shaft in fog in one pass - `DOWN_STAIR` at the top floor, `UP_DOWN_STAIR`
+  through every level it crosses, `UP_STAIR` at the bottom - and let §2 (designate in fog,
+  the game answers with time) do the ordering.
+  alternate; they are never the same tile.
 - **A main staircase is 2x2 (or 3x3), never 1-wide.** A dwarf hauling a barrel, a log or a
   stone block is slow and blocks the stair, and every trip in the fort crosses the stair -
   on a 1-wide one the whole fort queues behind him. Order the stair as a **footprint on every

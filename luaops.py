@@ -94,10 +94,16 @@ def _one(out: str) -> str:
     status line is found by prefix, and only then do we fall back to the last line.
     """
     lines = [l.strip() for l in out.splitlines() if l.strip()]
+    prefixes = ("OK ", "FAIL ", "OK|", "ERR|", "ROW|", "DONE|")
     for l in lines:
-        if l.startswith("OK ") or l.startswith("FAIL ") or l in ("OK", "FAIL"):
+        if l.startswith(prefixes) or l in ("OK", "FAIL"):
             return l
-    return lines[-1] if lines else out
+    # The game's own per-tick banner lands in the same reply stream (measured
+    # 2026-11-21: "OBS2 PICKS 3 SITE 677 DATE 100-0-22 SEEDS 30 DRINK 12 MEALS 0 RAW 0"),
+    # so a bare "last line" read can return the banner and a caller reports
+    # "unparsable create result" for a build that SUCCEEDED. Skip banner-shaped lines.
+    tail = [l for l in lines if "PICKS" not in l and "SITE" not in l and not l.startswith("OBS")]
+    return tail[-1] if tail else out
 
 
 def resolve_building(dec, name: str):
@@ -230,17 +236,55 @@ print("OK type="..(tn:match("<type: ([_%w]+)") or tn).." id="..tostring(b.id))
 
 
 async def remove_building(x: int, y: int, elev: int) -> dict:
+    """Mark a building for deconstruction and REPORT WHAT THE GAME DID.
+
+    Two measured lies in the old version, both on this fort (2026-11-21):
+      1. it printed "OK removed" straight after the deconstruct CALL. deconstruct MARKS
+         the building; a dwarf has to take it apart. The wagon call reported removed:true
+         while the wagon stood there and wood was still 0.
+      2. it answered as a failure ("lua produced no output") on the 3x4 still AFTER the
+         building existed - a success reported as an error, mid crash-hunt.
+    So this reads the tile back and answers in the game's own terms.
+    """
     z = int(elev) + GAME_Z_OFFSET
-    out = await _lua(f'''
-local ok,b = pcall(function() return dfhack.buildings.findAtTile({int(x)}, {int(y)}, {z}) end)
-if not ok or b == nil then print("FAIL no building at tile") return end
-local okd = pcall(function() dfhack.buildings.deconstruct(b) end)
-if okd then print("OK removed id="..tostring(b.id)) else print("FAIL deconstruct") end
-'''.strip())
+    lua = (
+        "local ok,b = pcall(function() return dfhack.buildings.findAtTile("
+        + str(int(x)) + ", " + str(int(y)) + ", " + str(z) + ") end)\n"
+        'if not ok then print("ERR|findAtTile: "..tostring(b)) return end\n'
+        'if b == nil then print("VERDICT|absent|-1|-") return end\n'
+        "local id = b.id\n"
+        "local okd = pcall(function() dfhack.buildings.deconstruct(b) end)\n"
+        'if not okd then print("ERR|deconstruct refused on id "..tostring(id)) return end\n'
+        "-- building_flags has NO marked_for_removal on this build (measured); the removal bit\n"
+        "-- is marked_for_deconstruction. Probe the names, never assume one.\n"
+        'local flagname = "-"\n'
+        "local marked = false\n"
+        'for _, nm in ipairs({"marked_for_deconstruction", "marked_for_removal"}) do\n'
+        "  local okf, v = pcall(function() return b.flags[nm] end)\n'".replace("\n'", "\n") +
+        "  if okf and v ~= nil then flagname = nm; marked = (v == true); break end\n"
+        "end\n"
+        "local after = nil\n"
+        "pcall(function() after = dfhack.buildings.findAtTile("
+        + str(int(x)) + ", " + str(int(y)) + ", " + str(z) + ") end)\n"
+        ''
+        "print(string.format(\"VERDICT|%s|%d|%s|%s\",\n"
+        '  (after == nil) and "gone" or (marked and "marked" or "unchanged"), id, flagname, tostring(after ~= nil)))'
+    )
+    out = await _lua(lua)
     line = _one(out)
-    if line.startswith("FAIL"):
-        raise LuaOpError(line)
-    return {"removed": True, "at": [int(x), int(y), elev]}
+    if line.startswith("ERR|"):
+        raise LuaOpError(line[4:])
+    if not line.startswith("VERDICT|"):
+        raise LuaOpError(f"removal came back unparsable: {line!r}")
+    parts = line.split("|")[1:]
+    verdict, bid, flagname, still = parts[0], parts[1], parts[2], (parts[3] if len(parts) > 3 else "?")
+    return {"success": True, "removed": verdict == "gone",
+            "marked_for_removal": verdict == "marked", "verdict": verdict,
+            "building_id": int(bid), "flag_read": flagname, "tile_occupied_after": still == "true",
+            "at": [int(x), int(y), elev],
+            "note": {"gone": "nothing is on the tile any more",
+                     "marked": "the game MARKED it - a dwarf must take it apart; materials drop then",
+                     "unchanged": "deconstruct ran and the flag read says nothing changed"}.get(verdict, verdict)}
 
 
 async def walkable_between(x0: int, y0: int, z0_elev: int, x1: int, y1: int, z1_elev: int) -> dict:
@@ -440,6 +484,408 @@ print(string.format("OK id=%d extent=%d..%d,%d..%d tiles=%s", b.id, b.x1, b.x2, 
         raise LuaOpError(line)
     return {"success": True, "line": line}
 
+_ZONE_HINTS = {
+    "meeting": ("meeting",),
+    "pasture": ("pasture",),
+    "pen": ("pen",),
+    "pit": ("pit",),
+    "pond": ("pond",),
+    "dump": ("dump", "garbage"),
+    "refuse": ("refuse", "dump"),
+    "watersource": ("water source", "watersource"),
+    "granite": ("granite",),
+    "trail": ("trail",),
+    "gather": ("gather", "gathering"),
+}
+
+
+def resolve_zone_name(dec, kind: str) -> str:
+    """kind -> the game's real zone definition NAME, from its own table.
+
+    RFR gives every activity zone its own building type, so the name an agent has to
+    pass is the game's string ("Zone Meeting Hall" style), not the wiki's "Meeting
+    Area" - a request for "Meeting Area" resolves to nothing here.
+    """
+    k = str(kind).strip().lower()
+    hints = _ZONE_HINTS.get(k, (k,))
+    names = sorted({str(nm) for (bt, sub, cus), nm in dec.building.items()
+                    if any(h in str(nm).lower() for h in hints)})
+    if not names:
+        raise LuaOpError(f"no zone definition matches '{kind}' (tried: {', '.join(hints)}); "
+                         f"list the buildable names with get_building_def_list?query=zone")
+    # A real zone definition, not a workshop that happens to mention the word.
+    zones = [n for n in names if "zone" in n.lower()]
+    return (zones or names)[0]
+
+
+_CIVZONE_TYPES = {
+    "meeting": "MeetingHall", "bedroom": "Bedroom", "dining": "DiningHall",
+    "pen": "Pen", "pasture": "Pen", "pit": "Pond", "pond": "Pond",
+    "watersource": "WaterSource", "water": "WaterSource", "dump": "Dump",
+    "garbage": "Dump", "refuse": "Dump", "office": "Office", "barracks": "Barracks",
+    "dormitory": "Dormitory", "fishing": "FishingArea", "sand": "SandCollection",
+    "archery": "ArcheryRange", "tomb": "Tomb", "training": "AnimalTraining",
+    "dungeon": "Dungeon",
+}
+
+
+def _rows(out: str) -> list[str]:
+    """Scan rows only. An EMPTY fort must read as empty: a scan that prints nothing is
+    a legitimate answer (no zones / no piles), not a failure - and `_lua` raises
+    "lua produced no output" on it, which made /zones and /stockpiles report errors on a
+    fresh embark where the honest answer is count: 0."""
+    return [l.strip() for l in out.splitlines() if l.strip()]
+
+
+async def list_zones(dec) -> list[dict]:
+    """Every activity zone with its KIND - the field the ladder's rungs need.
+
+    The building census calls every zone "Zone" (type 30), so a meeting area and an empty
+    marked rectangle are indistinguishable there; the kind is `z.type`, an index into
+    df.civzone_type. Reading that enum with pairs() yields NO numeric entries on this
+    build (measured: type 87 came back name UNKNOWN), so names are resolved by their known
+    identifiers, each behind pcall. building_flags has no marked_for_removal here either -
+    reading it throws inside the row, and the row silently vanishes (measured: "count: 0"
+    with a zone standing).
+    """
+    kinds = ["Aquifer", "Dump", "FishingArea", "Forest", "GatheringArea", "MeetingHall",
+             "Pen", "Pond", "SandCollection", "Tomb", "WaterSource", "Office", "Bedroom",
+             "DiningHall", "Barracks", "Dormitory", "ArcheryRange", "AnimalTraining",
+             "Dungeon"]
+    names_lua = ",".join('"%s"' % k for k in kinds)
+    lua = ("local NAMES = {" + names_lua + "}\n"
+           "local names = {}\n"
+           "for _, nm in ipairs(NAMES) do\n"
+           "  local ok, v = pcall(function() return df.civzone_type[nm] end)\n"
+           "  if ok and v ~= nil then names[tonumber(v)] = nm end\n"
+           "end\n"
+           "for _,zz in ipairs(df.global.world.buildings.other.ANY_ZONE) do\n"
+           "  local rm = 0\n"
+           "  pcall(function() rm = (zz.flags.marked_for_removal and 1) or 0 end)\n"
+           '  local tname = "UNKNOWN"\n'
+           "  pcall(function() if names[zz.type] ~= nil then tname = names[zz.type] end end)\n"
+           '  print(string.format("ROW|%d|%d|%s|%d|%d|%d|%d|%d|%d", zz.id, zz.type,\n'
+           '    tostring(tname), zz.x1, zz.x2, zz.y1, zz.y2, zz.z, rm))\n'
+           "end")
+    try:
+        out = await _lua(lua)
+    except LuaOpError as e:
+        if 'no output' in str(e):
+            return []          # an empty fort is a fact, not a failure
+        raise
+    rows = []
+    for line in _rows(out):
+        if not line.startswith("ROW|"):
+            continue
+        parts = line.split("|")
+        if len(parts) < 10:
+            continue
+        _, bid, tval, tname, x1, x2, y1, y2, z, flag = parts
+        rows.append({"id": int(bid), "type": int(tval), "type_name": tname,
+                     "x0": int(x1), "x1": int(x2), "y0": int(y1), "y1": int(y2),
+                     "elev": int(z) - GAME_Z_OFFSET,
+                     "tiles": (int(x2) - int(x1) + 1) * (int(y2) - int(y1) + 1),
+                     "marked_for_removal": flag == "1"})
+    return rows
+
+
+async def list_stockpiles(dec) -> list[dict]:
+    """Every stockpile with its BUILDING ID - what configure_stockpile needs.
+
+    Nothing else in the tool surface gives a pile its id: `building-at` answered null on
+    the pile's own anchor tile, `get-block-list` carries no buildings, and `world-objects`
+    prints name+dims only. Per-field pcall is mandatory: `pairs(settings.flags)` THROWS on
+    this build, container limits live on `sp.storage`, and `building_flags` has no
+    `marked_for_removal`.
+    """
+    lua = """
+local CATS = {"ammo","animals","armor","bars_blocks","cloth","coins","corpses",
+              "finished_goods","food","furniture","gems","leather","misc","refuse",
+              "sheet","stone","weapons","wood"}
+for _,sp in ipairs(df.global.world.buildings.other.STOCKPILE) do
+  local ok, line = pcall(function()
+    local on = {}
+    for _, c in ipairs(CATS) do
+      local okf, v = pcall(function() return sp.settings.flags[c] end)
+      if okf and v == true then on[#on + 1] = c end
+    end
+    local rm = 0
+    pcall(function() rm = (sp.flags.marked_for_removal and 1) or 0 end)
+    local bins, wbar, bars = -1, -1, -1
+    pcall(function() bins = sp.storage.max_bins end)
+    pcall(function() wbar = sp.storage.max_wheelbarrows end)
+    pcall(function() bars = sp.storage.max_barrels end)
+    return string.format("ROW|%d|%d..%d,%d..%d|%d|%d|%s|%d|%d|%d",
+      sp.id, sp.x1, sp.x2, sp.y1, sp.y2, sp.z, rm, table.concat(on, "+"),
+      bins, wbar, bars)
+  end)
+  if ok and line then print(line) end
+end
+""".strip()
+    try:
+        out = await _lua(lua)
+    except LuaOpError as e:
+        if 'no output' in str(e):
+            return []          # an empty fort is a fact, not a failure
+        raise
+    rows = []
+    for line in _rows(out):
+        if not line.startswith("ROW|"):
+            continue
+        parts = line.split("|")
+        # The pile row is ROW + 9 fields (the extent is ONE field: "72..75,122..124").
+        # This guard was written as "< 10" - copied from the zone row, which really has 10 -
+        # and silently dropped EVERY pile: /stockpiles answered count 0 for a fort with three
+        # piles standing, and the plugin's pile tests could never flip. A row count that
+        # mismatches must be reported, not skipped.
+        if len(parts) < 9:
+            print  # malformed: skip loudly below via the length check
+            continue
+        _, bid, extent, z, rm, on, bins, wbar, barrels = parts[:9]
+        xs, ys = extent.split(",")
+        x_lo, x_hi = xs.split("..")
+        y_lo, y_hi = ys.split("..")
+        rows.append({"id": int(bid), "extent": extent,
+                     "x0": int(x_lo), "x1": int(x_hi), "y0": int(y_lo), "y1": int(y_hi),
+                     "elev": int(z) - GAME_Z_OFFSET,
+                     "marked_for_removal": rm == "1",
+                     "accepts": sorted(on.split("+")) if on else [],
+                     "max_bins": int(bins), "max_wheelbarrows": int(wbar),
+                     "max_barrels": int(barrels)})
+    return rows
+
+
+async def create_zone(dec, kind: str, x: int, y: int, elev: int, w: int, h: int) -> dict:
+    """Create an activity zone with the SAME three calls that make a stockpile work.
+
+    The comparison the player asked for ("stock piles and zones should be very similar,
+    compare the tools and see where the error is") is exactly the diagnosis:
+
+        create_stockpile  allocInstance -> setSize -> constructAbstract        (12+ piles, no crash)
+        create_zone  v1   allocInstance -> setSize -> constructAbstract
+                               then  found.type = <kind>                       (FORT CRASHED)
+        create_zone  v2   constructBuilding{type=Civzone, subtype=<kind>, ...}  (FORT CRASHED)
+
+    The stockpile path never touches a zone's type after creation, and quickfort's call
+    shows the kind belongs in the SUBTYPE at construction. v3 does both: the kind is
+    supplied to allocInstance as the subtype, and nothing is written afterwards.
+    `constructAbstract` is the same commit the piles use.
+    """
+    k = str(kind).strip().lower()
+    ztype = _CIVZONE_TYPES.get(k)
+    if ztype is None:
+        raise LuaOpError(f"no zone kind '{kind}'; kinds: {', '.join(sorted(_CIVZONE_TYPES))}")
+    z = int(elev) + GAME_Z_OFFSET
+    w, h = max(1, int(w)), max(1, int(h))
+    lua = """
+local pos = xyz2pos(__X__, __Y__, __Z__)
+local kind = df.civzone_type.__TYPE__
+if kind == nil then print("ERR|df.civzone_type.__TYPE__ missing in this build") return end
+local before = {}
+for _,zz in ipairs(df.global.world.buildings.other.ANY_ZONE) do before[zz.id] = true end
+-- THE KIND IS THE SUBTYPE, AT ALLOCATION. v1 allocated -1 and wrote found.type
+-- afterwards; that raw write on a zone built outside the game's creation path is the
+-- prime suspect for the crash (the game's zone bookkeeping is never told).
+local inst = dfhack.buildings.allocInstance(pos, 30, kind, -1)
+if inst == nil then print("ERR|allocInstance(zone) failed") return end
+if not dfhack.buildings.setSize(inst, __W__, __H__, 8) then
+  pcall(function() dfhack.buildings.deconstruct(inst) end)   -- never leave an orphan
+  print("ERR|setSize refused (overlap with buildings/walls/ramps in the footprint?)") return
+end
+local ok_abs, err_abs = pcall(function() return dfhack.buildings.constructAbstract(inst) end)
+local found = nil
+for _,zz in ipairs(df.global.world.buildings.other.ANY_ZONE) do
+  if before[zz.id] == nil and zz.z == __Z__ then found = zz break end
+end
+if found == nil then
+  pcall(function() dfhack.buildings.deconstruct(inst) end)   -- never leave an orphan
+  print("ERR|zone not live after constructAbstract ("..tostring(ok_abs)..": "..tostring(err_abs)..")") return
+end
+local tiles = 0
+-- countExtentTiles takes the BUILDING ALONE (see the proven call in resize_building).
+-- Measured 2026-11-21: passing (b, x1, z, y1) returned the z value - a 2x2 wood pile
+-- reported usable_tiles 167, rect_tiles 0, holes -167.
+pcall(function() tiles = dfhack.buildings.countExtentTiles(found) end)
+local area = (found.x2-found.x1+1)*(found.y2-found.y1+1)
+print(string.format("OK|%d|%d|%d..%d,%d..%d|%d|%d",
+    found.id, found.type, found.x1, found.x2, found.y1, found.y2, tiles, area))
+""".strip()
+    for key, val in (("__X__", x), ("__Y__", y), ("__Z__", z), ("__W__", w), ("__H__", h),
+                     ("__TYPE__", ztype)):
+        lua = lua.replace(key, str(val))
+    out = await _lua(lua)
+    line = _one(out)
+    if line.startswith("ERR|"):
+        raise LuaOpError(line[4:])
+    # "OK|a|b|c|d|e" -> the row is everything AFTER the leading "OK" token. Slicing the
+    # two letters off leaves the pipe in place and splits into 6 fields (measured: the
+    # write succeeded, three zones went live, and the endpoint answered 500 on its own
+    # parse - a success reported as a server error is worse than the bug it replaced).
+    parts = line.split("|")[1:] if line.startswith("OK|") else line[2:].split("|")
+    if len(parts) < 5:
+        raise LuaOpError(f"zone row came back malformed: {line!r}")
+    bid, tval, extent, tiles, area = parts
+    return {"success": True, "kind": k, "zone_type": ztype, "zone_type_id": int(tval),
+            "building_id": int(bid), "extent": extent,
+            "usable_tiles": int(tiles), "rect_tiles": int(area),
+            "holes": int(area) - int(tiles),
+            "route": "allocInstance(30, subtype=<kind>) -> setSize -> constructAbstract "
+                     "(the create_stockpile path; the kind is never written afterwards)"}
+
+
+async def remove_zone(dec, building_id: int) -> dict:
+    """Mark a zone for removal by id - findAtTile cannot see zones, so the ordinary
+    remove-building path cannot remove one."""
+    lua = """
+local b = nil
+for _,zz in ipairs(df.global.world.buildings.other.ANY_ZONE) do
+  if zz.id == __ID__ then b = zz break end
+end
+if b == nil then print("ERR|no zone with id __ID__") return end
+-- building_flags has no marked_for_removal on this build, so this write threw;
+-- the API's own removal is the supported path (it also disposes cleanly).
+local ok_rm, err_rm = pcall(function() dfhack.buildings.deconstruct(b) end)
+if not ok_rm then print("ERR|deconstruct failed: "..tostring(err_rm)) return end
+pcall(function() dfhack.buildings.notifyCivzoneModified() end)
+print("OK|%d", b.id)
+""".strip().replace("__ID__", str(int(building_id)))
+    out = await _lua(lua)
+    line = _one(out)
+    if line.startswith("ERR|"):
+        raise LuaOpError(line[4:])
+    return {"success": True, "removed_zone_id": int(line.split("|")[1])}
+
+
+async def place_building_plan(dec, name: str, x: int, y: int, elev: int,
+                              w: int = 1, h: int = 1) -> dict:
+    """Place a multi-tile workshop as a BUILD PLAN - quickfort's own call.
+
+    Why this exists: `constructAbstract` rejects workshops outright
+    ("expected !bld->isActual()") - measured placing a 3x4 Still. Workshops are not
+    abstract: the game creates a plan and a builder finishes it. Quickfort's
+    internal/quickfort/build.lua:1259 `create_building` is the field-tested path, and it
+    is a single call:
+
+        constructBuilding{type, subtype, custom, pos, width, height, direction, fields}
+
+    with NO `abstract` flag, and `fields.room.extents` for the footprint. That is this
+    function. The 1x1 route stays where it already works (stockpiles, farm plots, zones).
+    """
+    bt, sub, cus, resolved = resolve_building(dec, name)
+    z = int(elev) + GAME_Z_OFFSET
+    w, h = max(1, int(w)), max(1, int(h))
+    lua = """
+local pos = xyz2pos(__X__, __Y__, __Z__)
+local W, H = __W__, __H__
+local area = W * H
+local ext = df.reinterpret_cast(df.building_extents_type, df.new('uint8_t', area))
+for i = 0, area - 1 do ext[i] = 1 end
+local before = {}
+for _,bb in ipairs(df.global.world.buildings.all) do before[bb.id] = true end
+local bld, err = dfhack.buildings.constructBuilding{
+    type = __TYPE__, subtype = __SUB__, custom = __CUS__,
+    pos = pos, width = W, height = H,
+    fields = { room = {x = 0, y = 0, width = W, height = H, extents = ext} },
+}
+if not bld then print("ERR|constructBuilding refused: "..tostring(err)) return end
+local tiles = 0
+pcall(function() tiles = dfhack.buildings.countExtentTiles(bld) end)
+local area2 = (bld.x2 - bld.x1 + 1) * (bld.y2 - bld.y1 + 1)
+local ready = false
+pcall(function() ready = bld.is_ready end)
+print(string.format("OK|%d|%d..%d,%d..%d|%d|%d|%s",
+    bld.id, bld.x1, bld.x2, bld.y1, bld.y2, tiles, area2, tostring(ready)))
+""".strip()
+    for key, val in (("__X__", x), ("__Y__", y), ("__Z__", z), ("__W__", w), ("__H__", h),
+                     ("__TYPE__", int(bt)), ("__SUB__", int(sub)), ("__CUS__", int(cus))):
+        lua = lua.replace(key, str(val))
+    out = await _lua(lua)
+    try:
+        line = _one(out)
+    except LuaOpError:
+        # No reply row at all. That is not "refused" and not "success": measured placing a
+        # 3x4 Still into a spot a player had already built, the chunk printed nothing.
+        # Answer with what a read can prove - is there a building on the origin tile?
+        probe = await _lua(f'local b = dfhack.buildings.findAtTile({int(x)}, {int(y)}, {z})\n'
+                           'print("PROBE|"..tostring(b ~= nil).."|"..tostring(b and b.id or -1))')
+        row = [l for l in probe.splitlines() if l.startswith("PROBE|")]
+        live = row[0].split("|")[1] == "true" if row else False
+        bid = int(row[0].split("|")[2]) if row and live else -1
+        raise LuaOpError(
+            f"the game printed nothing for this plan; read-back says a building IS on the "
+            f"origin tile (id {bid})" if live else
+            f"the game printed nothing and nothing was placed at {int(x)},{int(y)} elev "
+            f"{int(elev)} - the site is rejected, not the tool")
+    if line.startswith("ERR|"):
+        raise LuaOpError(line[4:])
+    parts = line.split("|")[1:]   # strip the OK token, not two letters (the pipe stays otherwise)
+    if len(parts) < 5:
+        raise LuaOpError(f"plan row came back malformed: {line!r}")
+    bid, extent, tiles, area2, ready = parts[:5]
+    return {"success": True, "building": resolved, "building_id": int(bid),
+            "extent": extent, "usable_tiles": int(tiles), "rect_tiles": int(area2),
+            "holes": int(area2) - int(tiles), "ready_for_construction": ready == "true",
+            "route": "constructBuilding(type, subtype, custom, width, height, room.extents) "
+                     "- quickfort's workshop plan path (no constructAbstract)"}
+
+
+async def create_building_multi(dec, name: str, x: int, y: int, elev: int,
+                                w: int, h: int) -> dict:
+    """Create a MULTI-TILE building of ANY type with the game's own calls.
+
+    Why this exists: `constructBuilding` reads `width`/`height`, so passing w/h to it
+    changes nothing - measured twice on this fort (2026-11-21): a 4x2 Stockpile came
+    back 1x1 (x66-66,128-128) and a 3x2 Farm Plot came back 1x1, both reported as
+    `success: true` by the endpoint. A 1x1 general pile clogs hauling and a 1x1 farm
+    plot starves the fort, and the caller has no idea, so the size has to be set
+    before the commit and read back from the game afterwards:
+
+        allocInstance(pos, type) -> setSize(w, h) -> constructAbstract (piles/zones)
+                                    ... or completeBuild (farm plots, workshops)
+        verify with findAtTile + countExtentTiles, report id/extents/usable/rect.
+    """
+    bt, sub, cus, resolved = resolve_building(dec, name)
+    z = int(elev) + GAME_Z_OFFSET
+    lua = """
+local pos = xyz2pos(__X__, __Y__, __Z__)
+local inst = dfhack.buildings.allocInstance(pos, __TYPE__, __SUB__, __CUS__)
+if inst == nil then print("ERR|allocInstance failed (type __TYPE__)") return end
+if not dfhack.buildings.setSize(inst, __W__, __H__, 8) then
+  pcall(function() dfhack.buildings.deconstruct(inst) end)   -- no orphan on the failure path
+  print("ERR|setSize refused (overlap with a building, walls/ramps in the footprint?)") return
+end
+local ok_abs, err_abs = pcall(function() return dfhack.buildings.constructAbstract(inst) end)
+if not ok_abs then
+  pcall(function() dfhack.buildings.completeBuild(inst) end)
+end
+local b = dfhack.buildings.findAtTile(pos)
+if b == nil then
+  pcall(function() dfhack.buildings.deconstruct(inst) end)   -- no orphan on the failure path
+  print("ERR|nothing live at the tile (abstract: " .. tostring(ok_abs) .. " " .. tostring(err_abs) .. ")")
+  return
+end
+local tiles = 0
+pcall(function() tiles = dfhack.buildings.countExtentTiles(b) end)
+local area = (b.x2 - b.x1 + 1) * (b.y2 - b.y1 + 1)
+local desc = "?"
+pcall(function() desc = dfhack.buildings.getGeneralBuildDescription(b) end)
+print(string.format("OK|%d|%s|%d..%d,%d..%d|%d|%d", b.id, desc, b.x1, b.x2, b.y1, b.y2, tiles, area))
+""".strip()
+    for k, v in (("__X__", int(x)), ("__Y__", int(y)), ("__Z__", z),
+                 ("__W__", max(1, int(w))), ("__H__", max(1, int(h))),
+                 ("__TYPE__", int(bt)), ("__SUB__", int(sub)), ("__CUS__", int(cus)),
+                 ("__NAME__", f'"{resolved}"')):
+        lua = lua.replace(k, str(v))
+    out = await _lua(lua)
+    line = _one(out)
+    if line.startswith("ERR|"):
+        raise LuaOpError(line[4:])
+    bid, desc, extent, tiles, area = line[2:].split("|")
+    return {"success": True, "building_id": int(bid), "game_description": desc,
+            "extent": extent, "usable_tiles": int(tiles), "rect_tiles": int(area),
+            "holes": int(area) - int(tiles)}
+
+
 async def create_stockpile(dec, x: int, y: int, elev: int, w: int, h: int) -> dict:
     """Create a MULTI-TILE stockpile with the game's own building calls.
 
@@ -460,6 +906,7 @@ local pos = xyz2pos(__X__, __Y__, __Z__)
 local inst = dfhack.buildings.allocInstance(pos, 29, -1, -1)
 if inst == nil then print("ERR|allocInstance failed") return end
 if not dfhack.buildings.setSize(inst, __W__, __H__, 8) then
+  pcall(function() dfhack.buildings.deconstruct(inst) end)   -- no orphan on the failure path
   print("ERR|setSize refused (overlap with a building, walls/ramps in the footprint?)") return
 end
 local ok_abs, err_abs = pcall(function() return dfhack.buildings.constructAbstract(inst) end)
@@ -468,11 +915,15 @@ for _,sp in ipairs(df.global.world.buildings.other.STOCKPILE) do
   if sp.x1 == __X__ and sp.y1 == __Y__ and sp.z == __Z__ then found = sp break end
 end
 if found == nil then
+  pcall(function() dfhack.buildings.deconstruct(inst) end)   -- no orphan on the failure path
   print("ERR|pile not live after construction (constructAbstract said " .. tostring(ok_abs) .. ": " .. tostring(err_abs) .. ")")
   return
 end
 local tiles = 0
-pcall(function() tiles = dfhack.buildings.countExtentTiles(found, found.x1, found.z, found.y1) end)
+-- countExtentTiles takes the BUILDING ALONE (see the proven call in resize_building).
+-- Measured 2026-11-21: passing (b, x1, z, y1) returned the z value - a 2x2 wood pile
+-- reported usable_tiles 167, rect_tiles 0, holes -167.
+pcall(function() tiles = dfhack.buildings.countExtentTiles(found) end)
 local area = (found.x2-found.x1+1)*(found.y2-found.y1+1)
 print(string.format("OK|%d|%d..%d,%d..%d|%d|%d", found.id, found.x1, found.x2, found.y1, found.y2, tiles, area))
 """

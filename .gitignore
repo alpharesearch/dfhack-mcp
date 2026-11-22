@@ -224,3 +224,6 @@ vendor/**/*.egg-info/
 
 # dev-only dependency links inside the authored plugin workspace
 plugin/**/node_modules/
+
+# throwaway session experiments (session-log repair probes etc.)
+scratch/

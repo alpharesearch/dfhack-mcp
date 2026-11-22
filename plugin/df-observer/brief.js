@@ -130,7 +130,7 @@ function alertLines(payload, max = 8, evidenceMax = 170) {
   const lines = [`ALERTS: ${alerts.length} active`]
   for (const alert of alerts.slice(0, max)) {
     const coord = alert.coord ? ` [${alert.coord}]` : ''
-    lines.push(`  !${alert.id} ${alert.kind}${coord} (x${alert.count}): ${truncate(alert.evidence, evidenceMax)}`)
+    lines.push(`  !${alertLabel(alert)} ${alert.kind}${coord} (x${alert.count}): ${truncate(alert.evidence, evidenceMax)}`)
     if (alert.suggested) lines.push(`     -> ${truncate(alert.suggested, 130)}`)
   }
   return lines
@@ -221,7 +221,7 @@ function leanTodos(todos, limit = 30, evidence = 0, titleRows = TITLE_ROWS) {
 
 const shrinkCompactTodo = (t) => ({ id: t.id, state: t.state, title: String(t.title ?? '').slice(0, 90),
   accept: t.accept, evidence: String(t.evidence ?? '').slice(0, 110) })
-const shrinkCompactAlert = (a) => ({ id: a.id, kind: a.kind, coord: a.coord, count: a.count,
+const shrinkCompactAlert = (a) => ({ id: alertLabel(a), kind: a.kind, coord: a.coord, count: a.count,
   acked: !!a.acked, evidence: String(a.evidence ?? '').slice(0, 110) })
 
 /** The payload shrink ladder: decoration first, detail last. Level 0 is complete. */
@@ -264,7 +264,7 @@ const SHRINK_LEVELS = [
     todos: leanTodos(p.todos, 24, 60),
     // level 7 keeps evidence and titles for the OPEN rows only (measured: titles on all
     // 30 rows cost ~200 tokens and busted the 300-token test budget)
-    alerts: (p.alerts ?? []).slice(0, 8).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked, coord: a.coord })),
+    alerts: (p.alerts ?? []).slice(0, 8).map((a) => ({ id: alertLabel(a), kind: a.kind, acked: !!a.acked, coord: a.coord })),
     digEvents: (p.digEvents ?? []).slice(0, 6) }),
   (p) => ({ tick: p.tick, online: p.online, paused: p.paused, poll: p.poll,
     generation: p.generation ?? null, pauseSource: p.pauseSource ?? null,
@@ -279,7 +279,7 @@ const SHRINK_LEVELS = [
     todos: leanTodos(p.todos, 30, 0, TITLE_ROWS),
     // coord stays: it is the shortest part of an alert that still tells a reader
     // WHERE, and the panel renders a row from it when evidence is trimmed away.
-    alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: a.id, kind: a.kind, acked: !!a.acked, coord: a.coord })) }),
+    alerts: (p.alerts ?? []).slice(0, 4).map((a) => ({ id: alertLabel(a), kind: a.kind, acked: !!a.acked, coord: a.coord })) }),
 ]
 
 export const SHRINK_MAX = SHRINK_LEVELS.length - 1
@@ -453,13 +453,27 @@ function boxLines(payload) {
 }
 
 /** The wake message for `agent.followup()` - an alert, not a status dump. */
+/**
+ * An alert must arrive with its id (model.js `raise`). The header and the ack
+ * line both quote it, so a missing id printed as the literal word
+ * "undefined" in every wake from the paths that skipped the factory
+ * (measured 2026-11-21: `DF-OBSERVER ALERT undefined (game_offline)`). Label it
+ * loudly instead of inventing a number - an id the feed cannot ack is a fact
+ * about the plugin, not a fact about the fort.
+ */
+export function alertLabel(alert) {
+  const id = alert?.id
+  return (typeof id === 'string' && id.length > 0) ? id : 'A?UNLABELLED'
+}
+
 export function buildWake(alert, payload, { maxTokens }) {
-  const header = `DF-OBSERVER ALERT ${alert.id} (${alert.kind})${alert.coord ? ` at ${alert.coord}` : ''}:`
+  const id = alertLabel(alert)
+  const header = `DF-OBSERVER ALERT ${id} (${alert?.kind ?? 'alert'})${alert?.coord ? ` at ${alert.coord}` : ''}:`
   const lines = [
     header,
-    alert.evidence,
-    alert.suggested ? `-> ${alert.suggested}` : '',
-    `Full state: df_status({scope:"summary"}). To silence repeats: df_alerts({action:"ack", id:"${alert.id}"}).`,
+    alert?.evidence,
+    alert?.suggested ? `-> ${alert.suggested}` : '',
+    `Full state: df_status({scope:"summary"}). To silence repeats: df_alerts({action:"ack", id:"${id}"}).`,
   ].filter(Boolean)
   const text = lines.join('\n')
   for (let level = 0; level <= SHRINK_MAX; level += 1) {
@@ -471,7 +485,7 @@ export function buildWake(alert, payload, { maxTokens }) {
     if (level === SHRINK_MAX) {
       const minimal = { form: 'alert', tick: payload.tick,
         data: { tick: payload.tick, online: payload.online, paused: payload.paused,
-          alerts: [{ id: alert.id, kind: alert.kind, coord: alert.coord, evidence: String(alert.evidence).slice(0, 120), acked: false }],
+          alerts: [{ id, kind: alert.kind, coord: alert.coord, evidence: String(alert.evidence).slice(0, 120), acked: false }],
           todos: (payload.todos ?? []).slice(0, 6).map((t) => ({ id: t.id, state: t.state })) } }
       // The ack line is the actionable sentence in a wake, so the tight-budget
       // fallback keeps it (measured: slicing to lines[0..1] dropped it, and a wake
@@ -481,6 +495,67 @@ export function buildWake(alert, payload, { maxTokens }) {
     }
   }
   return { text, tokens: estimateTokens(text) }
+}
+
+/** Wake priority: what deserves to be the lead line of a coalesced wake. */
+export const WAKE_PRIORITY = ['water', 'tile_state_lost', 'game_crashed', 'game_offline',
+  'save_reloaded', 'damp_hot', 'dig_stalled', 'crew', 'pile_holes', 'pile_full',
+  'pile_none_accepting', 'unwatched_designations', 'dig_complete', 'game_says', 'overload',
+  'todo_reopened', 'transport']
+
+export function sortWakeAlerts(alerts) {
+  const rank = (a) => {
+    const i = WAKE_PRIORITY.indexOf(a?.kind)
+    return i === -1 ? WAKE_PRIORITY.length : i
+  }
+  return [...(alerts ?? [])].sort((a, b) => rank(a) - rank(b) || String(a?.id).localeCompare(String(b?.id)))
+}
+
+/**
+ * ONE wake for several alerts (the steer-slot rule): N alerts must not become N
+ * steering messages at the player's next step boundary. The highest-priority alert
+ * speaks in full, the rest are one line each, and the ack advice plus the state
+ * payload ride once.
+ */
+export function buildCoalescedWake(alerts, payload, { maxTokens }) {
+  const list = sortWakeAlerts((alerts ?? []).filter(Boolean))
+  if (!list.length) return { text: '', tokens: 0, alerts: 0 }
+  const [first, ...rest] = list
+  const firstId = alertLabel(first)
+  const lines = [
+    list.length === 1
+      ? `DF-OBSERVER ALERT ${firstId} (${first.kind})${first.coord ? ` at ${first.coord}` : ''}:`
+      : `DF-OBSERVER ${list.length} ALERTS in one message (tick ${payload.tick}) - lead: ${firstId} (${first.kind})${first.coord ? ` at ${first.coord}` : ''}:`,
+    first.evidence,
+    first.suggested ? `-> ${first.suggested}` : '',
+    ...rest.map((a) => `also: ${alertLabel(a)} ${a.kind}${a.coord ? ` [${a.coord}]` : ''}: ${String(a.evidence).slice(0, 110)}`),
+    // The ack line must name the alert it silences: a generic `id:"<id>"` was a
+    // sentence the model could not act on (measured in the live wake
+    // `DF-OBSERVER ALERT A1 (game_offline)` - the advice carried the placeholder).
+    `Full state: df_status({scope:"summary"}). To silence repeats: df_alerts({action:"ack", id:"${firstId}"})${rest.length ? ` (also ${rest.map((a) => alertLabel(a)).join(', ')})` : ''}.`,
+  ].filter(Boolean)
+  const text = lines.join('\n')
+  for (let level = 0; level <= SHRINK_MAX; level += 1) {
+    const data = shrinkPayloadLevel(payload, level)
+    const stateLine = `${PAYLOAD_PREFIX}${JSON.stringify({ form: 'alert', tick: payload.tick, data })}`
+    const out = `${text}\n${stateLine}`
+    if (estimateTokens(out) <= maxTokens) return { text: out, tokens: estimateTokens(out), alerts: list.length }
+    if (level === SHRINK_MAX) {
+      const minimal = {
+        form: 'alert', tick: payload.tick,
+        data: {
+          tick: payload.tick, online: payload.online, paused: payload.paused,
+          alerts: list.slice(0, 6).map((a) => ({ id: alertLabel(a), kind: a.kind, coord: a.coord,
+            evidence: String(a.evidence).slice(0, 120), acked: false })),
+          todos: (payload.todos ?? []).slice(0, 6).map((t) => ({ id: t.id, state: t.state })),
+        },
+      }
+      const out2 = `${[lines[0], lines[1], lines[lines.length - 1]].filter(Boolean).join('\n')}\n${PAYLOAD_PREFIX}${JSON.stringify(minimal)}`
+      return { text: out2, tokens: estimateTokens(out2), alerts: list.length,
+        overBudget: estimateTokens(out2) > maxTokens }
+    }
+  }
+  return { text, tokens: estimateTokens(text), alerts: list.length }
 }
 
 /** Standing reading rules for `ctx.systemPrompt.section()`. */

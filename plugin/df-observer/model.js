@@ -34,7 +34,7 @@ export const STATE_FIELDS = [
   'generation', 'poll', 'pauseAuthority', 'filter', 'dockMaxHeight', 'quiet', 'suppressed',
   'facts', 'buildings', 'boxes', 'shafts', 'piles', 'warnings', 'rungs', 'next', 'designations',
   'reports', 'crashlog', 'notes', 'alerts', 'alertHistory', 'todos', 'digEvents', 'pauseEvents',
-  'overload', 'briefings',
+  'overload', 'briefings', 'game', 'gameSwaps',
 ]
 
 /** If any monitored column inside this box has the aquifer at/below the face's
@@ -131,13 +131,19 @@ function boxDeltas(aStr, bStr) {
 // The basics the plan says the plugin must auto-create from ladder gaps
 // (PLAN.md §9.3). Each carries the acceptance test the plugin itself runs
 // against the MCP reads; the label names it as auto-created.
+//
+// There is deliberately NO stone pile in this list. The player's rule, 2026-11-21:
+// "I would not even build a stone pile in early game - this will just cause lots of
+// hauling labor." A stone pile with wheelbarrows is a mid-game win once a dig face
+// produces stone faster than the general pile can absorb it; on a 7-dwarf embark it
+// just adds a hauling destination for zero gain, so it is not something the observer
+// should nag a player to build. Build one on request, and only then take the
+// pile_category/stone test (df-stockpile §4).
 // ---------------------------------------------------------------------------
 
 export const BASIC_TODOS = [
   { key: 'general-pile', title: 'General pile near the wagon, excluding stone/wood/corpses/refuse/gems',
     accept: { kind: 'pile_general' }, cite: 'df-stockpile §1' },
-  { key: 'stone-pile', title: 'Stone pile for the dig face (accepts stone, wheelbarrows on)',
-    accept: { kind: 'pile_category', category: 'stone', min_items: 1 }, cite: 'df-stockpile §1,§4' },
   { key: 'wood-pile', title: 'Wood pile near the entrance/road (accepts wood only, no bins/barrels)',
     accept: { kind: 'pile_category', category: 'wood', min_items: 1 }, cite: 'df-stockpile §1' },
   { key: 'refuse-pile', title: 'Refuse/corpse pile OUTDOORS (corpses+refuse, no containers)',
@@ -298,7 +304,7 @@ export const SUGGESTIONS = {
   crew: 'crew/pick/food limit: re-check labours and the pick supply before ordering more digging (df-dig §9)',
   game_offline: 'the game (:5000) is closed; the observer keeps tolerating it - verify the fort after relaunch (df-dig §7)',
   game_crashed: 'a NEW crash log appeared (name/size only): relaunch, then re-survey the fort and re-issue lost designations as to-dos',
-  save_reloaded: 'generation changed (save reload): list what survived via the box dig events before extending the plan',
+  save_reloaded: 'a different game is loaded: the observer threw its derived state out and re-read the fort - survey the boxes and piles again before extending the plan; the previous fort\'s ledger was archived, not deleted',
   todo_reopened: 'a done to-do failed its acceptance test again: reopen with the quoted evidence',
   overload: 'alert/todo backlog past thresholds: work the queue in order, one item at a time',
   transport: 'the observer hit a 4xx from the MCP server = OUR bug: report it, do not retry blindly',
@@ -371,6 +377,16 @@ export class FortModel {
     /** Boxes the user registered via to-dos; they join every survey request. */
     this.extraBoxes = []
     this.designations = null
+    /** Identity of the LOADED SAVE, as the game reports it (worldmodel.signature). */
+    this.game = null
+    /** The identity the previous check compared against - the swap detector's memory. */
+    this.lastGame = null
+    /** Save swaps this observer has witnessed (and thrown its state out for). */
+    this.gameSwaps = 0
+    /** Pending swap event, consumed by `gameChange()` once. */
+    this.reloadEvent = null
+    /** The in-game date the swap detector last saw (the plugin-side fallback). */
+    this.lastDate = null
     /** Plugin-side diagnostics (transport, ledger, filter) merged into payloads. */
     this.notesSource = null
     this.pluginNotes = () => (this.notesSource ? this.notesSource() : [])
@@ -414,6 +430,12 @@ export class FortModel {
       if (this.generation !== null && this.generation !== data.generation) changed.push('generation')
       this.generation = data.generation
     }
+    // The loaded save's identity, straight from the game. A save reload does NOT
+    // change the RPC generation (measured: gen stayed 1 while the date moved from
+    // Y104-2-25 back to Y100-0-15), so this - not `generation` - is what proves
+    // the fort being measured is a different fort.
+    if (data.worldSignature) this.game = data.worldSignature
+    if (data.reloaded) this.reloadEvent = data.reloaded
     if (data.facts) {
       // The status-bar fields come from the deep probe; a fast tick replaces
       // `facts` with the server's own object, so re-attach what we probed.
@@ -485,28 +507,194 @@ export class FortModel {
     }
   }
 
+  /**
+   * Did the LOADED GAME change? The game is the only truth, and the game says so
+   * through its own identity: the save name, the world, the mode, the map extent
+   * and the in-game clock. `generation` cannot answer this - it is the RPC
+   * connection's counter, and loading a save inside a running game never drops
+   * that socket (measured 2026-11-21: generation stayed 1 while the fort's date
+   * moved from Y104 M2 D25 back to Y100 M0 D15, and the whole dig ledger of the
+   * previous fort was being measured against a fort that had none of it).
+   *
+   * Consumes the pending server event and the previous identity: a swap is an
+   * event, and it must be answered exactly once.
+   */
+  gameChange() {
+    const serverEvent = this.reloadEvent
+    this.reloadEvent = null
+    const now = this.game ?? null
+    const prev = this.lastGame
+    this.lastGame = now
+    if (serverEvent) {
+      return {
+        swapped: true, source: 'server',
+        why: String(serverEvent.why ?? 'the loaded game changed'),
+        from: serverEvent.from ?? prev ?? null, to: serverEvent.to ?? now ?? null,
+        cleared: serverEvent.cleared ?? null,
+      }
+    }
+    if (prev && now) {
+      const keyOf = (g) => [g.save, g.world, g.mode, g.tiles].join('|')
+      if (keyOf(prev) !== keyOf(now)) {
+        return { swapped: true, source: 'plugin', why: `save identity changed: ${keyOf(prev)} -> ${keyOf(now)}`, from: prev, to: now }
+      }
+      const clock = (g) => [Number(g.year ?? -1), Number(g.tick ?? -1)]
+      const [py, pt] = clock(prev)
+      const [ny, nt] = clock(now)
+      if (py >= 0 && ny >= 0 && pt >= 0 && nt >= 0 && (ny < py || (ny === py && nt < pt))) {
+        return {
+          swapped: true, source: 'plugin',
+          why: `the in-game clock ran backwards: Y${py} tick ${pt} -> Y${ny} tick ${nt}`,
+          from: prev, to: now,
+        }
+      }
+    }
+    // Plugin-side fallback for a server that reports no signature: the deep
+    // status probe's date is the game's own, and it never runs backwards either.
+    const date = this.facts?.date ?? null
+    const lastDate = this.lastDate
+    if (date) this.lastDate = date
+    if (date && lastDate && date !== lastDate) {
+      const rank = (d) => [Number(d.year ?? -1), Number(d.month ?? -1), Number(d.day ?? -1)]
+      const [ly, lm, ld] = rank(lastDate)
+      const [y, m, d] = rank(date)
+      if (y < ly || (y === ly && m < lm) || (y === ly && m === lm && d < ld)) {
+        return { swapped: true, source: 'plugin', why: `the in-game date ran backwards: Y${ly}-M${lm}-D${ld} -> Y${y}-M${m}-D${d}`, from: lastDate, to: date }
+      }
+    }
+    return { swapped: false }
+  }
+
+  /**
+   * THE RESET ROUTINE. A different game is loaded, so everything derived from
+   * the old one is thrown out - baselines, tallies, events, alerts, the ledger,
+   * the watched boxes, the facts - and the next read re-fetches the world.
+   *
+   * Not a reconcile: there is nothing to reconcile a fort's dig progress with
+   * after a save swap. Keeping the old baselines is exactly what produced the
+   * bogus `tile_state_lost`/`dig_stalled`/`todo_reopened` storm on 2026-11-21.
+   * Returns what was dropped so the announcement can name it.
+   */
+  resetForNewGame({ why = 'the loaded game changed', from = null, to = null, source = 'server' } = {}) {
+    const dropped = {
+      todos: this.todos.length, boxes: this.extraBoxes.length, piles: this.piles.length,
+      alerts: this.alerts.filter((a) => !a.cleared).length,
+    }
+    // The ledger: the previous fort's plan is not this fort's plan.
+    this.todos = []
+    this.nextTodoId = 1
+    this.seeded = false
+    // Watched boxes (registered by to-dos) belong to the plan that was dropped.
+    this.extraBoxes = []
+    // Every baseline the dig rules compare against - the whole point of the reset.
+    this.lastBoxState.clear()
+    this.dugBaseline.clear()
+    this.lastWaterTiles = undefined
+    this.lastWaterGrowth = undefined
+    this.lastDwarves = 0
+    this.lastDwarvesTick = null
+    this.dwarvesKnown = false
+    this.popKnown = false
+    this.reportSeen = new Set()
+    this.crashSeen.clear()
+    this.lastGeneration = undefined
+    // Everything measured from the old world.
+    this.facts = null
+    this.statusFacts = {}
+    this.buildings = []
+    this.boxes = []
+    this.shafts = []
+    this.piles = []
+    this.warnings = null
+    this.rungs = []
+    this.next = null
+    this.designations = null
+    this.reports = []
+    this.crashlog = null
+    // Events and alerts: a fresh fort starts with a clean sheet, and the swap row.
+    this.digEvents = []
+    this.pauseEvents = []
+    for (const a of this.alerts) a.cleared = true
+    this.alerts = []
+    this.overload = null
+    // Force the deep read on the very next cycle: a reset is a REFETCH, not a pause.
+    this.lastDeepTick = -Infinity
+    this.gameSwaps += 1
+    this.reloadInfo = { why, from, to, source, tick: this.tick, dropped }
+    return dropped
+  }
+
   /** The game went offline longer than the grace window, or the poll failed. */
   markOffline({ offlineMs, lastError, bug }) {
     this.tick += 1
     if (bug) {
-      return [{ kind: 'transport', key: 'transport-bug',
-        evidence: `transport reports OUR bug (4xx): ${bug.message}`, suggested: 'plugin bug: report it, fix it (4xx = our bug, not the game)' }]
+      const a = this.raise('transport', 'transport-bug',
+        `transport reports OUR bug (4xx): ${bug.message}`, null,
+        'plugin bug: report it, fix it (4xx = our bug, not the game)')
+      return a ? [a] : []
     }
     const wasOnline = this.online !== false
     this.online = false
     if (wasOnline) {
-      return [{ kind: 'game_offline', key: `offline-${Date.now()}`,
-        evidence: `game offline for ${Math.round((offlineMs ?? 0) / 1000)}s: ${lastError?.message ?? lastError}`,
-        suggested: SUGGESTIONS.game_offline }]
+      // The return-to-online alert (if any) belongs to the previous span.
+      this.clearAlertKey('game-online')
+      const a = this.raise('game_offline', 'game-offline',
+        `game offline for ${Math.round((offlineMs ?? 0) / 1000)}s: ${lastError?.message ?? lastError}`,
+        null, SUGGESTIONS.game_offline)
+      return a ? [a] : []
     }
     return []
   }
 
   markOnline(offlineMs) {
     this.online = true
-    return [{ kind: 'game_offline', key: `offline-return-${Date.now()}`,
-      evidence: `game back online after ${Math.round((offlineMs ?? 0) / 1000)}s offline`,
-      suggested: 're-survey the fort (world-cache-reset is the server side; read boxes before extending)' }]
+    // The offline condition cleared: the alert that spoke it is done, so the next
+    // drop raises a FRESH one (a cleared alert is the ack contract's "until the
+    // condition clears").
+    this.clearAlertKey('game-offline')
+    const back = this.raise('game_offline', 'game-online',
+      `game back online after ${Math.round((offlineMs ?? 0) / 1000)}s offline`, null,
+      're-survey the fort (world-cache-reset is the server side; read boxes before extending)')
+    return back ? [back] : []
+  }
+
+  /** Mark the alert sitting on this key as cleared (its condition is gone). */
+  clearAlertKey(key) {
+    const active = this.alerts.find((a) => a.key === key && !a.cleared)
+    if (!active) return null
+    active.cleared = true
+    active.lastTick = this.tick
+    return active
+  }
+
+  /**
+   * THE alert factory. Every alert in the plugin - rule gates, acceptance flips,
+   * transport, offline/online - comes through here, so every alert carries an
+   * `A<n>` id, lands in `alerts` + `alertHistory`, and is ack-able by
+   * `df_alerts({action:"ack"})`. Measured 2026-11-21: the offline/online paths
+   * built bare `{kind, evidence}` objects with no id and never entered the list,
+   * so the wake printed "DF-OBSERVER ALERT undefined" and the ack advice pointed
+   * at an alert the feed never had.
+   * @returns the alert to announce, or null when it is a silenced repeat.
+   */
+  raise(kind, key, evidence, coord = null, advice = null, nowMs = Date.now()) {
+    const active = this.alerts.find((a) => a.key === key && !a.cleared)
+    if (active) {
+      if (active.acked) return null      // acked: silence repeats until the condition clears
+      const changed = evidence !== active.evidence
+      active.lastTick = this.tick
+      active.count += 1
+      active.evidence = evidence
+      return changed ? active : null
+    }
+    const alert = makeAlert({ kind, key, evidence, coord: coord ?? '', suggested: advice ?? SUGGESTIONS[kind], nowMs })
+    alert.firstTick = this.tick
+    alert.lastTick = this.tick
+    this.alerts.unshift(alert)
+    this.trim('alerts', 60)
+    this.alertHistory.push({ id: alert.id, kind, key, evidence, coord: coord ?? '', tick: this.tick })
+    this.trim('alertHistory', 200)
+    return alert
   }
 
   /**
@@ -517,31 +705,33 @@ export class FortModel {
   evaluate({ nowMs = Date.now() } = {}) {
     const raised = []
     const cfg = this.cfg
-    const raise = (kind, key, evidence, coord, advice = null) => {
-      const active = this.alerts.find((a) => a.key === key && !a.cleared)
-      if (active) {
-        if (active.acked) return null      // acked: silence repeats until the condition clears
-        const changed = evidence !== active.evidence
-        active.lastTick = this.tick
-        active.count += 1
-        active.evidence = evidence
-        if (changed) raised.push(active)
-        return changed ? active : null
-      }
-      const alert = makeAlert({ kind, key, evidence, coord, suggested: advice ?? SUGGESTIONS[kind], nowMs })
-      alert.firstTick = this.tick
-      alert.lastTick = this.tick
-      raised.push(alert)
-      this.alerts.unshift(alert)
-      this.trim('alerts', 60)
-      this.alertHistory.push({ id: alert.id, kind, key, evidence, coord, tick: this.tick })
-      this.trim('alertHistory', 200)
+    // All raising goes through the model's factory (ids, dedupe, history);
+    // `raised` collects what this tick must announce.
+    const raise = (kind, key, evidence, coord = null, advice = null) => {
+      const alert = this.raise(kind, key, evidence, coord, advice, nowMs)
+      if (alert) raised.push(alert)
       return alert
     }
 
+    // ---- the loaded game changed: announce the reset ONCE, with what it dropped ----
+    if (this.reloadInfo) {
+      const info = this.reloadInfo
+      const d = info.dropped ?? {}
+      const coord = [info.from?.save, info.to?.save].filter(Boolean).join(' -> ')
+      raise('save_reloaded', `game-swap-${this.gameSwaps}`,
+        `game swap #${this.gameSwaps} (detected by ${info.source}): ${info.why}. Thrown out: ${d.todos} to-dos, `
+        + `${d.boxes} watched boxes, ${d.piles} pile reads, ${d.alerts} alerts. Re-seeded from the ladder; `
+        + `the whole fort is re-read on the next tick - every number in the next briefing is from THIS game`,
+        coord ? coord : '')
+      this.digEvents.push({
+        tick: this.tick, kind: 'game_swap', evidence: `${info.why} (dropped ${d.todos} to-dos, ${d.boxes} boxes)`,
+      })
+      this.trim('digEvents', 40)
+      this.reloadInfo = null
+    }
+
     // ---- dig progress per monitored box: positive tile state only ----
-    for (const box of this.boxes) {
-      const key = boxKey(box)
+    for (const box of this.boxes) {      const key = boxKey(box)
       const known = this.lastBoxState.get(key)
       if (known === undefined) {
         // First read of a box is a BASELINE, not a transition: no complete/stall
@@ -626,9 +816,11 @@ export class FortModel {
     // Measured: the designations at elev22-24 breached the aquifer and the band's
     // water tiles went 1030 -> 1091 (+61). Shaft columns can stay dry while the
     // fort floods elsewhere, so the band total gets its own alert.
-    const waterNow = num(this.facts.water_tiles)
-    const waterPrev = this.lastWaterTiles
-    this.lastWaterTiles = waterNow
+    // After a game reset `facts` is null: there is no previous water count to
+    // compare against, and absence is never a fact - skip, do not guess.
+    const waterNow = this.facts ? num(this.facts.water_tiles) : undefined
+    const waterPrev = this.facts ? this.lastWaterTiles : undefined
+    if (this.facts) this.lastWaterTiles = waterNow
     if (waterPrev !== undefined && waterNow - waterPrev >= cfg.water_growth_min) {
       raise('water', 'water-growth',
         `water in the monitored band rose ${waterPrev} -> ${waterNow} (+${waterNow - waterPrev} tiles): an aquifer breach is flooding the works`,
@@ -913,7 +1105,22 @@ export class FortModel {
     this.nextTodoId = id + 1
     const todo = { id, title, origin: 'model', state: 'open', accept: accept ?? { kind: 'manual' }, evidence: 'not checked yet', statusTick: this.tick }
     if (box) todo.box = box
-    if (accept?.kind === 'tiles_progress' && box) todo.box = box
+    if (accept?.kind === 'tiles_progress') {
+      // The test runs off `accept` (x0/y0/x1/y1/elev/min_dug); the `box` argument is
+      // how the survey list gets the same rectangle. Filling one from the other
+      // keeps them a single fact - a tiles_progress test built with only `box`
+      // used to read its own coordinates as `undefined` and answer
+      // "no survey read for box xundefined-undefined …" forever (measured 2026-11-21).
+      const b = Array.isArray(box) ? box.map(Number) : null
+      if (b && b.length === 5 && b.every(Number.isFinite)) {
+        todo.accept = { ...accept, x0: b[0], y0: b[1], x1: b[2], y1: b[3], elev: b[4] }
+      }
+      const a = todo.accept
+      if ([a.x0, a.y0, a.x1, a.y1, a.elev].some((v) => !Number.isFinite(Number(v)))) {
+        todo.accept = { ...a, x0: Number(a.x0), y0: Number(a.y0), x1: Number(a.x1), y1: Number(a.y1), elev: Number(a.elev) }
+        todo.incomplete = 'tiles_progress needs box [x0,y0,x1,y1,elev] (pass box, or the coordinates in accept)'
+      }
+    }
     this.todos.push(todo)
     this.trim('todos', 80)
     this.onLedgerWrite?.(todo)
@@ -1018,6 +1225,9 @@ export class FortModel {
       age_s: this.observedAt ? Math.round((Date.now() - this.observedAt) / 1000) : null,
       paused: this.paused, pauseSource: this.pauseSource, pauseAtTick: this.pauseAtTick,
       generation: this.generation,
+      // Which game these numbers come from, and how many swaps we have seen.
+      game: this.game ?? null,
+      gameSwaps: this.gameSwaps ?? 0,
       poll: this.pollMs ?? null,
       pauseAuthority: this.cfg.pause_authority,
       dockMaxHeight: this.cfg.dock_max_height,
@@ -1124,7 +1334,8 @@ export function viewOf(state) {
       quiet: state.quiet ?? false, suppressed: state.suppressed ?? { briefings: 0, wakes: 0 },
       paused: state.paused, pauseSource: state.pauseSource, pauseAtTick: state.pauseAtTick,
       pluginPauseTick: state.pluginPauseTick ?? null,
-      generation: state.generation, facts: state.facts, buildings: state.buildings,
+      generation: state.generation, game: state.game ?? null, gameSwaps: state.gameSwaps ?? 0,
+      facts: state.facts, buildings: state.buildings,
       boxes: state.boxes, shafts: state.shafts, piles: state.piles, warnings: state.warnings,
       rungs: state.rungs, next: state.next, designations: state.designations ?? null, reports: state.reports, crashlog: state.crashlog,
       notes: state.notes, alerts: state.alerts, alertHistory: state.alertHistory,
@@ -1168,6 +1379,8 @@ export const dfObserverProjection = (z) => ({
     pauseSource: z.string().nullable().default(null),
     pauseAtTick: z.number().nullable().default(null),
     generation: z.number().nullable().default(null),
+    game: z.any().default(null),
+    gameSwaps: z.number().default(0),
     // The panel chips read these; omitting them from the schema silently made
     // them '?' in the UI (measured) and hid the filter state entirely.
     poll: z.number().nullable().default(null),
@@ -1201,6 +1414,7 @@ export const dfObserverProjection = (z) => ({
     tick: 0, online: null, observedAt: null, paused: null, pauseSource: null, pauseAtTick: null,
     pluginPauseTick: null,
     generation: null, poll: null, pauseAuthority: null, filter: null, dockMaxHeight: null,
+    game: null, gameSwaps: 0,
     quiet: false, suppressed: { briefings: 0, wakes: 0 },
     facts: null, buildings: [], boxes: [], shafts: [], piles: [], warnings: null,
     rungs: [], next: null, designations: null, reports: [], crashlog: null, notes: [], alerts: [], alertHistory: [],

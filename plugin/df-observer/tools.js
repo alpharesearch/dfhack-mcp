@@ -13,7 +13,7 @@
  * @module @local/df-observer/tools
  */
 
-import { buildBriefing } from './brief.js'
+import { buildBriefing, alertLabel } from './brief.js'
 import { PAYLOAD_PREFIX, runAcceptance } from './model.js'
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d)
@@ -52,7 +52,7 @@ function pendingSplit(state) {
   return ` (watched boxes ${watched}, outside them ${outside >= 0 ? outside : '?'} - location of the rest is not proven by the survey)`
 }
 
-export function toolDefinitions({ model, projection, config, sessionFilter }) {
+export function toolDefinitions({ model, projection, config, sessionFilter, onReset }) {
   // Tool schemas ride in EVERY request header of a target agent: measured 962
   // tokens with the long how-to text. `tool_docs: compact` (default) keeps the
   // guidance in the skills and the briefing; `full` restores the teaching text.
@@ -119,10 +119,10 @@ export function toolDefinitions({ model, projection, config, sessionFilter }) {
       properties: {
         action: {
           type: 'string',
-          enum: ['list', 'add', 'done', 'why'],
+          enum: ['list', 'add', 'done', 'why', 'reset'],
           description: verbose
-            ? 'list: the ledger (bounded). add: register a task the plugin will verify. done: close task `id` - provide the evidence you proved. why: the evidence trail of task `id` (acceptance spec, last check, status flips).'
-            : 'list | add | done (id + evidence) | why (id).',
+            ? 'list: the ledger (bounded). add: register a task the plugin will verify. done: close task `id` - provide the evidence you proved. why: the evidence trail of task `id` (acceptance spec, last check, status flips). reset: throw out everything derived from the CURRENT game - the ledger (archived), watched boxes, dig baselines, alerts, facts - and re-read the fort. Use it when a different save is loaded; the observer does it by itself when it can detect the swap.'
+            : 'list | add | done (id + evidence) | why (id) | reset (drop all derived state, re-read the fort).',
         },
         title: { type: 'string', description: verbose ? 'For add: short task name. Required with add.' : 'For add: task name.' },
         accept: {
@@ -183,6 +183,22 @@ export function toolDefinitions({ model, projection, config, sessionFilter }) {
             `flips: ${flips.map((f) => `tick ${f.tick}: ${short(f.evidence)}`).join('\n         ') || 'none'}`].join('\n'),
         }
       }
+      if (action === 'reset') {
+        if (typeof onReset !== 'function') return { action, error: 'reset is not wired in this build' }
+        const out = await onReset(args.reason ? String(args.reason) : '')
+        const state = model.snapshot()
+        const d = out?.dropped ?? {}
+        return {
+          action,
+          dropped: d,
+          game: state.game ?? null,
+          gameSwaps: state.gameSwaps ?? 0,
+          text: `observer reset: dropped ${d.todos ?? 0} to-dos (archived), ${d.boxes ?? 0} watched boxes, `
+            + `${d.piles ?? 0} pile reads, ${d.alerts ?? 0} alerts - the next tick re-reads the fort from the game`
+            + ` (${state.game?.save ?? 'save ?'}${state.game?.year ? ` Y${state.game.year}` : ''})`,
+          payload: payloadLine(state, 'tool'),
+        }
+      }
       return { action, error: `unknown action ${action}` }
     },
   }
@@ -216,7 +232,7 @@ export function toolDefinitions({ model, projection, config, sessionFilter }) {
       if (args.action === 'list') {
         const state = stateOf(exec)
         const rows = (state.alerts ?? []).filter((a) => !a.cleared).slice(0, limit).map((a) =>
-          `${a.id} ${a.kind}${a.coord ? ` [${a.coord}]` : ''} x${a.count}${a.acked ? ' (acked)' : ''}: ${short(a.evidence)}`)
+          `${alertLabel(a)} ${a.kind}${a.coord ? ` [${a.coord}]` : ''} x${a.count}${a.acked ? ' (acked)' : ''}: ${short(a.evidence)}`)
         return { action: 'list', count: rows.length, text: rows.join('\n') || 'no active alerts' }
       }
       if (args.action === 'ack') {
@@ -253,17 +269,21 @@ function statusBody(state, scope, config) {
   const digest = {
     tick: state.tick, online: state.online, paused: state.paused, pauseSource: state.pauseSource,
     generation: state.generation,
+    // Which LOADED SAVE these numbers describe, and how many swaps we have thrown
+    // state out for: `generation` cannot answer this (a save reload keeps the socket).
+    game: state.game ?? null, gameSwaps: state.gameSwaps ?? 0,
   }
   if (scope === 'summary') {
     const lines = [
       `tick ${state.tick} | ${state.online === false ? 'GAME OFFLINE' : state.paused ? 'paused' : 'running'}${state.pauseSource ? ` (last pause: ${state.pauseSource})` : ''} | gen ${state.generation ?? '?'}`
+      + ` | game ${state.game?.save ?? '?'}${state.game?.year ? ` Y${state.game.year}` : ''}${state.gameSwaps ? ` | resets ${state.gameSwaps}` : ''}`
       + ` | data ${state.age_s == null ? 'NO READ YET' : `${state.age_s}s old`}`,
       `filter: ${state.filter?.enabled ? (state.filter.live ? `live (verdict tick ${state.filter.verdictTick ?? '?'})` : 'enabled, no verdict yet') : 'off'} | rules_mode ${state.filter?.rules_mode ?? config.rules_mode}`,
       facts ? `${facts.dwarves == null ? `pop ${num(facts.pop)} (dwarves ?)` : `dwarves ${num(facts.dwarves)} (units ${num(facts.pop)})`} miners ${num(facts.miners)}/${facts.picks == null ? '? (deep probe has no data)' : num(facts.picks)} picks | food ${num(facts.food)} drink ${num(facts.drink)} (ON WATCHED PILES, not the game's fort-wide Food/Drink bars) wood ${num(facts.wood)} stone ${num(facts.stone)} | pending dig ${num(facts.pending_dig)}${pendingSplit(state)}`
         : 'facts: NO DATA this tick',
       ...(state.boxes ?? []).map((b) => `elev${b.elev} x${b.box[0]}-${b.box[2]} y${b.box[1]}-${b.box[3]}: to_dig ${b.to_dig} dug ${b.dug} pending ${b.pending}`),
       ...(state.rungs ?? []).filter((r) => !r.done).slice(0, 6).map((r) => `[ ] ${r.id}: ${short(r.title, 90)}`),
-      ...(state.alerts ?? []).filter((a) => !a.acked && !a.cleared).slice(0, 6).map((a) => `!${a.id} ${a.kind}${a.coord ? ` [${a.coord}]` : ''}: ${short(a.evidence, 120)}`),
+      ...(state.alerts ?? []).filter((a) => !a.acked && !a.cleared).slice(0, 6).map((a) => `!${alertLabel(a)} ${a.kind}${a.coord ? ` [${a.coord}]` : ''}: ${short(a.evidence, 120)}`),
       ...(state.todos ?? []).filter((t) => t.state === 'open').slice(0, 8).map((t) => `#${t.id} ${short(t.title, 90)} (${acceptKind(t)})`),
       ...(state.notes ?? []).slice(0, 4).map((n) => `NOTE: ${short(n, 120)}`),
     ]

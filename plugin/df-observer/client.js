@@ -59,6 +59,10 @@ window.__ModuleLoader__.load({
       'quiet.on': '⏸ pause briefings',
       'quiet.off': '▶ resume briefings',
       'quiet.title': "Pause this plugin's context injections (briefings and alert wakes). The game is never touched by this button.",
+      'reset.button': '↺ reset',
+      'reset.title': 'Throw out everything the observer derived from the current game (to-dos archived, watched boxes, dig baselines, alerts, facts) and re-read the fort. Use it after loading a different save. The game is never touched by this button.',
+      'health.game': 'game',
+      'health.swaps': 'resets',
       'quiet.note': (v) => `BRIEFINGS PAUSED - ${v} injection(s) suppressed. The game is untouched; the panel keeps updating.`,
       'collapsed': 'Observer',
       'empty': 'Observer is idle: no game read yet.',
@@ -99,6 +103,10 @@ window.__ModuleLoader__.load({
       'quiet.on': '⏸ 暂停简报',
       'quiet.off': '▶ 恢复简报',
       'quiet.title': '暂停本插件的上下文注入（简报与警报唤醒）。此按钮绝不操作游戏。',
+      'reset.button': '↺ 重置',
+      'reset.title': '丢弃观察器从当前游戏派生的一切（待办归档、监控区域、挖掘基线、警报、事实），并重新读取要塞。载入其他存档后使用。此按钮绝不操作游戏。',
+      'health.game': '存档',
+      'health.swaps': '重置',
       'quiet.note': (v) => `简报已暂停 - 已抑制 ${v} 次注入。游戏未受影响；面板继续更新。`,
       'collapsed': '观察器',
       'empty': '观察器空闲：尚无游戏读取。',
@@ -255,10 +263,19 @@ window.__ModuleLoader__.load({
               key: 'quiet', type: 'button', style: { ...S.ack, marginLeft: 6 }, title: t('quiet.title'),
               onClick: () => { const next = !(mutedUI ?? snap.quiet); setMutedUI(next); void ctx.remote.commands.execute(sessionId, next ? '/df-quiet on' : '/df-quiet off', []).then(() => { }) },
             }, (mutedUI ?? snap.quiet) ? t('quiet.off') : t('quiet.on')),
+            // The reset routine (player request 2026-11-21): a save swap makes every
+            // derived number meaningless, so drop them all and re-read the fort.
+            h('button', {
+              key: 'reset', type: 'button', style: { ...S.ack, marginLeft: 6 }, title: t('reset.title'),
+              onClick: () => { void ctx.remote.commands.execute(sessionId, '/df-reset', []).then(() => { }) },
+            }, t('reset.button')),
             h('span', { style: S.meta },
               h('span', { key: 'h' }, health),
               snap.pauseSource ? h('span', { key: 'ps' }, t(`health.pauseSource.${snap.pauseSource}`)) : null,
               h('span', { key: 'g' }, `${t('health.gen')} ${snap.generation ?? '?'}`),
+              h('span', { key: 'gm' }, `${t('health.game')} ${snap.game?.save ?? '?'}`
+                + (snap.game?.year != null ? ` Y${snap.game.year}` : '')
+                + (snap.gameSwaps ? ` | ${t('health.swaps')} ${snap.gameSwaps}` : '')),
               h('span', { key: 'tk' }, `${t('health.tick')} ${snap.tick}`),
               h('span', { key: 'p' }, `${t('health.poll')} ${snap.poll == null ? '?' : `${Math.round(snap.poll / 1000)}s`}`),
               h('span', { key: 'pa' }, `${t('pause.authority')} ${snap.pauseAuthority ?? '?'}`),
