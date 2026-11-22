@@ -3,11 +3,11 @@ name: df-stockpile
 description: Set up Dwarf Fortress stockpiles that work - the general pile off the wagon, a wood pile by the entrance, an outdoor refuse/corpse pile - with real sizes, the game's category flags, container and wheelbarrow limits, and hauling as the proof.
 whenToUse: When the fort needs storage: items lie scattered, workshops clutter, hauling never finishes, a pile "exists" but nothing goes to it, or you are placing the first stockpiles of a new embark.
 metadata:
-  version: "1"
-  domain: "dwarf-fortress/storage"
-disable-model-invocation: false
-user-invocable: true
+  source: measured on DF 53.17-r1 (STEAM) with the dfhack-mcp layer, during play on region1
+  tools: create_stockpile, configure_stockpile, resize_building, remove_building, stockpiles,
+    zones, survey, box_state, tile_at, items_at, world_objects, unit_list
 ---
+
 
 # Stockpiles that work (measured on DF 53.17-r1)
 
