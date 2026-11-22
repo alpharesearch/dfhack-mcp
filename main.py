@@ -556,6 +556,138 @@ async def set_pause_state(request: Request):
     state = await GetPauseState()
     return {"paused": state.Value}
 
+@app.post("/cut-trees", operation_id="cut_trees")
+async def cut_trees(body: dict):
+    """Fell the trees in a rectangle - the player's own action, typed.
+
+    How a human does it (the player's words, 2026-11-21): *"as a player i select the tree
+    trunk with the chopping order"*. So the target is the TRUNK tile: the chopping order
+    lands on `tree_trunk` (TreeTrunk). A sapling is NOT a tree to fell - clearing a sapling
+    is the "clear vegetation" order, a different job with a different reward. This tool
+    designates trunks only and reports what it found, so a request to "fell 3-5 trees"
+    (the quickstart rung) cannot silently become 5 sapling clearings.
+
+    Body: {x0, y0, x1, y1, elev, limit?}  -> designates DEFAULT_DIG on every trunk tile in
+    the box (the game turns that into Fell Tree jobs), verifies the designations landed,
+    and reports the wood count before/after - hauling and cutting take in-game time, so
+    `wood_after` is a fact about the moment of reading, not a promise.
+    """
+    x0, y0, x1, y1, e = (int(body[k]) for k in ("x0", "y0", "x1", "y1", "elev"))
+    limit = int(body.get("limit") or 0) or 0
+    TRUNK = "tree_trunk"
+    async def _wood() -> int | None:
+        """The wood the fort HOLDS, built the way /observe builds facts.
+
+        `(await world.progress()).facts` was my invention - progress() returns the rendered
+        ladder dict, so the attribute error was swallowed and the tool answered
+        wood_before/wood_after: null (measured 2026-11-21, twice)."""
+        try:
+            gen = await world._gen()
+            dec = await world._dec(gen)
+            lo, hi = await world.fort_band()
+            lv = await world.levels(lo - WM.GAME_Z_OFFSET, hi - WM.GAME_Z_OFFSET)
+            facts = WM.FortFacts(lv, await WM.load_units(dec, gen, world._state), dec)
+            return int(facts.wood)
+        except Exception:
+            return None
+
+    wood0 = await _wood()
+    trunks, saplings, scanned = [], 0, 0
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            scanned += 1
+            try:
+                t = await world.tile_at(x, y, e)
+            except Exception:
+                continue
+            cls = str(t.get("class") or "")
+            if cls == TRUNK:
+                trunks.append((x, y))
+            elif cls in ("sapling", "tree_dead"):
+                saplings += 1
+    if limit:
+        trunks = trunks[:limit]
+    if not trunks:
+        return {"success": True, "trees_designated": 0, "trunks_found": 0,
+                "saplings_seen": saplings, "tiles_scanned": scanned,
+                "at": [x0, y0, x1, y1, e],
+                "note": "no tree trunk in this rectangle - saplings are cleared with the "
+                        "vegetation order, not the chopping order, so they are not counted"}
+    z = WM.GAME_Z_OFFSET
+    locs = [[x, y, e + z] for (x, y) in trunks]
+    designated = await _designate("DEFAULT_DIG", locs)
+    wood1 = await _wood()
+    return {"success": designated > 0, "designation": "DEFAULT_DIG (the game makes these Fell Tree jobs)",
+            "trees_designated": designated, "trunks_found": len(trunks),
+            "saplings_seen_not_felled": saplings, "tiles_scanned": scanned,
+            "trunks": trunks[:24], "wood_before": wood0, "wood_after": wood1,
+            "note": "felling and hauling take in-game time; wood_after is a reading, not a promise"}
+
+
+async def _designate(designation: str, locations: list[list[int]]) -> int:
+    """The ONE sanctioned designation path: SendDigCommand with the game's own coordinates
+    (z = elev + WM.GAME_Z_OFFSET, passed as given). Both /send-dig-command and /cut-trees go
+    through here, so the stair/shaft rules live in one place."""
+    await SendDigCommand(input=DigCommand(designation=DIG_DESIGNATIONS[designation],
+                                          locations=[Coord(x=int(p0[0]), y=int(p0[1]), z=int(p0[2]))
+                                                    for p0 in locations]))
+    return len(locations)
+
+
+@app.get("/find-trees", operation_id="find_trees")
+async def find_trees(elev0: int = Query(...), elev1: int = Query(...),
+                     cell: int = Query(16), max_levels: int = Query(8)):
+    """Where the trees ARE - a whole-map census of trunk tiles, per elevation.
+
+    Built first because felling needs a target: the chopping order lands on the TRUNK
+    (the player: "as a player i select the tree trunk with the chopping order"). The survey
+    endpoint lumps vegetation into `other`, so this reads the map blocks directly and
+    decodes every tile's class - trunks counted per `cell`x`cell` bin with a sample
+    coordinate, saplings counted separately (a sapling is the vegetation order, not a tree).
+    """
+    from worldmodel import GAME_Z_OFFSET
+    gen = await world._gen()
+    dec = await world._dec(gen)
+    step = max(4, int(cell))
+    levels = range(int(elev0), int(elev0) + min(int(max_levels), 12))
+    cells: dict[tuple[int, int, int], dict] = {}
+    trunk_total = sap_total = 0
+    for e in levels:
+        z = e + GAME_Z_OFFSET
+        blocks = await world.cache.blocks(z, z + 1, gen)
+        for b in blocks:
+            if int(b.map_z) != z:
+                continue
+            # map_x/map_y are TILE coordinates (multiples of 16) - the worldmodel header
+            # says so, and multiplying by 16 again produced "trees" at x256,y1792 on a
+            # 192x192 map (measured 2026-11-21: 1034 trunks found, none of them real).
+            base_x, base_y = int(b.map_x), int(b.map_y)
+            for idx, tile in enumerate(b.tiles):
+                x, y = base_x + (idx % 16), base_y + (idx // 16)
+                hid = bool(b.hidden[idx]) if idx < len(b.hidden) else False
+                if hid:
+                    continue
+                cls = str(dec.tile_class(tile).key)
+                if cls not in ("tree_trunk", "sapling", "tree_dead"):
+                    continue
+                key = (e, x // step, y // step)
+                c = cells.setdefault(key, {"elev": e, "x0": (x // step) * step, "y0": (y // step) * step,
+                                           "x1": (x // step) * step + step - 1, "y1": (y // step) * step + step - 1,
+                                           "trunks": 0, "saplings": 0, "sample": None})
+                if cls == "tree_trunk":
+                    c["trunks"] += 1
+                    trunk_total += 1
+                    if c["sample"] is None:
+                        c["sample"] = [x, y]
+                else:
+                    c["saplings"] += 1
+                    sap_total += 1
+    clusters = sorted(cells.values(), key=lambda c: -c["trunks"])[:40]
+    return {"success": True, "levels_scanned": list(levels), "cells_with_trees": len(cells),
+            "trunks_found": trunk_total, "saplings_found": sap_total, "clusters": clusters,
+            "note": "fell trunks with /cut-trees using a cluster box; saplings are the vegetation order"}
+
+
 @app.post("/send-dig-command", operation_id="send_dig_command")
 async def send_dig_command(request: Request):
     """Designate digging - the `m` menu over RPC, no blueprint and no instant-dig. designation: one of NO_DIG, DEFAULT_DIG, UP_DOWN_STAIR_DIG, CHANNEL_DIG, RAMP_DIG, DOWN_STAIR_DIG, UP_STAIR_DIG; locations: list of [x,y,z] where z = elevation + 129 (WM.GAME_Z_OFFSET - the SAME number every read tool uses), sent AS GIVEN (measured: lands where you put it; an earlier note here said +128, which is one level LOW - following it digs under your feet). Optional swap:true reproduces the old mirrored behaviour for other builds. Only DISCOVERED, diggable tiles accept designations - unexplored tiles are rejected SILENTLY, and there is no reply, so ALWAYS verify: read `world_objects`/`look` for the dig cluster and its tile count before assuming work was ordered. Use NO_DIG to clear a rectangle."""
@@ -575,8 +707,8 @@ async def send_dig_command(request: Request):
     swap = bool(body.get("swap", False))
     locs = [Coord(x=int(p[1]), y=int(p[0]), z=int(p[2])) for p in body["locations"]] if swap \
            else [Coord(x=int(p[0]), y=int(p[1]), z=int(p[2])) for p in body["locations"]]
-    await SendDigCommand(input = DigCommand(designation = DIG_DESIGNATIONS[designation], locations = locs))
-    return {"designation": designation, "tiles": len(locs), "success": True}
+    n = await _designate(designation, [[c.x, c.y, c.z] for c in locs])
+    return {"designation": designation, "tiles": n, "success": True}
 
 @app.post("/get-block-list", operation_id="get_block_list")
 async def get_block_list(request: Request):
@@ -1597,19 +1729,30 @@ async def create_stockpile(body: dict):
     x1, y1 = x0 + w - 1, y0 + h - 1
     try:
         st = await world.box_state(e, x0, y0, x1, y1)
+        sv = await world.survey(int(e), int(x0), int(y0), int(x1), int(y1))
     except Exception as ex:
         return {"success": False, "error": f"site gate could not read the footprint: {ex}",
                 "hint": "the read failed; nothing was placed"}
+    counts = sv.get("counts") or {}
+    # Ground = anything walkable that is NOT unexcavated rock, fog, cavern air or a wall.
+    # Measured 2026-11-21: a legal outdoor spot on the open-sky plateau at 42 was refused
+    # because two of its tiles were SAPLINGS and one was PEBBLES - all of them floors with
+    # something growing on them, exactly where the wiki puts a wood/refuse pile.
+    nonground = {k: v for k, v in counts.items() if k in ("rock", "wall", "hidden", "open", "wood_wall")}
     dug, total = int(st.get("dug", 0)), int(st.get("total_tiles", w * h))
     to_dig, hidden = int(st.get("to_dig", 0)), int(st.get("hidden", 0))
-    if dug < total:
+    if sum(nonground.values()) > 0:
+        return {"success": False,
+                "error": f"site x{x0}-{x1} y{y0}-{y1} elev{e} is not pile ground: {nonground}",
+                "hint": "a pile needs walkable ground under every tile - rock, fog and cavern air are not ground",
+                "gate": "no rock/wall/hidden/open in the footprint", "measured": counts}
+    if to_dig > 0:
         return {"success": False,
                 "error": f"site x{x0}-{x1} y{y0}-{y1} elev{e} is not pile ground: "
-                         f"dug {dug}/{total}, to_dig {to_dig}, hidden/fog {hidden}",
-                "hint": "a pile needs dug, walkable floors under every tile of its footprint - "
-                        "the game happily accepts cavern air and fog, and the pile then floats "
-                        "(measured: 3 piles built in mid air on this fort)",
-                "gate": "dug == w*h", "measured": st}
+                         f"{to_dig} tiles still to dig (dug {dug}/{total})",
+                "hint": "dig it out first - the game accepts piles on cavern air and fog, and "
+                        "the pile then floats (measured: 3 piles built in mid air on this fort)",
+                "gate": "no rock/wall/hidden/open, to_dig == 0", "measured": st}
     try:
         dec = await world._dec(await world._gen())
         res = await LO.create_stockpile(dec, x0, y0, e, w, h)

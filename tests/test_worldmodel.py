@@ -328,6 +328,28 @@ def test_a_stockpile_request_must_not_lie_about_its_size():
     assert "world.cache.reset()" in fn and "world.forget_band()" in fn, "cache + memo dropped"
 
 
+def test_the_tree_tools_target_the_trunk_and_read_the_wood_for_real():
+    """The player's own method, verbatim: "as a player i select the tree trunk with the
+    chopping order" - so felling targets `tree_trunk`, and saplings are the vegetation
+    order (measured: 1034 trunks and 505 saplings on this map; a "clear 5 saplings" plan
+    is not 5 trees). Two bugs found while building them:
+      * block base coordinates: map_x/map_y ARE tile coordinates; multiplying by 16 again
+        reported trunks at x256,y1792 on a 192x192 map.
+      * the wood read invented `(await world.progress()).facts` - progress() returns the
+        ladder dict, so the attribute error was swallowed and both counts answered null."""
+    main = pathlib.Path("main.py").read_text()
+    i = main.index('operation_id="cut_trees"')
+    seg = main[i:main.index("@app.", i + 10)]
+    assert 'TRUNK = "tree_trunk"' in seg, "the chopping order targets the trunk"
+    assert "sapling" in seg, "and saplings are counted, not felled"
+    assert 'await _designate("DEFAULT_DIG", locs)' in seg, "designations go through the sanctioned path"
+    assert "WM.FortFacts" in seg, "the wood count is built from FortFacts, not a made-up accessor"
+    j = main.index('operation_id="find_trees"')
+    seg2 = main[j:main.index("@app.", j + 10)]
+    assert "base_x, base_y = int(b.map_x), int(b.map_y)" in seg2, "map_x/map_y are tile coordinates"
+    assert "int(b.map_x) * 16" not in seg2, "the doubled scale is what invented trees off the map"
+
+
 def test_resize_states_the_game_rule_instead_of_a_bare_failure():
     """`/resize-building` promised "Resize a building - stockpiles included". The game says:
     `setSize ... Invalid argument; expected: bld->id == -1` - only an ABSTRACT building can be
@@ -425,7 +447,10 @@ def test_tile_counts_and_removal_verdicts_come_from_the_game():
     main = pathlib.Path("main.py").read_text()
     i = main.index('operation_id="create_stockpile"')
     seg = main[i:main.index("@app.post", i + 10)]
-    assert '"gate": "dug == w*h"' in seg, "a pile must refuse a site that is not dug floor"
+    assert '"gate": "no rock/wall/hidden/open in the footprint"' in seg, \
+        "a pile must refuse a site that is not ground"
+    assert '"gate": "no rock/wall/hidden/open, to_dig == 0"' in seg, \
+        "and refuse unexcavated rock (the mid-air piles came from exactly that)"
     assert "not pile ground" in seg, "and say what it measured"
     wm = pathlib.Path("worldmodel.py").read_text()
     assert "ramp_top" in wm[wm.index("DUG_CLASSES"):wm.index("TO_DIG_CLASSES")], \
@@ -670,7 +695,10 @@ def test_one_level_one_source_no_phantom_offsets():
     # 2) No phantom offset in the contract the model reads.
     for bad in ("elevation + 128", "z - 128", "E + 128"):
         assert bad not in main, f"stale offset in main.py: {bad!r}"
-    dig = main[main.index("/send-dig-command"):]
+    # Anchor on the ENDPOINT, not on the literal path string: a helper docstring that
+    # mentions /send-dig-command moved the match 40 lines up and the window read the
+    # tree tools instead of the dig contract (measured 2026-11-21).
+    dig = main[main.index('operation_id="send_dig_command"'):]
     assert "elevation + 129" in dig[:2000], "the dig contract must state the offset the reads use"
     assert "GAME_Z_OFFSET" in dig[:2000], "and name the single source of it"
 
