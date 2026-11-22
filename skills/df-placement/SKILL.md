@@ -183,3 +183,16 @@ The well is **not** the hard part; the well's *materials* are. Built here with t
   35 y128 went from dry to 4/7 then 7/7 water along 90+ tiles (water_tiles 1030 -> 1161),
   while the rooms one level up stayed dry. Expect water to fill any level you open into it,
   and plan hauling (a 7/7 tunnel slows/stops hauling) before you need that tunnel.
+
+### Do not open the pool by walking dwarves into it (measured on this site)
+
+The pool at `x169-172 y116 @35` is **7/7 water on ramps**, and the level above (`@36`) is dry
+cavern floor with ramp-tops - so the "free" water access is an existing walkable ramp straight
+into drowning depth. Two measurements from trying it:
+* A down-stair designation on those ramp tiles came back `dig None` - the game removes it (the
+  tile is already open; and the plugin flags it DAMP: an aquifer line).
+* The plugin's damp alert (A153) named my own stair designations, and the guidance is to clear
+  them before a dwarf digs. Cleared with NO_DIG: read-back `dig None`.
+So on this kind of site the water plan is: **well above the water** (needs mechanisms -> metal
+chain), or **pump/drain the pool** first. Deep water access by hand is how fortresses lose
+dwarves, not how they get drink.
