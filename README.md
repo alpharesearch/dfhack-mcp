@@ -86,6 +86,7 @@ caches, decodes, aggregates, and projects. Rules:
 | `world_delta` | only what changed since the last read | **29** |
 | `transitions` | transition-verified excavated tiles (`dug_floors`, `dug_stairs`, `dug_ramps`) from the SQLite `TransitionStore` | **120** |
 | `building_status` | unfinished/planned buildings, construction stages, missing material filters, crew labor/pick bottlenecks, and recent cancellation reports | **180** |
+| `alerts_and_wellbeing` | structured threat/opportunity radar (popups, caravans, hostiles, unpastured grazers, strange moods) and citizen wellbeing metrics (thirsty, hungry, drowsy, stressed, wounded) | **140** |
 | `tile_legend` | the stable glyph alphabet | **321** |
 | `world_minimap` | 1 char per 16×16 block, 48 z (opt-in: all 191 z) | 3,713 (13,688) |
 | `world_raw` | raw blocks **written to a file** (HTTP operator endpoint, excluded from MCP tool list) | **50** |
@@ -96,15 +97,20 @@ the objects view is the same planning content.
 
 Action tools ride the same idea: designation (`send_dig_command` with `box`, `boxes`,
 `middle_first`, and multi-z `stair_shaft` helpers), quickfort blueprints
-(`apply_blueprint`), buildings (`place_building`, `create_stockpile`,
-`configure_stockpile`, `configure_farmplot`, `create_zone`, `remove_building`,
-`remove_zone` — all protected by pre-flight footprint ground checks and duplicate-footprint
-idempotency), trees/water (`find_trees`, `cut_trees`, `find_water`), labors
-(`labor_list`, `set_unit_labors`), work orders (`work_order`), allowlisted commands
-(`run_command`), keyboard (`pass_keyboard_event`), pause (`set_pause_state`), plus
+(`apply_blueprint`), buildings & zones (`place_building`, `create_stockpile`,
+`configure_stockpile`, `configure_farmplot`, `create_zone`, `assign_zone_owner`,
+`assign_pasture`, `remove_building`, `remove_zone` — all protected by pre-flight footprint
+ground checks and duplicate-footprint idempotency), nobles (`manage_nobles` with
+`list` / `assign` / `auto_assign` + bookkeeper precision), surface gathering & item flags
+(`gather_and_items` for `gather_plants`, `dump`/`undump`/`forbid`/`reclaim`, and
+`protect_seeds`), trees/water (`find_trees`, `cut_trees`, `find_water`), labors
+(`labor_list`, `set_unit_labors`), work orders (`work_order` with `create` / `list` / `cancel`),
+allowlisted commands (`run_command`), keyboard (`pass_keyboard_event`), pause
+(`set_pause_state`), plus
 safety reads (`survey`, `depth_profile`, `overburden`, `cross_section`, `column`,
 `tunnel_sites`, `probe_plan`, `hazards`, `magma_depth`, `warnings`, `dig_reachable`,
-`reach_map`, `wagon_path`, `walkable_between`, `building_status`, `transitions`). The
+`reach_map`, `wagon_path`, `walkable_between`, `building_status`, `transitions`,
+`alerts_and_wellbeing`). The
 current registered set is what `./scripts/mcp-reload.sh probe` reports against `/mcp`.
 
 ### The ladder (why `fort_progress` exists)

@@ -1349,3 +1349,84 @@ async def observe_status_module() -> dict:
     """Structured status-bar probe (picks, site_id, date, seeds, alcohol, meals, raw_food)
     via `dfhack_mcp.lua`."""
     return await call_module("observe_status", {})
+
+
+async def assign_zone_owner(building_id: int, unit_id: int | None = None) -> dict:
+    """Set or read the owner of an activity zone (Office, Bedroom, DiningHall, Tomb)
+    via `dfhack_mcp.lua` (`dfhack.buildings.setOwner` / `getOwner` / `getRoomDescription`)."""
+    payload: dict = {"building_id": int(building_id)}
+    if unit_id is not None:
+        payload["unit_id"] = int(unit_id)
+    return await call_module("assign_zone_owner", payload)
+
+
+async def assign_pasture(building_id: int | None = None,
+                         unit_ids: list[int] | None = None,
+                         all_grazers: bool = True,
+                         species: str | None = None) -> dict:
+    """Assign tame grazing animals (or specific `unit_ids` / `species`) to a Pen/Pasture
+    zone via `dfhack_mcp.lua`."""
+    payload: dict = {"all_grazers": bool(all_grazers)}
+    if building_id is not None:
+        payload["building_id"] = int(building_id)
+    if unit_ids is not None:
+        payload["unit_ids"] = [int(i) for i in unit_ids]
+    if species is not None:
+        payload["species"] = str(species)
+    return await call_module("assign_pasture", payload)
+
+
+async def manage_nobles(action: str = "list",
+                        position: str | None = None,
+                        unit_id: int | None = None,
+                        bookkeeper_settings: int | None = None) -> dict:
+    """List, assign, or auto-assign fortress noble positions (`MANAGER`, `BOOKKEEPER`,
+    `BROKER`, `CHIEF_MEDICAL_DWARF`, etc.) and bookkeeper precision via `dfhack_mcp.lua`."""
+    payload: dict = {"action": str(action)}
+    if position is not None:
+        payload["position"] = str(position)
+    if unit_id is not None:
+        payload["unit_id"] = int(unit_id)
+    if bookkeeper_settings is not None:
+        payload["bookkeeper_settings"] = int(bookkeeper_settings)
+    return await call_module("manage_nobles", payload)
+
+
+async def manage_work_orders(action: str = "list",
+                             order_id: int | None = None,
+                             job: str | None = None) -> dict:
+    """List or cancel active manager work orders and inspect manager appointment status
+    via `dfhack_mcp.lua`."""
+    payload: dict = {"action": str(action)}
+    if order_id is not None:
+        payload["order_id"] = int(order_id)
+    if job is not None:
+        payload["job"] = str(job)
+    return await call_module("manage_work_orders", payload)
+
+
+async def alerts_and_wellbeing() -> dict:
+    """Structured threat/opportunity radar (popups, caravans, hostiles, unpastured grazers,
+    strange moods) and citizen wellbeing metrics (thirsty, hungry, drowsy, stressed, wounded)
+    via `dfhack_mcp.lua`."""
+    return await call_module("alerts_and_wellbeing", {})
+
+
+async def gather_and_items(action: str = "gather_plants",
+                           x0: int | None = None,
+                           y0: int | None = None,
+                           x1: int | None = None,
+                           y1: int | None = None,
+                           elev: int | None = None,
+                           item_filter: str | None = None,
+                           ban_brew: bool = True) -> dict:
+    """Designate surface shrubs for plant gathering, mark ground items for dump/undump/forbid/reclaim,
+    or protect seed/brewable plant stocks from cooking via `dfhack_mcp.lua`."""
+    payload: dict = {"action": str(action), "ban_brew": bool(ban_brew)}
+    for k, v in (("x0", x0), ("y0", y0), ("x1", x1), ("y1", y1), ("elev", elev)):
+        if v is not None:
+            payload[k] = int(v)
+    if item_filter is not None:
+        payload["item_filter"] = str(item_filter)
+    return await call_module("gather_and_items", payload)
+

@@ -372,7 +372,42 @@ class CreateZoneRequest(BaseModel):
     elev: int = Field(..., description="In-game Elevation (map panel number)")
     w: int = Field(5, ge=1, le=31, description="Zone width in tiles")
     h: int = Field(5, ge=1, le=31, description="Zone height in tiles")
+    owner_unit_id: int | None = Field(None, description="Optional citizen unit ID to assign as owner immediately (for office, bedroom, dining, or tomb zones)")
     acknowledge_risk: bool = Field(False, description="Must be True to execute (zone creation via RPC is opt-in)")
+
+
+class AssignZoneOwnerRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    building_id: int = Field(..., description="Zone building ID from list_zones or create_zone")
+    unit_id: int | None = Field(None, description="Citizen unit ID to assign as owner (pass -1 to unassign, or omit to read current owner and room description)")
+
+
+class AssignPastureRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    building_id: int | None = Field(None, description="Pen/Pasture zone building ID from list_zones or create_zone (omit to target the first Pen zone)")
+    all_grazers: bool = Field(True, description="Automatically assign all live tame grazing animals (yaks, sheep, goats, horses, cavies, rabbits) to this pasture")
+    species: str | None = Field(None, description="Optional species substring filter (e.g. 'YAK', 'SHEEP', 'DOG')")
+    unit_ids: list[int] | None = Field(None, description="Optional explicit list of animal unit IDs to assign")
+
+
+class ManageNoblesRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    action: str = Field("list", description="One of 'list' (inspect all noble positions), 'assign' (assign a specific position to unit_id), or 'auto_assign' (fill vacant MANAGER, BOOKKEEPER, BROKER, CHIEF_MEDICAL_DWARF positions across living citizens and set max bookkeeper precision)")
+    position: str | None = Field(None, description="Noble position code for action='assign' (e.g. 'MANAGER', 'BOOKKEEPER', 'BROKER', 'CHIEF_MEDICAL_DWARF', 'MILITIA_COMMANDER', 'SHERIFF')")
+    unit_id: int | None = Field(None, description="Citizen unit ID for action='assign' (pass -1 to vacate)")
+    bookkeeper_settings: int | None = Field(None, ge=0, le=4, description="Optional bookkeeper precision level (0..4, where 4 is maximum precision)")
+
+
+class GatherAndItemsRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    action: str = Field("gather_plants", description="One of 'gather_plants' (designate surface shrubs in box for herbalism/plant gathering), 'dump' (flag ground items in box for dumping), 'undump', 'forbid', 'reclaim', or 'protect_seeds' (run ban-cooking seeds & brew so cooks never destroy seed stock)")
+    x0: int | None = Field(None, description="Box start X tile coordinate (required for gather_plants, dump, undump, forbid, reclaim)")
+    y0: int | None = Field(None, description="Box start Y tile coordinate")
+    x1: int | None = Field(None, description="Box end X tile coordinate")
+    y1: int | None = Field(None, description="Box end Y tile coordinate")
+    elev: int | None = Field(None, description="In-game Elevation (map panel number)")
+    item_filter: str | None = Field(None, description="Optional item description substring filter for dump/undump/forbid/reclaim (e.g. 'boulder', 'stone', 'corpse', 'log')")
+    ban_brew: bool = Field(True, description="For action='protect_seeds': also ban cooking brewable plants in addition to seeds (default True)")
 
 
 class LaborChange(BaseModel):
@@ -389,6 +424,8 @@ class SetUnitLaborsRequest(BaseModel):
 
 class WorkOrderRequest(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
+    action: str | None = Field(None, description="One of 'create' (default when job or json is given), 'list' (default when job is omitted: inspect active manager orders & manager status), or 'cancel' (remove matching order_id or job)")
+    order_id: int | None = Field(None, description="Manager order ID to cancel when action='cancel'")
     job: str | None = Field(None, description="df.job_type name (e.g. 'MakeBarrel', 'MakeBed', 'MakeTable', 'MakeChair', 'BrewDrink', 'MakeCharcoal', 'SmeltOre')")
     amount: int | None = Field(None, ge=1, description="Total amount to produce")
     material: str | None = Field(None, description="Optional material filter (e.g. 'rock', 'wood')")
@@ -2624,6 +2661,13 @@ async def create_zone(request: CreateZoneRequest):
         except Exception:
             pass
         res = await LO.create_zone(dec, str(body["kind"]), x0, y0, e, w, h)
+        if body.get("owner_unit_id") is not None and res.get("building_id") is not None:
+            own = await LO.assign_zone_owner(int(res["building_id"]), int(body["owner_unit_id"]))
+            res["owner"] = {
+                "owner_id": own.get("owner_id"),
+                "owner_name": own.get("owner_name"),
+                "room_description": own.get("room_description"),
+            }
     except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
         return {"success": False, "error": str(e)}
     world.cache.reset()
@@ -2667,8 +2711,22 @@ async def set_unit_labors(request: SetUnitLaborsRequest):
 
 @app.post("/work-order", operation_id="work_order")
 async def work_order(request: WorkOrderRequest):
-    """THE MANAGER'S WORK-ORDER SCREEN (`j-m-q`), driven. Body: {"job":"MakeBarrel","amount":5} (translated to the JSON form this build requires) or raw {"json":"{\"job\":\"MilkCreature\"}"}. Jobs are df.job_type names (MakeCharcoal, MakeTable, MakeChair, MakeBarrel, MakeRockBag, SmeltOre, FurnaceSmelt, CraftBoneCarving, ...). Use this to keep blocks/barrels/beds in production - the usual reason a planned building never gets built. Verify with the server log: it prints "Queuing <job> xN"."""
+    """THE MANAGER'S WORK-ORDER SCREEN (`j-m-q`), driven.
+    - Create: `{"job":"MakeBarrel","amount":5}` (or raw `{"json":"{\"job\":\"MilkCreature\"}"}`).
+    - List: `{"action":"list"}` (or `{}`) returns all active manager orders (`amount_left`, `amount_total`, `validated`, `active`) and whether a `MANAGER` noble is appointed (`has_manager`).
+    - Cancel: `{"action":"cancel","order_id":0}` (or `{"action":"cancel","job":"MakeBarrel"}`).
+    Jobs are df.job_type names (MakeCharcoal, MakeBed, MakeTable, MakeChair, MakeBarrel, ConstructMechanisms, BrewDrink, SmeltOre, ...)."""
     body = await _as_dict(request)
+    act = str(body.get("action") or ("create" if ("job" in body or "json" in body) else "list")).strip().lower()
+    if act in ("list", "cancel"):
+        try:
+            res = await LO.manage_work_orders(action=act,
+                                              order_id=body.get("order_id"),
+                                              job=body.get("job"))
+            return {"success": True, **res}
+        except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+            return {"success": False, "error": str(e)}
+
     # Verified live: this build's workorder.lua parses its FIRST argument as JSON, so the
     # documented `workorder <jobtype> <amount>` positional form fails with
     # "can't parse JSON at byte 1 of: CollectRock 10". Build the JSON form ourselves.
@@ -2676,7 +2734,7 @@ async def work_order(request: WorkOrderRequest):
         spec = body["json"] if isinstance(body["json"], str) else json.dumps(body["json"])
     else:
         if "job" not in body:
-            return {"error": "give job (a df.job_type name) or json"}
+            return {"error": "give job (a df.job_type name), json, or action='list'|'cancel'"}
         spec_obj = {"job": str(body["job"])}
         if "amount" in body:
             spec_obj["amount_total"] = int(body["amount"])
@@ -2690,8 +2748,20 @@ async def work_order(request: WorkOrderRequest):
     except DFHackError as e:
         return {"success": False, "error": str(e),
                 "hint": "job name must be a df.job_type; 'workorder -l <filter>' lists types (its output streams to the server log)"}
-    return {"success": True, "args": args,
-            "note": "order enqueued; workorder's console reply streams to this server's log"}
+    readback = {}
+    try:
+        readback = await LO.manage_work_orders(action="list")
+    except Exception:
+        pass
+    out = {"success": True, "args": args,
+           "note": "order enqueued; workorder's console reply streams to this server's log"}
+    if readback:
+        out["has_manager"] = readback.get("has_manager")
+        out["orders_count"] = readback.get("count")
+        out["orders"] = readback.get("orders")
+        if readback.get("has_manager") is False:
+            out["warning"] = "No MANAGER noble is currently appointed; appoint one with manage_nobles(action='auto_assign') so work orders get validated."
+    return out
 
 @app.get("/world-cache-reset", operation_id="world_cache_reset")
 async def world_cache_reset():
@@ -2807,6 +2877,100 @@ async def configure_farmplot(request: ConfigureFarmplotRequest):
             summer=bool(body.get("summer", False)),
             autumn=bool(body.get("autumn", False)),
             winter=bool(body.get("winter", False)),
+        )
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/assign-zone-owner", operation_id="assign_zone_owner")
+async def assign_zone_owner(request: AssignZoneOwnerRequest):
+    """Assign (or inspect) the citizen owner of an activity zone (`Office`, `Bedroom`,
+    `DiningHall`, `Tomb`) via `dfhack.buildings.setOwner` and `getRoomDescription`. In DF v50+/v53,
+    rooms are activity zones, and once population exceeds 20 the Manager noble requires an
+    assigned `Office` zone (with a chair/throne) to validate manager work orders."""
+    body = await _as_dict(request)
+    try:
+        res = await LO.assign_zone_owner(
+            building_id=int(body["building_id"]),
+            unit_id=body.get("unit_id"),
+        )
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/assign-pasture", operation_id="assign_pasture")
+async def assign_pasture(request: AssignPastureRequest):
+    """Assign tame grazing animals (yaks, sheep, goats, horses, cavies, rabbits — or specific
+    `unit_ids` / `species`) to a Pen/Pasture activity zone so dwarves lead them onto grass
+    and they do not starve indoors. Defaults to `all_grazers=True` and targets the first Pen
+    zone when `building_id` is omitted."""
+    body = await _as_dict(request)
+    try:
+        res = await LO.assign_pasture(
+            building_id=body.get("building_id"),
+            unit_ids=body.get("unit_ids"),
+            all_grazers=bool(body.get("all_grazers", True)),
+            species=body.get("species"),
+        )
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/manage-nobles", operation_id="manage_nobles")
+async def manage_nobles(request: ManageNoblesRequest):
+    """List, assign, or auto-assign fortress noble positions (`MANAGER`, `BOOKKEEPER`,
+    `BROKER`, `CHIEF_MEDICAL_DWARF`, `MILITIA_COMMANDER`, `SHERIFF`, etc.) and set bookkeeper
+    precision (`bookkeeper_settings=4` = maximum precision). On a fresh embark, `MANAGER`,
+    `BOOKKEEPER`, `BROKER`, and `CHIEF_MEDICAL_DWARF` are vacant (`histfig=-1`); calling
+    `manage_nobles(action='auto_assign')` appoints living citizens to all vacant essential
+    roles and sets highest bookkeeper accuracy."""
+    body = await _as_dict(request)
+    try:
+        res = await LO.manage_nobles(
+            action=str(body.get("action", "list")),
+            position=body.get("position"),
+            unit_id=body.get("unit_id"),
+            bookkeeper_settings=body.get("bookkeeper_settings"),
+        )
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/alerts", operation_id="alerts_and_wellbeing")
+async def alerts_and_wellbeing():
+    """Time-critical fortress alerts and citizen wellbeing radar: checks for blocking modal UI
+    popups (`world.status.popups`), active caravans (`plotinfo.caravans`), hostile invaders on
+    the map, unpastured grazing animals at risk of starvation, strange moods/tantrums, and
+    per-citizen thirst, hunger, drowsiness, stress, and wounds."""
+    try:
+        res = await LO.alerts_and_wellbeing()
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/gather-and-items", operation_id="gather_and_items")
+async def gather_and_items(request: GatherAndItemsRequest):
+    """Perform Quickstart surface plant gathering, ground item dump/forbid flagging, or
+    seed/brewable cooking protection:
+    - `action='gather_plants'`: designate explored surface shrubs in `[x0..x1, y0..y1]` at `elev` for herbalism/gathering (`d -> p`).
+    - `action='dump' | 'undump' | 'forbid' | 'reclaim'`: set or clear `dump` / `forbid` flags on loose ground items in `[x0..x1, y0..y1]` at `elev` (with optional `item_filter`, e.g. `'boulder'`).
+    - `action='protect_seeds'`: run `ban-cooking seeds` (and `ban-cooking brew` when `ban_brew=True`) so kitchen jobs never destroy seed stock."""
+    body = await _as_dict(request)
+    try:
+        res = await LO.gather_and_items(
+            action=str(body.get("action", "gather_plants")),
+            x0=body.get("x0"),
+            y0=body.get("y0"),
+            x1=body.get("x1"),
+            y1=body.get("y1"),
+            elev=body.get("elev"),
+            item_filter=body.get("item_filter"),
+            ban_brew=bool(body.get("ban_brew", True)),
         )
         return {"success": True, **res}
     except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:

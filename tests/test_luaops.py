@@ -277,7 +277,8 @@ def test_post_endpoints_use_typed_pydantic_models_and_fog_dig_helpers():
         "DigBox", "StairShaftSpec", "SendDigCommandRequest",
         "PlaceBuildingRequest", "RemoveBuildingRequest", "CreateStockpileRequest",
         "ConfigureStockpileRequest", "CreateZoneRequest", "SetUnitLaborsRequest",
-        "WorkOrderRequest",
+        "WorkOrderRequest", "ConfigureFarmplotRequest", "AssignZoneOwnerRequest",
+        "AssignPastureRequest", "ManageNoblesRequest", "GatherAndItemsRequest",
     ):
         assert f"class {model_name}(BaseModel):" in main_src, f"missing Pydantic schema {model_name}"
 
@@ -304,6 +305,9 @@ def test_server_side_lua_module_bridge_and_json_dispatch():
     for required in ("--@ module = true", "M.VERSION", "function M.dispatch(",
                      "function OPS.game_paths(", "function OPS.observe_status(",
                      "function OPS.building_status(", "function OPS.configure_farmplot(",
+                     "function OPS.assign_zone_owner(", "function OPS.assign_pasture(",
+                     "function OPS.manage_nobles(", "function OPS.manage_work_orders(",
+                     "function OPS.alerts_and_wellbeing(", "function OPS.gather_and_items(",
                      "MCP_JSON|"):
         assert required in lua_src, f"dfhack_mcp.lua missing {required}"
 
@@ -321,6 +325,18 @@ def test_server_side_lua_module_bridge_and_json_dispatch():
             if "NO_SUCH_PLANT" in expr:
                 return 'MCP_JSON|{"ok":false,"op":"configure_farmplot","error":"no plant raw matching \'NO_SUCH_PLANT\'"}'
             return 'MCP_JSON|{"ok":true,"op":"configure_farmplot","result":{"building_id":19,"crop_set":"MUSHROOM_HELMET_PLUMP","seasons_updated":["spring","summer","autumn","winter"]}}'
+        if '"assign_zone_owner"' in expr:
+            return 'MCP_JSON|{"ok":true,"op":"assign_zone_owner","result":{"building_id":7,"zone_type":"Office","owner_id":6488,"owner_name":"Urist McManager"}}'
+        if '"assign_pasture"' in expr:
+            return 'MCP_JSON|{"ok":true,"op":"assign_pasture","result":{"building_id":8,"newly_assigned_count":6,"total_assigned":6,"unassigned_grazers_remaining":0}}'
+        if '"manage_nobles"' in expr:
+            return 'MCP_JSON|{"ok":true,"op":"manage_nobles","result":{"action":"auto_assign","bookkeeper_settings":4,"changes":[{"position":"MANAGER","unit_id":6488}]}}'
+        if '"manage_work_orders"' in expr:
+            return 'MCP_JSON|{"ok":true,"op":"manage_work_orders","result":{"action":"list","count":1,"has_manager":true,"orders":[{"order_id":0,"job":"MakeBed","amount_left":5,"amount_total":5}]}}'
+        if '"alerts_and_wellbeing"' in expr:
+            return 'MCP_JSON|{"ok":true,"op":"alerts_and_wellbeing","result":{"alerts_count":1,"alerts":[{"kind":"unpastured_grazers","severity":"warning"}],"wellbeing":{"citizens":7,"thirsty":0,"hungry":0}}}'
+        if '"gather_and_items"' in expr:
+            return 'MCP_JSON|{"ok":true,"op":"gather_and_items","result":{"action":"protect_seeds","ban_seeds_output":"banned","ban_brew_output":"banned"}}'
         raise AssertionError(f"unexpected lua call: {expr[:120]}")
 
     real_lua = LO._lua
@@ -334,6 +350,18 @@ def test_server_side_lua_module_bridge_and_json_dispatch():
         assert bs["count"] == 1 and bs["buildings"][0]["name"] == "Well"
         fp = asyncio.run(LO.configure_farmplot(building_id=19, crop="MUSHROOM_HELMET_PLUMP"))
         assert fp["crop_set"] == "MUSHROOM_HELMET_PLUMP"
+        zo = asyncio.run(LO.assign_zone_owner(building_id=7, unit_id=6488))
+        assert zo["owner_id"] == 6488 and zo["zone_type"] == "Office"
+        pa = asyncio.run(LO.assign_pasture(building_id=8, all_grazers=True))
+        assert pa["newly_assigned_count"] == 6 and pa["unassigned_grazers_remaining"] == 0
+        nb = asyncio.run(LO.manage_nobles(action="auto_assign"))
+        assert nb["bookkeeper_settings"] == 4 and nb["changes"][0]["position"] == "MANAGER"
+        wo = asyncio.run(LO.manage_work_orders(action="list"))
+        assert wo["count"] == 1 and wo["has_manager"] is True
+        al = asyncio.run(LO.alerts_and_wellbeing())
+        assert al["alerts_count"] == 1 and al["wellbeing"]["citizens"] == 7
+        gi = asyncio.run(LO.gather_and_items(action="protect_seeds"))
+        assert gi["action"] == "protect_seeds"
         try:
             asyncio.run(LO.configure_farmplot(building_id=19, crop="NO_SUCH_PLANT"))
             raise AssertionError("expected LuaOpError on unknown plant")

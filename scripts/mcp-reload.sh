@@ -115,7 +115,7 @@ for line in raw.splitlines():
 d=json.loads(raw)
 ts=sorted(t["name"] for t in d["result"]["tools"])
 print(f"  {len(ts)} tools: {", ".join(ts)}")
-need={"look","fort_progress","world_zone","world_map","world_objects","world_delta","transitions","building_status","configure_farmplot","game_paths"}
+need={"look","fort_progress","world_map","world_objects","world_delta","transitions","building_status","configure_farmplot","alerts_and_wellbeing","manage_nobles","assign_pasture","assign_zone_owner","gather_and_items"}
 missing=need-set(ts)
 print("  PREPROCESSED LAYER:", "complete" if not missing else f"MISSING {sorted(missing)} -> restart the server, code is not loaded")
 '

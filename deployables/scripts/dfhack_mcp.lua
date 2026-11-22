@@ -315,6 +315,757 @@ function OPS.configure_farmplot(args)
   }
 end
 
+local function unit_readable_name(u)
+  if u == nil then return nil end
+  local nm = nil
+  pcall(function() nm = dfhack.units.getReadableName(u) end)
+  if not nm or nm == "" then
+    pcall(function() nm = tostring(dfhack.units.getRaceName(u)) .. "#" .. tostring(u.id) end)
+  end
+  return nm or ("unit#" .. tostring(u.id))
+end
+
+-- 5. assign_zone_owner: set or read the owner of a room/activity zone (Office, Bedroom, DiningHall, Tomb)
+function OPS.assign_zone_owner(args)
+  local bid = args and tonumber(args.building_id or args.zone_id) or nil
+  if bid == nil then error("building_id is required") end
+  local z = nil
+  for _, zz in ipairs(df.global.world.buildings.other.ANY_ZONE) do
+    if zz.id == bid then z = zz; break end
+  end
+  if z == nil then error("activity zone not found with building_id " .. tostring(bid)) end
+
+  if args and args.unit_id ~= nil then
+    local uid = tonumber(args.unit_id)
+    if uid == -1 then
+      pcall(function() dfhack.buildings.setOwner(z, nil) end)
+    else
+      local u = df.unit.find(uid)
+      if u == nil then error("unit not found with unit_id " .. tostring(uid)) end
+      local ok_set, err_set = pcall(function() dfhack.buildings.setOwner(z, u) end)
+      if not ok_set then error("setOwner failed: " .. tostring(err_set)) end
+    end
+  end
+
+  local owner = nil
+  pcall(function() owner = dfhack.buildings.getOwner(z) end)
+  local room_desc = nil
+  pcall(function() room_desc = dfhack.buildings.getRoomDescription(z, owner) end)
+  local tname = "UNKNOWN"
+  pcall(function() tname = tostring(df.civzone_type[z.type] or z.type) end)
+  return {
+    building_id = tonumber(z.id),
+    zone_type_id = tonumber(z.type),
+    zone_type = tname,
+    x0 = tonumber(z.x1),
+    x1 = tonumber(z.x2),
+    y0 = tonumber(z.y1),
+    y1 = tonumber(z.y2),
+    elev = tonumber(z.z) - M.GAME_Z_OFFSET,
+    owner_id = owner and tonumber(owner.id) or nil,
+    owner_name = owner and unit_readable_name(owner) or nil,
+    room_description = room_desc,
+  }
+end
+
+-- 6. assign_pasture: assign tame grazing animals (or specific unit_ids) to a Pen/Pasture zone
+function OPS.assign_pasture(args)
+  local bid = args and tonumber(args.building_id or args.zone_id) or nil
+  local pen_type = df.civzone_type.Pen
+  local z = nil
+  for _, zz in ipairs(df.global.world.buildings.other.ANY_ZONE) do
+    if (bid ~= nil and zz.id == bid) or (bid == nil and zz.type == pen_type) then
+      z = zz
+      break
+    end
+  end
+  if z == nil then
+    error(bid and ("zone not found with building_id " .. tostring(bid)) or "no Pen/Pasture zone found; create one first with create_zone(kind='pen')")
+  end
+  if z.type ~= pen_type then
+    error("zone " .. tostring(z.id) .. " is not a Pen/Pasture (type=" .. tostring(z.type) .. ")")
+  end
+
+  local want_ids = {}
+  local has_explicit = false
+  if args and type(args.unit_ids) == "table" and #args.unit_ids > 0 then
+    has_explicit = true
+    for _, id in ipairs(args.unit_ids) do
+      if tonumber(id) then want_ids[tonumber(id)] = true end
+    end
+  end
+  local all_grazers = true
+  if args and args.all_grazers ~= nil then all_grazers = (args.all_grazers == true) end
+  local species_filter = args and args.species and tostring(args.species):upper() or nil
+
+  local newly_assigned = {}
+  if has_explicit or all_grazers or species_filter ~= nil then
+    for _, u in ipairs(df.global.world.units.active) do
+      local alive, tame, cit, grazer = false, false, false, false
+      pcall(function() alive = dfhack.units.isAlive(u) end)
+      pcall(function() tame = dfhack.units.isTame(u) end)
+      pcall(function() cit = dfhack.units.isCitizen(u) end)
+      pcall(function() grazer = dfhack.units.isGrazer(u) end)
+      local race = "?"
+      pcall(function() race = tostring(dfhack.units.getRaceName(u)):upper() end)
+      local match = false
+      if has_explicit then
+        match = (want_ids[tonumber(u.id)] == true)
+      elseif alive and tame and (not cit) then
+        if species_filter ~= nil then
+          match = (race:find(species_filter, 1, true) ~= nil)
+        elseif all_grazers then
+          match = grazer
+        end
+      end
+      if match and alive then
+        local uid = tonumber(u.id)
+        -- Remove from any other pen/pit zone's assigned_units first
+        for _, oz in ipairs(df.global.world.buildings.other.ANY_ZONE) do
+          pcall(function()
+            for idx = #oz.assigned_units - 1, 0, -1 do
+              if oz.assigned_units[idx] == uid then
+                oz.assigned_units:erase(idx)
+              end
+            end
+          end)
+        end
+        -- Remove any existing general_ref_building_civzone_assignedst on the unit
+        pcall(function()
+          for idx = #u.general_refs - 1, 0, -1 do
+            local r = u.general_refs[idx]
+            if df.general_ref_building_civzone_assignedst:is_instance(r) then
+              u.general_refs:erase(idx)
+              pcall(function() r:delete() end)
+            end
+          end
+        end)
+        -- Link unit <-> pen zone
+        z.assigned_units:insert("#", uid)
+        pcall(function()
+          local ref = df.general_ref_building_civzone_assignedst:new()
+          ref.building_id = z.id
+          u.general_refs:insert("#", ref)
+        end)
+        newly_assigned[#newly_assigned + 1] = {
+          unit_id = uid,
+          species = race,
+          grazer = grazer,
+        }
+      end
+    end
+  end
+
+  local assigned_list = {}
+  local assigned_set = {}
+  pcall(function()
+    for i = 0, #z.assigned_units - 1 do
+      local uid = tonumber(z.assigned_units[i])
+      if uid then
+        assigned_set[uid] = true
+        local u = df.unit.find(uid)
+        local race = u and tostring(dfhack.units.getRaceName(u)):upper() or "?"
+        local grazer = false
+        if u then pcall(function() grazer = dfhack.units.isGrazer(u) end) end
+        assigned_list[#assigned_list + 1] = {
+          unit_id = uid,
+          species = race,
+          grazer = grazer,
+        }
+      end
+    end
+  end)
+
+  local unassigned_grazers = {}
+  for _, u in ipairs(df.global.world.units.active) do
+    local alive, tame, cit, grazer = false, false, false, false
+    pcall(function() alive = dfhack.units.isAlive(u) end)
+    pcall(function() tame = dfhack.units.isTame(u) end)
+    pcall(function() cit = dfhack.units.isCitizen(u) end)
+    pcall(function() grazer = dfhack.units.isGrazer(u) end)
+    if alive and tame and (not cit) and grazer then
+      local has_zone = assigned_set[tonumber(u.id)] == true
+      if not has_zone then
+        pcall(function()
+          for i = 0, #u.general_refs - 1 do
+            if df.general_ref_building_civzone_assignedst:is_instance(u.general_refs[i]) then
+              has_zone = true
+              break
+            end
+          end
+        end)
+      end
+      if not has_zone then
+        unassigned_grazers[#unassigned_grazers + 1] = {
+          unit_id = tonumber(u.id),
+          species = tostring(dfhack.units.getRaceName(u)):upper(),
+        }
+      end
+    end
+  end
+
+  return {
+    building_id = tonumber(z.id),
+    x0 = tonumber(z.x1),
+    x1 = tonumber(z.x2),
+    y0 = tonumber(z.y1),
+    y1 = tonumber(z.y2),
+    elev = tonumber(z.z) - M.GAME_Z_OFFSET,
+    newly_assigned_count = #newly_assigned,
+    newly_assigned = newly_assigned,
+    total_assigned = #assigned_list,
+    assigned_animals = assigned_list,
+    unassigned_grazers_remaining = #unassigned_grazers,
+    unassigned_grazers = unassigned_grazers,
+  }
+end
+
+-- 7. manage_nobles: list, assign, or auto_assign fortress noble positions + bookkeeper precision
+function OPS.manage_nobles(args)
+  local action = (args and args.action and tostring(args.action):lower()) or "list"
+  local ent = df.global.plotinfo.main.fortress_entity
+  if ent == nil then error("no fortress_entity available") end
+
+  local function assign_one_noble(pos_code_upper, u)
+    local pos_obj = nil
+    for _, p in ipairs(ent.positions.own) do
+      if tostring(p.code):upper() == pos_code_upper then
+        pos_obj = p
+        break
+      end
+    end
+    if pos_obj == nil then
+      error("noble position '" .. tostring(pos_code_upper) .. "' not found in fortress_entity.positions.own")
+    end
+    local asn_obj = nil
+    for _, a in ipairs(ent.positions.assignments) do
+      if a.position_id == pos_obj.id then
+        asn_obj = a
+        break
+      end
+    end
+    if asn_obj == nil then
+      error("no assignment slot found for position '" .. tostring(pos_code_upper) .. "'")
+    end
+    local new_hf_id = u and tonumber(u.hist_figure_id) or -1
+    if u ~= nil and (new_hf_id == nil or new_hf_id < 0) then
+      error("unit " .. tostring(u.id) .. " has no historical figure id")
+    end
+    local old_hf_id = tonumber(asn_obj.histfig) or -1
+    if old_hf_id >= 0 and old_hf_id ~= new_hf_id then
+      local old_hf = df.historical_figure.find(old_hf_id)
+      if old_hf ~= nil then
+        pcall(function()
+          for idx = #old_hf.entity_links - 1, 0, -1 do
+            local el = old_hf.entity_links[idx]
+            if df.histfig_entity_link_positionst:is_instance(el) and el.entity_id == ent.id and el.assignment_id == asn_obj.id then
+              old_hf.entity_links:erase(idx)
+              pcall(function() el:delete() end)
+            end
+          end
+        end)
+      end
+    end
+    asn_obj.histfig = new_hf_id
+    asn_obj.histfig2 = new_hf_id
+    if new_hf_id >= 0 then
+      local hf = df.historical_figure.find(new_hf_id)
+      if hf ~= nil then
+        local has_link = false
+        pcall(function()
+          for i = 0, #hf.entity_links - 1 do
+            local el = hf.entity_links[i]
+            if df.histfig_entity_link_positionst:is_instance(el) and el.entity_id == ent.id and el.assignment_id == asn_obj.id then
+              has_link = true
+              break
+            end
+          end
+        end)
+        if not has_link then
+          pcall(function()
+            local link = df.histfig_entity_link_positionst:new()
+            link.entity_id = ent.id
+            link.link_strength = 100
+            link.assignment_id = asn_obj.id
+            link.start_year = df.global.cur_year
+            hf.entity_links:insert("#", link)
+          end)
+        end
+      end
+    end
+    return {
+      position = pos_code_upper,
+      assignment_id = tonumber(asn_obj.id),
+      unit_id = u and tonumber(u.id) or nil,
+      unit_name = u and unit_readable_name(u) or nil,
+      histfig_id = new_hf_id,
+    }
+  end
+
+  local changes = {}
+  if action == "assign" then
+    local pos_code = args and args.position and tostring(args.position):upper():gsub("[ %-]", "_") or nil
+    if not pos_code or pos_code == "" then error("position is required for action='assign' (e.g. MANAGER, BOOKKEEPER, BROKER, CHIEF_MEDICAL_DWARF)") end
+    if args.unit_id == nil then error("unit_id is required for action='assign'") end
+    local uid = tonumber(args.unit_id)
+    local u = nil
+    if uid ~= -1 then
+      u = df.unit.find(uid)
+      if u == nil then error("unit not found with unit_id " .. tostring(uid)) end
+      if not dfhack.units.isCitizen(u) then error("unit " .. tostring(uid) .. " is not a fortress citizen") end
+    end
+    changes[#changes + 1] = assign_one_noble(pos_code, u)
+    if pos_code == "BOOKKEEPER" and (args.bookkeeper_settings == nil) then
+      pcall(function() df.global.plotinfo.nobles.bookkeeper_settings = 4 end)
+    end
+  elseif action == "auto_assign" then
+    local citizens = {}
+    for _, u in ipairs(df.global.world.units.active) do
+      local cit, alive = false, false
+      pcall(function() cit = dfhack.units.isCitizen(u) end)
+      pcall(function() alive = dfhack.units.isAlive(u) end)
+      if cit and alive and tonumber(u.hist_figure_id) and tonumber(u.hist_figure_id) >= 0 then
+        citizens[#citizens + 1] = u
+      end
+    end
+    if #citizens == 0 then error("no living citizens found to appoint as nobles") end
+    local essential = { "MANAGER", "BOOKKEEPER", "BROKER", "CHIEF_MEDICAL_DWARF" }
+    local c_idx = 1
+    for _, code in ipairs(essential) do
+      local pos_id = nil
+      for _, p in ipairs(ent.positions.own) do
+        if tostring(p.code):upper() == code then pos_id = p.id; break end
+      end
+      if pos_id ~= nil then
+        local cur_hf = -1
+        for _, a in ipairs(ent.positions.assignments) do
+          if a.position_id == pos_id then cur_hf = tonumber(a.histfig) or -1; break end
+        end
+        if cur_hf < 0 then
+          local u = citizens[((c_idx - 1) % #citizens) + 1]
+          c_idx = c_idx + 1
+          changes[#changes + 1] = assign_one_noble(code, u)
+        end
+      end
+    end
+    pcall(function() df.global.plotinfo.nobles.bookkeeper_settings = 4 end)
+  elseif action ~= "list" then
+    error("unknown manage_nobles action '" .. tostring(action) .. "' (expected list, assign, or auto_assign)")
+  end
+
+  if args and args.bookkeeper_settings ~= nil then
+    local bset = math.max(0, math.min(4, tonumber(args.bookkeeper_settings) or 4))
+    pcall(function() df.global.plotinfo.nobles.bookkeeper_settings = bset end)
+  end
+
+  -- Map histfig_id -> citizen unit
+  local hf_to_unit = {}
+  for _, u in ipairs(df.global.world.units.active) do
+    local hfid = tonumber(u.hist_figure_id)
+    if hfid and hfid >= 0 then hf_to_unit[hfid] = u end
+  end
+
+  local pos_by_id = {}
+  for _, p in ipairs(ent.positions.own) do
+    pos_by_id[tonumber(p.id)] = p
+  end
+
+  local positions = {}
+  for _, a in ipairs(ent.positions.assignments) do
+    local p = pos_by_id[tonumber(a.position_id)]
+    if p ~= nil then
+      local hfid = tonumber(a.histfig) or -1
+      local u = (hfid >= 0) and hf_to_unit[hfid] or nil
+      local title = ""
+      pcall(function() title = tostring(p.name[0] or "") end)
+      positions[#positions + 1] = {
+        code = tostring(p.code),
+        title = title,
+        position_id = tonumber(p.id),
+        assignment_id = tonumber(a.id),
+        vacant = (hfid < 0),
+        histfig_id = (hfid >= 0) and hfid or nil,
+        unit_id = u and tonumber(u.id) or nil,
+        unit_name = u and unit_readable_name(u) or nil,
+      }
+    end
+  end
+
+  local bk_settings = nil
+  pcall(function() bk_settings = tonumber(df.global.plotinfo.nobles.bookkeeper_settings) end)
+  return {
+    action = action,
+    changes = changes,
+    bookkeeper_settings = bk_settings,
+    positions = positions,
+  }
+end
+
+-- 8. manage_work_orders: list or cancel manager work orders + check manager appointment status
+function OPS.manage_work_orders(args)
+  local action = (args and args.action and tostring(args.action):lower()) or "list"
+  local cancelled = {}
+  if action == "cancel" then
+    local want_id = args and args.order_id and tonumber(args.order_id) or nil
+    local want_job = args and args.job and tostring(args.job):lower() or nil
+    if want_id == nil and want_job == nil then
+      error("order_id or job is required for action='cancel'")
+    end
+    local vec = df.global.world.manager_orders.all
+    for idx = #vec - 1, 0, -1 do
+      local mo = vec[idx]
+      local jtype_name = tostring(df.job_type[mo.job_type] or mo.job_type)
+      local match = false
+      if want_id ~= nil and tonumber(mo.id) == want_id then
+        match = true
+      elseif want_job ~= nil and jtype_name:lower() == want_job then
+        match = true
+      end
+      if match then
+        cancelled[#cancelled + 1] = {
+          order_id = tonumber(mo.id),
+          job = jtype_name,
+          amount_left = tonumber(mo.amount_left),
+          amount_total = tonumber(mo.amount_total),
+        }
+        vec:erase(idx)
+        pcall(function() mo:delete() end)
+      end
+    end
+  end
+
+  local orders = {}
+  pcall(function()
+    for _, mo in ipairs(df.global.world.manager_orders.all) do
+      local jtype_name = tostring(df.job_type[mo.job_type] or mo.job_type)
+      local desc = jtype_name
+      pcall(function() desc = dfhack.job.getManagerOrderName(mo) or jtype_name end)
+      local validated, active = false, false
+      pcall(function() validated = (mo.status.validated == true) end)
+      pcall(function() active = (mo.status.active == true) end)
+      orders[#orders + 1] = {
+        order_id = tonumber(mo.id),
+        job = jtype_name,
+        description = desc,
+        amount_left = tonumber(mo.amount_left),
+        amount_total = tonumber(mo.amount_total),
+        validated = validated,
+        active = active,
+        frequency = tostring(mo.frequency),
+        workshop_id = tonumber(mo.workshop_id),
+      }
+    end
+  end)
+
+  local has_manager = false
+  pcall(function()
+    local ent = df.global.plotinfo.main.fortress_entity
+    local mgr_pos_id = nil
+    for _, p in ipairs(ent.positions.own) do
+      if tostring(p.code):upper() == "MANAGER" then mgr_pos_id = p.id; break end
+    end
+    if mgr_pos_id ~= nil then
+      for _, a in ipairs(ent.positions.assignments) do
+        if a.position_id == mgr_pos_id and tonumber(a.histfig) and tonumber(a.histfig) >= 0 then
+          has_manager = true
+          break
+        end
+      end
+    end
+  end)
+
+  return {
+    action = action,
+    count = #orders,
+    has_manager = has_manager,
+    cancelled = cancelled,
+    orders = orders,
+  }
+end
+
+-- 9. alerts_and_wellbeing: structured threat/opportunity radar + citizen wellbeing metrics
+function OPS.alerts_and_wellbeing(_args)
+  local alerts = {}
+  local popup_count = 0
+  pcall(function() popup_count = #df.global.world.status.popups end)
+  if popup_count > 0 then
+    alerts[#alerts + 1] = {
+      kind = "popup_open",
+      severity = "blocking",
+      detail = tostring(popup_count) .. " modal popup dialog(s) currently open in the game UI",
+      suggested_action = "inspect with copy_screen and dismiss via pass_keyboard_event",
+    }
+  end
+
+  local caravan_count = 0
+  pcall(function()
+    for _, c in ipairs(df.global.plotinfo.caravans) do
+      local tstate = tonumber(c.trade_state) or 0
+      local time_rem = tonumber(c.time_remaining) or 0
+      if tstate > 0 or time_rem > 0 then
+        caravan_count = caravan_count + 1
+        alerts[#alerts + 1] = {
+          kind = "caravan_present",
+          severity = "opportunity",
+          detail = "Caravan present (trade_state=" .. tostring(tstate) .. ", time_remaining=" .. tostring(time_rem) .. ")",
+          suggested_action = "ensure a Trade Depot is built and a Broker is appointed via manage_nobles",
+        }
+      end
+    end
+  end)
+
+  local citizens = 0
+  local thirsty, hungry, drowsy, stressed, wounded = 0, 0, 0, 0, 0
+  local strange_moods = {}
+  local citizen_issues = {}
+  local hostiles = {}
+  local unassigned_grazers = 0
+
+  for _, u in ipairs(df.global.world.units.active) do
+    local alive = false
+    pcall(function() alive = dfhack.units.isAlive(u) end)
+    if alive then
+      local cit = false
+      pcall(function() cit = dfhack.units.isCitizen(u) end)
+      if cit then
+        citizens = citizens + 1
+        local th, hu, sl, st, md, wnd = 0, 0, 0, 0, -1, 0
+        pcall(function() th = tonumber(u.counters2.thirst_timer) or 0 end)
+        pcall(function() hu = tonumber(u.counters2.hunger_timer) or 0 end)
+        pcall(function() sl = tonumber(u.counters2.sleepiness_timer) or 0 end)
+        pcall(function() st = tonumber(u.status.current_soul.personality.stress) or 0 end)
+        pcall(function() md = tonumber(u.mood) or -1 end)
+        pcall(function() wnd = #u.body.wounds end)
+        local flags = {}
+        if th > 25000 then thirsty = thirsty + 1; flags[#flags + 1] = "thirsty(" .. th .. ")" end
+        if hu > 50000 then hungry = hungry + 1; flags[#flags + 1] = "hungry(" .. hu .. ")" end
+        if sl > 50000 then drowsy = drowsy + 1; flags[#flags + 1] = "drowsy(" .. sl .. ")" end
+        if st >= 25000 then stressed = stressed + 1; flags[#flags + 1] = "stressed(" .. st .. ")" end
+        if wnd > 0 then wounded = wounded + 1; flags[#flags + 1] = "wounds(" .. wnd .. ")" end
+        if md ~= -1 then
+          local mname = tostring(df.mood_type[md] or md)
+          strange_moods[#strange_moods + 1] = {
+            unit_id = tonumber(u.id),
+            name = unit_readable_name(u),
+            mood = mname,
+          }
+          flags[#flags + 1] = "mood(" .. mname .. ")"
+        end
+        if #flags > 0 then
+          citizen_issues[#citizen_issues + 1] = {
+            unit_id = tonumber(u.id),
+            name = unit_readable_name(u),
+            issues = flags,
+          }
+        end
+      else
+        local tame = false
+        pcall(function() tame = dfhack.units.isTame(u) end)
+        if tame then
+          local grazer = false
+          pcall(function() grazer = dfhack.units.isGrazer(u) end)
+          if grazer then
+            local has_pen = false
+            pcall(function()
+              for i = 0, #u.general_refs - 1 do
+                if df.general_ref_building_civzone_assignedst:is_instance(u.general_refs[i]) then
+                  has_pen = true
+                  break
+                end
+              end
+            end)
+            if not has_pen then unassigned_grazers = unassigned_grazers + 1 end
+          end
+        else
+          local inv = false
+          pcall(function()
+            inv = (u.flags1.active_invader == true) or (u.flags1.marauder == true)
+               or (u.flags1.invader_origin == true) or (u.flags2.visitor_uninvited == true)
+          end)
+          if inv and #hostiles < 15 then
+            hostiles[#hostiles + 1] = {
+              unit_id = tonumber(u.id),
+              species = tostring(dfhack.units.getRaceName(u)),
+              x = tonumber(u.pos.x),
+              y = tonumber(u.pos.y),
+              elev = tonumber(u.pos.z) - M.GAME_Z_OFFSET,
+            }
+          end
+        end
+      end
+    end
+  end
+
+  if #hostiles > 0 then
+    alerts[#alerts + 1] = {
+      kind = "hostile_units",
+      severity = "critical",
+      detail = tostring(#hostiles) .. " hostile/invader unit(s) detected on the map",
+      suggested_action = "lock entrance doors or retreat citizens indoors",
+    }
+  end
+  if #strange_moods > 0 then
+    alerts[#alerts + 1] = {
+      kind = "strange_mood_or_tantrum",
+      severity = "critical",
+      detail = tostring(#strange_moods) .. " citizen(s) in special mood state",
+      suggested_action = "ensure appropriate craft workshops and raw materials are available",
+    }
+  end
+  if thirsty > 0 or hungry > 0 then
+    alerts[#alerts + 1] = {
+      kind = "citizen_sustenance",
+      severity = "warning",
+      detail = tostring(thirsty) .. " thirsty and " .. tostring(hungry) .. " hungry citizen(s)",
+      suggested_action = "build a Still, gather_plants or configure_farmplot, and queue BrewDrink via work_order",
+    }
+  end
+  if unassigned_grazers > 0 then
+    alerts[#alerts + 1] = {
+      kind = "unpastured_grazers",
+      severity = "warning",
+      detail = tostring(unassigned_grazers) .. " tame grazing animal(s) are not assigned to any Pen/Pasture zone and risk starvation",
+      suggested_action = "create a surface Pen zone with create_zone(kind='pen') and call assign_pasture",
+    }
+  end
+
+  return {
+    alerts_count = #alerts,
+    alerts = alerts,
+    popups_open = popup_count,
+    caravans_present = caravan_count,
+    hostiles = hostiles,
+    unassigned_grazers = unassigned_grazers,
+    wellbeing = {
+      citizens = citizens,
+      thirsty = thirsty,
+      hungry = hungry,
+      drowsy = drowsy,
+      stressed = stressed,
+      wounded = wounded,
+      strange_moods = strange_moods,
+      citizen_issues = citizen_issues,
+    },
+  }
+end
+
+-- 10. gather_and_items: gather surface plants, toggle dump/forbid on items in a box, or protect seeds from cooking
+function OPS.gather_and_items(args)
+  local action = (args and args.action and tostring(args.action):lower()) or "gather_plants"
+  if action == "protect_seeds" then
+    local out1, out2 = "", ""
+    pcall(function() out1 = dfhack.run_command_silent("ban-cooking", "seeds") or "" end)
+    if args and args.ban_brew ~= false then
+      pcall(function() out2 = dfhack.run_command_silent("ban-cooking", "brew") or "" end)
+    end
+    return {
+      action = "protect_seeds",
+      ban_seeds_output = out1:gsub("%s+$", ""),
+      ban_brew_output = out2:gsub("%s+$", ""),
+    }
+  end
+
+  if args == nil or args.x0 == nil or args.y0 == nil or args.x1 == nil or args.y1 == nil or args.elev == nil then
+    error("x0, y0, x1, y1, and elev are required for action='" .. tostring(action) .. "'")
+  end
+  local x0, x1 = math.min(tonumber(args.x0), tonumber(args.x1)), math.max(tonumber(args.x0), tonumber(args.x1))
+  local y0, y1 = math.min(tonumber(args.y0), tonumber(args.y1)), math.max(tonumber(args.y0), tonumber(args.y1))
+  local elev = tonumber(args.elev)
+  local z = elev + M.GAME_Z_OFFSET
+
+  if action == "gather_plants" then
+    local shrubs_found, designated = 0, 0
+    local shrub_shape = df.tiletype_shape.SHRUB
+    local plant_mat = df.tiletype_material.PLANT
+    for y = y0, y1 do
+      for x = x0, x1 do
+        local tt = dfhack.maps.getTileType(x, y, z)
+        local fl = dfhack.maps.getTileFlags(x, y, z)
+        if tt ~= nil and fl ~= nil and (not fl.hidden) then
+          local is_shrub = false
+          pcall(function()
+            local attrs = df.tiletype.attrs[tt]
+            is_shrub = (attrs.shape == shrub_shape) or (attrs.material == plant_mat and attrs.shape ~= df.tiletype_shape.TREE)
+          end)
+          if is_shrub then
+            shrubs_found = shrubs_found + 1
+            if fl.dig ~= df.tile_dig_designation.Default then
+              fl.dig = df.tile_dig_designation.Default
+              designated = designated + 1
+            end
+          end
+        end
+      end
+    end
+    if designated > 0 then
+      pcall(function()
+        local blk = dfhack.maps.getTileBlock(x0, y0, z)
+        if blk then blk.flags.designated = true end
+      end)
+      pcall(dfhack.job.checkDesignationsNow)
+    end
+    return {
+      action = "gather_plants",
+      elev = elev,
+      box = { x0, y0, x1, y1 },
+      shrubs_found = shrubs_found,
+      designated = designated,
+    }
+  elseif action == "dump" or action == "undump" or action == "forbid" or action == "reclaim" then
+    local filter = args.item_filter and tostring(args.item_filter):lower() or nil
+    local matched, updated = 0, 0
+    local samples = {}
+    for _, it in ipairs(df.global.world.items.other.IN_PLAY) do
+      local okp, pos = pcall(function() return it.pos end)
+      if okp and pos and pos.z == z and pos.x >= x0 and pos.x <= x1 and pos.y >= y0 and pos.y <= y1 then
+        local on_ground = false
+        pcall(function()
+          on_ground = (it.flags.on_ground == true) and (not it.flags.in_building) and (not it.flags.construction)
+        end)
+        if on_ground then
+          local desc = ""
+          pcall(function() desc = tostring(dfhack.items.getDescription(it, 0) or "") end)
+          if filter == nil or desc:lower():find(filter, 1, true) ~= nil then
+            matched = matched + 1
+            local chg = false
+            pcall(function()
+              if action == "dump" and (not it.flags.dump) then
+                it.flags.dump = true; chg = true
+              elseif action == "undump" and it.flags.dump then
+                it.flags.dump = false; chg = true
+              elseif action == "forbid" and (not it.flags.forbid) then
+                it.flags.forbid = true; chg = true
+              elseif action == "reclaim" and it.flags.forbid then
+                it.flags.forbid = false; chg = true
+              end
+            end)
+            if chg then updated = updated + 1 end
+            if #samples < 15 then
+              samples[#samples + 1] = {
+                item_id = tonumber(it.id),
+                description = desc,
+                x = tonumber(pos.x),
+                y = tonumber(pos.y),
+              }
+            end
+          end
+        end
+      end
+    end
+    return {
+      action = action,
+      elev = elev,
+      box = { x0, y0, x1, y1 },
+      item_filter = filter,
+      matched = matched,
+      updated = updated,
+      samples = samples,
+    }
+  else
+    error("unknown gather_and_items action '" .. tostring(action) .. "' (expected gather_plants, dump, undump, forbid, reclaim, or protect_seeds)")
+  end
+end
+
 -- ---------------------------------------------------------------------------
 -- Dispatcher: prints a single MCP_JSON|{...} line
 -- ---------------------------------------------------------------------------
