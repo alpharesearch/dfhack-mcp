@@ -368,8 +368,9 @@ function OPS.assign_zone_owner(args)
   }
 end
 
--- 6. assign_pasture: assign tame grazing animals (or specific unit_ids) to a Pen/Pasture zone
+-- 6. assign_pasture: assign, unassign, or clear tame grazing animals on a Pen/Pasture zone
 function OPS.assign_pasture(args)
+  local action = (args and args.action and tostring(args.action):lower()) or "assign"
   local bid = args and tonumber(args.building_id or args.zone_id) or nil
   local pen_type = df.civzone_type.Pen
   local z = nil
@@ -399,61 +400,97 @@ function OPS.assign_pasture(args)
   local species_filter = args and args.species and tostring(args.species):upper() or nil
 
   local newly_assigned = {}
-  if has_explicit or all_grazers or species_filter ~= nil then
-    for _, u in ipairs(df.global.world.units.active) do
-      local alive, tame, cit, grazer = false, false, false, false
-      pcall(function() alive = dfhack.units.isAlive(u) end)
-      pcall(function() tame = dfhack.units.isTame(u) end)
-      pcall(function() cit = dfhack.units.isCitizen(u) end)
-      pcall(function() grazer = dfhack.units.isGrazer(u) end)
-      local race = "?"
-      pcall(function() race = tostring(dfhack.units.getRaceName(u)):upper() end)
-      local match = false
-      if has_explicit then
-        match = (want_ids[tonumber(u.id)] == true)
-      elseif alive and tame and (not cit) then
-        if species_filter ~= nil then
-          match = (race:find(species_filter, 1, true) ~= nil)
-        elseif all_grazers then
-          match = grazer
+  local unassigned_now = {}
+  if action == "clear" or action == "unassign" then
+    for idx = #z.assigned_units - 1, 0, -1 do
+      local uid = tonumber(z.assigned_units[idx])
+      local u = uid and df.unit.find(uid) or nil
+      local race = u and tostring(dfhack.units.getRaceName(u)):upper() or "?"
+      local should_remove = (action == "clear")
+      if not should_remove then
+        if has_explicit then
+          should_remove = (want_ids[uid] == true)
+        elseif species_filter ~= nil then
+          should_remove = (race:find(species_filter, 1, true) ~= nil)
+        else
+          should_remove = true
         end
       end
-      if match and alive then
-        local uid = tonumber(u.id)
-        -- Remove from any other pen/pit zone's assigned_units first
-        for _, oz in ipairs(df.global.world.buildings.other.ANY_ZONE) do
+      if should_remove then
+        z.assigned_units:erase(idx)
+        if u ~= nil then
           pcall(function()
-            for idx = #oz.assigned_units - 1, 0, -1 do
-              if oz.assigned_units[idx] == uid then
-                oz.assigned_units:erase(idx)
+            for ridx = #u.general_refs - 1, 0, -1 do
+              local r = u.general_refs[ridx]
+              if df.general_ref_building_civzone_assignedst:is_instance(r) and r.building_id == z.id then
+                u.general_refs:erase(ridx)
+                pcall(function() r:delete() end)
               end
             end
           end)
         end
-        -- Remove any existing general_ref_building_civzone_assignedst on the unit
-        pcall(function()
-          for idx = #u.general_refs - 1, 0, -1 do
-            local r = u.general_refs[idx]
-            if df.general_ref_building_civzone_assignedst:is_instance(r) then
-              u.general_refs:erase(idx)
-              pcall(function() r:delete() end)
-            end
-          end
-        end)
-        -- Link unit <-> pen zone
-        z.assigned_units:insert("#", uid)
-        pcall(function()
-          local ref = df.general_ref_building_civzone_assignedst:new()
-          ref.building_id = z.id
-          u.general_refs:insert("#", ref)
-        end)
-        newly_assigned[#newly_assigned + 1] = {
-          unit_id = uid,
-          species = race,
-          grazer = grazer,
-        }
+        unassigned_now[#unassigned_now + 1] = { unit_id = uid, species = race }
       end
     end
+  elseif action == "assign" then
+    if has_explicit or all_grazers or species_filter ~= nil then
+      for _, u in ipairs(df.global.world.units.active) do
+        local alive, tame, cit, grazer = false, false, false, false
+        pcall(function() alive = dfhack.units.isAlive(u) end)
+        pcall(function() tame = dfhack.units.isTame(u) end)
+        pcall(function() cit = dfhack.units.isCitizen(u) end)
+        pcall(function() grazer = dfhack.units.isGrazer(u) end)
+        local race = "?"
+        pcall(function() race = tostring(dfhack.units.getRaceName(u)):upper() end)
+        local match = false
+        if has_explicit then
+          match = (want_ids[tonumber(u.id)] == true)
+        elseif alive and tame and (not cit) then
+          if species_filter ~= nil then
+            match = (race:find(species_filter, 1, true) ~= nil)
+          elseif all_grazers then
+            match = grazer
+          end
+        end
+        if match and alive then
+          local uid = tonumber(u.id)
+          -- Remove from any other pen/pit zone's assigned_units first
+          for _, oz in ipairs(df.global.world.buildings.other.ANY_ZONE) do
+            pcall(function()
+              for idx = #oz.assigned_units - 1, 0, -1 do
+                if oz.assigned_units[idx] == uid then
+                  oz.assigned_units:erase(idx)
+                end
+              end
+            end)
+          end
+          -- Remove any existing general_ref_building_civzone_assignedst on the unit
+          pcall(function()
+            for idx = #u.general_refs - 1, 0, -1 do
+              local r = u.general_refs[idx]
+              if df.general_ref_building_civzone_assignedst:is_instance(r) then
+                u.general_refs:erase(idx)
+                pcall(function() r:delete() end)
+              end
+            end
+          end)
+          -- Link unit <-> pen zone
+          z.assigned_units:insert("#", uid)
+          pcall(function()
+            local ref = df.general_ref_building_civzone_assignedst:new()
+            ref.building_id = z.id
+            u.general_refs:insert("#", ref)
+          end)
+          newly_assigned[#newly_assigned + 1] = {
+            unit_id = uid,
+            species = race,
+            grazer = grazer,
+          }
+        end
+      end
+    end
+  else
+    error("unknown assign_pasture action '" .. tostring(action) .. "' (expected assign, unassign, or clear)")
   end
 
   local assigned_list = {}
@@ -505,6 +542,7 @@ function OPS.assign_pasture(args)
   end
 
   return {
+    action = action,
     building_id = tonumber(z.id),
     x0 = tonumber(z.x1),
     x1 = tonumber(z.x2),
@@ -513,6 +551,8 @@ function OPS.assign_pasture(args)
     elev = tonumber(z.z) - M.GAME_Z_OFFSET,
     newly_assigned_count = #newly_assigned,
     newly_assigned = newly_assigned,
+    unassigned_now_count = #unassigned_now,
+    unassigned_now = unassigned_now,
     total_assigned = #assigned_list,
     assigned_animals = assigned_list,
     unassigned_grazers_remaining = #unassigned_grazers,

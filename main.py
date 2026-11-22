@@ -384,10 +384,11 @@ class AssignZoneOwnerRequest(BaseModel):
 
 class AssignPastureRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
+    action: str = Field("assign", description="One of 'assign' (default: assign animals to pasture), 'unassign' (remove matching unit_ids or species from pasture), or 'clear' (remove all animals from pasture without deleting the zone)")
     building_id: int | None = Field(None, description="Pen/Pasture zone building ID from list_zones or create_zone (omit to target the first Pen zone)")
     all_grazers: bool = Field(True, description="Automatically assign all live tame grazing animals (yaks, sheep, goats, horses, cavies, rabbits) to this pasture")
     species: str | None = Field(None, description="Optional species substring filter (e.g. 'YAK', 'SHEEP', 'DOG')")
-    unit_ids: list[int] | None = Field(None, description="Optional explicit list of animal unit IDs to assign")
+    unit_ids: list[int] | None = Field(None, description="Optional explicit list of animal unit IDs to assign or unassign")
 
 
 class ManageNoblesRequest(BaseModel):
@@ -2902,10 +2903,12 @@ async def assign_zone_owner(request: AssignZoneOwnerRequest):
 
 @app.post("/assign-pasture", operation_id="assign_pasture")
 async def assign_pasture(request: AssignPastureRequest):
-    """Assign tame grazing animals (yaks, sheep, goats, horses, cavies, rabbits — or specific
-    `unit_ids` / `species`) to a Pen/Pasture activity zone so dwarves lead them onto grass
-    and they do not starve indoors. Defaults to `all_grazers=True` and targets the first Pen
-    zone when `building_id` is omitted."""
+    """Assign, unassign, or clear tame grazing animals (yaks, sheep, goats, horses, cavies,
+    rabbits — or specific `unit_ids` / `species`) on a Pen/Pasture activity zone:
+    - `action='assign'` (default): assigns matching animals (`all_grazers=True` by default).
+    - `action='unassign'`: removes specific `unit_ids` or `species` from the pasture.
+    - `action='clear'`: removes all animals from the pasture without deleting the Pen zone.
+    To delete the Pen/Pasture zone itself, call `remove_zone` (`POST /remove-zone`)."""
     body = await _as_dict(request)
     try:
         res = await LO.assign_pasture(
@@ -2913,6 +2916,7 @@ async def assign_pasture(request: AssignPastureRequest):
             unit_ids=body.get("unit_ids"),
             all_grazers=bool(body.get("all_grazers", True)),
             species=body.get("species"),
+            action=str(body.get("action", "assign")),
         )
         return {"success": True, **res}
     except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:

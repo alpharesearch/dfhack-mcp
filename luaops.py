@@ -883,11 +883,30 @@ for _,zz in ipairs(df.global.world.buildings.other.ANY_ZONE) do
   if zz.id == __ID__ then b = zz break end
 end
 if b == nil then print("ERR|no zone with id __ID__") return end
+local zid = tonumber(b.id)
+-- Cleanly detach any assigned pasture/pit animals and room owner before deconstruct
+pcall(function() dfhack.buildings.setOwner(b, nil) end)
+pcall(function()
+  for idx = #b.assigned_units - 1, 0, -1 do
+    b.assigned_units:erase(idx)
+  end
+end)
+pcall(function()
+  for _, u in ipairs(df.global.world.units.active) do
+    for idx = #u.general_refs - 1, 0, -1 do
+      local r = u.general_refs[idx]
+      if df.general_ref_building_civzone_assignedst:is_instance(r) and r.building_id == zid then
+        u.general_refs:erase(idx)
+        pcall(function() r:delete() end)
+      end
+    end
+  end
+end)
 -- building_flags has no marked_for_removal on this build, so this write threw;
 -- the API's own removal is the supported path (it also disposes cleanly).
 local ok_rm, err_rm = pcall(function() dfhack.buildings.deconstruct(b) end)
 if not ok_rm then print("ERR|deconstruct failed: "..tostring(err_rm)) return end
-print("OK|%d", b.id)
+print("OK|" .. tostring(zid))
 """.strip().replace("__ID__", str(int(building_id)))
     out = await _lua(lua)
     line = _one(out)
@@ -1363,10 +1382,11 @@ async def assign_zone_owner(building_id: int, unit_id: int | None = None) -> dic
 async def assign_pasture(building_id: int | None = None,
                          unit_ids: list[int] | None = None,
                          all_grazers: bool = True,
-                         species: str | None = None) -> dict:
-    """Assign tame grazing animals (or specific `unit_ids` / `species`) to a Pen/Pasture
-    zone via `dfhack_mcp.lua`."""
-    payload: dict = {"all_grazers": bool(all_grazers)}
+                         species: str | None = None,
+                         action: str = "assign") -> dict:
+    """Assign, unassign, or clear tame grazing animals (or specific `unit_ids` / `species`)
+    on a Pen/Pasture zone via `dfhack_mcp.lua`."""
+    payload: dict = {"action": str(action), "all_grazers": bool(all_grazers)}
     if building_id is not None:
         payload["building_id"] = int(building_id)
     if unit_ids is not None:
