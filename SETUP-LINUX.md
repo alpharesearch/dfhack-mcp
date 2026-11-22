@@ -275,16 +275,19 @@ uv run python tests/test_game_restart.py   # game restart w/ DIFFERENT method id
 by the suites; the game is never touched, and `test_game_restart.py` starts/stops stubs on
 port 15100 so the real DFHack port is left alone.
 
-## 13. start.sh (manual control)
+## 13. start.sh (manual control & automatic Miniconda setup)
+
+`start.sh` automatically discovers `conda` (in `PATH` or `$HOME/miniconda3`, `$HOME/anaconda3`, `$HOME/miniforge3`), creates the `dfhack-mcp` Miniconda environment (`python=3.12` by default, configurable via `DFHACK_CONDA_ENV` / `DFHACK_PYTHON_VERSION`), and installs all dependencies from `requirements.txt` (including editable `./vendor/dfhack-client-python` and `mcp<2`) before launching the server. You can also create the environment directly via `conda env create -f environment.yml`.
 
 ```bash
 cd ~/github/dfhack-mcp
-./start.sh            # start in background (pid .dfhack-mcp.pid, log dfhack-mcp.log)
+./start.sh            # ensure Miniconda env + start in background (pid .dfhack-mcp.pid, log dfhack-mcp.log)
+./start.sh setup      # create/update the 'dfhack-mcp' Miniconda env and install/verify all dependencies
 ./start.sh status     # running? + live get-status from the game
 ./start.sh stop       # clean stop (verifies the port frees, escalates to SIGKILL)
 ./start.sh restart    # stop + start
 ./start.sh logs       # follow the log
-./start.sh fg         # run in this terminal, Ctrl+C to stop
+./start.sh fg         # ensure Miniconda env + run in this terminal, Ctrl+C to stop
 ```
 
 `DFHACK_MCP_HOST` / `DFHACK_MCP_PORT` override the bind address. The log, pidfile, and

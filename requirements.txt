@@ -1,0 +1,13 @@
+# Core DFHack RPC client (vendored in-repo with auto-reconnect and task-local reply isolation)
+-e ./vendor/dfhack-client-python
+
+# Direct dependencies of dfhack-client-python
+async-lru>=2.0.5
+protobuf>=6.31.1
+requests>=2.32.4
+
+# FastAPI + MCP server dependencies (mcp pinned <2 for fastapi-mcp 0.4.x compatibility)
+fastapi>=0.115.14
+fastapi-mcp>=0.3.4,<0.5.0
+mcp>=1.0.0,<2.0.0
+uvicorn>=0.35.0

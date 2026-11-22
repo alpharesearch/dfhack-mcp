@@ -8,7 +8,16 @@ enough to fit in a model context at all.
 [LICENSE](LICENSE) and the [License](#license) section below for exact scope.
 
 Setup, wiring to a harness, and troubleshooting: [SETUP-LINUX.md](SETUP-LINUX.md)
-· manual control: `./start.sh [start|stop|restart|status|logs|fg]`
+· manual control & automatic Miniconda environment setup: `./start.sh [start|setup|stop|restart|status|logs|fg]`
+
+## Quickstart (Miniconda)
+
+Running `./start.sh` (or `./start.sh setup`) automatically finds Miniconda (`conda`), creates a dedicated `dfhack-mcp` environment with `python=3.12` (overrideable via `DFHACK_CONDA_ENV` / `DFHACK_PYTHON_VERSION`), and installs [`vendor/dfhack-client-python`](vendor/dfhack-client-python) (editable) plus all dependencies from [`requirements.txt`](requirements.txt) / [`environment.yml`](environment.yml):
+
+```bash
+./start.sh setup     # create/update the 'dfhack-mcp' Miniconda env and verify imports
+./start.sh           # ensure env + start the MCP server in the background on 127.0.0.1:8000
+```
 
 ## What is in here
 
