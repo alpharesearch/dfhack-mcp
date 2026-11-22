@@ -1020,14 +1020,49 @@ async def place_building(request: Request):
 
 @app.post("/remove-building", operation_id="remove_building")
 async def remove_building(request: Request):
-    """Deconstruct the building at a tile (x, y, elev). Verifies through dfhack.buildings."""
+    """Deconstruct a building - by tile (x, y, elev) OR by building_id.
+
+    Measured 2026-11-21: this endpoint read body["x"] unconditionally, so the natural call
+    {"building_id": 28} answered HTTP 500 with no explanation - the tool the player asked
+    to fix ("looks like the remove tool needs some work too"). An id is resolved to the
+    footprint start from the live pile/zone lists; a call that names neither is answered
+    with a usage message, not a traceback.
+    """
     body = await request.json()
+    x = y = elev = None
+    if body.get("building_id") is not None:
+        bid = int(body["building_id"])
+        dec = await world._dec(await world._gen())
+        for row in await LO.list_stockpiles(dec):
+            if int(row["id"]) == bid:
+                x, y, elev = int(row["x0"]), int(row["y0"]), int(row["elev"])
+                break
+        if x is None:
+            try:
+                zones = await LO.list_zones(await world._dec(await world._gen()))
+            except LO.LuaOpError as e:
+                return {"success": False, "error": f"zone scan failed while resolving id {bid}: {e}"}
+            for row in zones:
+                if int(row["id"]) == bid:
+                    x, y, elev = int(row["x0"]), int(row["y0"]), int(row["elev"])
+                    break
+        if x is None:
+            return {"success": False,
+                    "error": f"no stockpile or zone with building_id {bid} - the live lists are the "
+                             "source; a pile marked for removal may already be gone"}
+    else:
+        try:
+            x, y, elev = int(body["x"]), int(body["y"]), int(body["elev"])
+        except (KeyError, TypeError, ValueError):
+            return {"success": False,
+                    "error": 'send {"building_id": N} or {"x": X, "y": Y, "elev": E}; '
+                             "nothing was removed"}
     try:
-        res = await LO.remove_building(int(body["x"]), int(body["y"]), int(body["elev"]))
+        res = await LO.remove_building(x, y, elev)
     except LO.LuaOpError as e:
         return {"success": False, "error": str(e)}
     world.cache.reset()
-    return {"success": True, **res}
+    return {"success": True, "resolved_from_tile": [x, y, elev], **res}
 
 @app.get("/tile-at", operation_id="tile_at")
 async def tile_at(x: int = Query(...), y: int = Query(...),

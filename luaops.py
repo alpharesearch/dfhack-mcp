@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import uuid
 import re
 
 from dfhack_client_python.dfhack import RunCommand
@@ -1056,20 +1057,37 @@ local tiles = 0
 -- reported usable_tiles 167, rect_tiles 0, holes -167.
 pcall(function() tiles = dfhack.buildings.countExtentTiles(found) end)
 local area = (found.x2-found.x1+1)*(found.y2-found.y1+1)
-print(string.format("OK|%d|%d..%d,%d..%d|%d|%d", found.id, found.x1, found.x2, found.y1, found.y2, tiles, area))
+print(string.format("OK|__N__|%d|%d..%d,%d..%d|%d|%d", found.id, found.x1, found.x2, found.y1, found.y2, tiles, area))
 """
+    # The reply stream cross-talks, and a create is a WRITE: answering with a line from an
+    # EARLIER call hands the caller a building it never made. Measured 2026-11-21:
+    # /create-stockpile at 42 x41..45 y120..124 returned {"building_id": 1,
+    # "extent": "66..67,112..113"} - a stale OK| line naming the wood pile at 38 - and the
+    # follow-up /configure-stockpile then rewrote the player's wood pile to corpses+refuse.
+    # Every create answer now carries this request's nonce, and a reply without it is
+    # reported as NO DATA instead of a plausible-looking wrong id.
+    nonce = uuid.uuid4().hex[:10]
     expr = lua.strip()
-    for k, v in (("__X__", int(x)), ("__Y__", int(y)), ("__Z__", z), ("__W__", int(w)), ("__H__", int(h))):
+    for k, v in (("__X__", int(x)), ("__Y__", int(y)), ("__Z__", z),
+                 ("__W__", int(w)), ("__H__", int(h)), ("__N__", nonce)):
         expr = expr.replace(k, str(v))
     out = await _lua(expr)
-    line = _one(out)
-    if line.startswith("ERR|"):
-        raise LuaOpError(line[4:])
+    line = ""
+    for cand in _rows(out):
+        if cand.startswith(f"OK|{nonce}|"):
+            line = cand
+            break
+    for cand in _rows(out):
+        if cand.startswith("ERR|"):
+            raise LuaOpError(cand[4:])
+    if not line:
+        raise LuaOpError("create reply carried no line for this request (cross-talk): the pile "
+                         "may exist - read /stockpiles for the real id before configuring anything")
     parts = line.split("|")
-    if len(parts) < 5:
+    if len(parts) < 6:
         raise LuaOpError("unparsable create result: " + line[:120])
-    bid, extent, tiles, area = int(parts[1]), parts[2], int(parts[3]), int(parts[4])
-    return {"success": True, "building_id": bid, "extent": extent,
+    bid, extent, tiles, area = int(parts[2]), parts[3], int(parts[4]), int(parts[5])
+    return {"success": True, "building_id": bid, "extent": extent, "nonce": nonce,
             "usable_tiles": tiles, "rect_tiles": area, "holes": area - tiles}
 
 

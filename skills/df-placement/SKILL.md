@@ -169,3 +169,17 @@ Distilling as "sacks + water"; vanilla toilets/bathrooms/sewers; "kitchen needs 
 "forge is 4x4"; a broker office requirement; "sympathy" as a mechanic (v50 uses zone value
 ranks: Meager -> Royal, and noble demands); master-bedroom adjacency preferences; a
 structural cover number for corridors; "Comfort" as a wiki mechanic.
+
+## Well, measured on a live fort (Y101, this site)
+
+The well is **not** the hard part; the well's *materials* are. Built here with the tools:
+* Site rule worked as written: 1x1 on a floor/ramp-top at 36 with water 7/7 directly below at
+  35 (`160,116 @36` over the corridor; the pool sits at `x169-172 y116 @35`).
+* The game then answered: **"The dwarves were unable to complete the Well."** and
+  **"Metalcrafter cancels Construct building: Needs mechanisms."** A well is a *mechanism*
+  build - so the water rung is gated behind the **metal** rung: furnace + smelter + iron ore.
+  Do not conclude the site is wrong when the build fails; read the cancellation text.
+* Digging a tunnel at the same elevation as a pool makes an **aqueduct**: this fort's shaft at
+  35 y128 went from dry to 4/7 then 7/7 water along 90+ tiles (water_tiles 1030 -> 1161),
+  while the rooms one level up stayed dry. Expect water to fill any level you open into it,
+  and plan hauling (a 7/7 tunnel slows/stops hauling) before you need that tunnel.
