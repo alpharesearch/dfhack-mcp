@@ -344,6 +344,24 @@ def test_pile_categories_are_the_flags_the_game_exposes_not_a_wiki_list():
     assert "plants" not in names, "this build has no plants flag - plump helmets are FOOD"
 
 
+def test_zone_removal_never_calls_notifycivzonemodified_without_a_building():
+    """This is the crash of 2026-11-21 22:53. My remove_zone chunk ended with
+    `pcall(function() dfhack.buildings.notifyCivzoneModified() end)` - no building argument -
+    and the game died with SIGSEGV (SEGV_MAPERR) at address 0 inside
+    `DFHack::Buildings::notifyCivzoneModified(df::building*)` (`crash_2026-11-21-22-53-41.txt`,
+    Lua frame `(lua command):10`). pcall does not survive a native segfault, so wrapping a
+    call is not the same as it being safe, and the call is deleted: deconstruct disposes the
+    zone on its own."""
+    lo = pathlib.Path("luaops.py").read_text()
+    i = lo.index("async def remove_zone(")
+    body = lo[i:lo.index("async def ", i + 10)]
+    lua_part = body[body.index('"""', body.index('"""') + 3):]
+    assert "notifyCivzoneModified()" not in lua_part.split('"""')[1], \
+        "the no-arg call is what crashed the fort - it must never come back"
+    assert "crash_2026-11-21-22-53-41" in body, "the crash is recorded where the next reader will hit it"
+    assert "deconstruct(b)" in body, "and removal goes through the game's own deconstruct"
+
+
 def test_a_write_is_verified_by_reading_the_game_not_by_its_own_reply():
     """Write replies are the flaky part, not the writes. Measured 2026-11-21: /remove-building
     answered "lua produced no output; the chunk printed nothing" three times for pile 28 while

@@ -852,8 +852,23 @@ print(string.format("OK|%d|%d|%d..%d,%d..%d|%d|%d",
 
 
 async def remove_zone(dec, building_id: int) -> dict:
-    """Mark a zone for removal by id - findAtTile cannot see zones, so the ordinary
-    remove-building path cannot remove one."""
+    """Remove a zone by id - findAtTile cannot see zones, so the ordinary remove-building
+    path cannot reach one.
+
+    THIS FUNCTION HAS A MEASURED CRASH HISTORY - treat it as a loaded gun. On 2026-11-21 the
+    chunk ended with `pcall(function() dfhack.buildings.notifyCivzoneModified() end)` - with
+    NO building argument. The game died with:
+
+        crash_2026-11-21-22-53-41.txt: SIGSEGV (SEGV_MAPERR) at address 0
+        1> libdfhack.so DFHack::Buildings::notifyCivzoneModified(df::building*)
+        stack traceback: [C]: in function 'dfhack.buildings.notifyCivzoneModified'
+                         (lua command):10: in function <(lua command):10>
+
+    A native segfault is NOT catchable by pcall, so "it's wrapped, it's safe" was false and
+    the call is GONE: deconstruct disposes the zone on its own. Zone removal is only ever
+    issued with the caller's explicit acknowledgement, and never twice in a row on the same
+    id without reading the zone list first.
+    """
     lua = """
 local b = nil
 for _,zz in ipairs(df.global.world.buildings.other.ANY_ZONE) do
@@ -864,7 +879,6 @@ if b == nil then print("ERR|no zone with id __ID__") return end
 -- the API's own removal is the supported path (it also disposes cleanly).
 local ok_rm, err_rm = pcall(function() dfhack.buildings.deconstruct(b) end)
 if not ok_rm then print("ERR|deconstruct failed: "..tostring(err_rm)) return end
-pcall(function() dfhack.buildings.notifyCivzoneModified() end)
 print("OK|%d", b.id)
 """.strip().replace("__ID__", str(int(building_id)))
     out = await _lua(lua)

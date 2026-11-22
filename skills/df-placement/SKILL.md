@@ -215,3 +215,15 @@ was silent. Silent replies on writes are a property of the RPC reply stream (see
 `tool_missing.md`), not evidence about the game. So: **read the live list first, then decide
 whether a retry is even needed.** (The removal path is already fixed this way; zone creation
 needs the same gate.)
+
+## Zone writes are the fort-killing class (measured crash)
+
+`crash_2026-11-21-22-53-41.txt`: my zone-removal chunk called
+`dfhack.buildings.notifyCivzoneModified()` with **no building argument** and the game died
+with `SIGSEGV (SEGV_MAPERR) at address 0` in `Buildings::notifyCivzoneModified`. Rules that
+came out of it, in order of preference:
+1. **Do zones in-game** (`z -> ... -> draw rect -> Accept`, and remove zones the same way).
+   The UI is the path the game was designed for; the agent's zone writes are a last resort.
+2. Zone writes stay behind `acknowledge_risk` (create *and* remove), and never retried on the
+   same id without reading `/zones` first.
+3. `pcall` is not a safety story: a native fault kills the process, not the coroutine.
