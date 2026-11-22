@@ -328,6 +328,20 @@ def test_a_stockpile_request_must_not_lie_about_its_size():
     assert "world.cache.reset()" in fn and "world.forget_band()" in fn, "cache + memo dropped"
 
 
+def test_resize_states_the_game_rule_instead_of_a_bare_failure():
+    """`/resize-building` promised "Resize a building - stockpiles included". The game says:
+    `setSize ... Invalid argument; expected: bld->id == -1` - only an ABSTRACT building can be
+    sized, and the old lookup walked the STOCKPILE list alone, so a built pile and every other
+    building answered "not found"."""
+    lo = pathlib.Path("luaops.py").read_text()
+    i = lo.index("async def resize_building(")
+    body = lo[i:lo.index("_ZONE_HINTS = {")]
+    assert "dfhack.buildings.findBuilding(__ID__)" in body, "look the building up by id, not by pile list"
+    assert "REFUSED" in body, "a refused setSize must be its own answer"
+    assert "bld->id == -1" in body, "the answer must carry the game's rule"
+    assert "ABSTRACT" in body, "and say what can be sized: an abstract at creation time"
+
+
 def test_an_emptied_scan_says_NO_DATA_it_does_not_report_zero():
     """`/stockpiles` and `/zones` answered 0 for a fort that has a 10x13 general pile and a
     25-tile meeting zone, because the RPC hiccup swallowed the chunk's print and the

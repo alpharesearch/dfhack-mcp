@@ -211,9 +211,15 @@ print("OK building={resolved!r} bt={bt} type="..(dot or tn).." id="..tostring(at
     line = _one(out)
     if line.startswith("FAIL"):
         raise LuaOpError(line)
-    m = re.search(r"type=(\S+) id=(\S+)", line)
+    # Search the WHOLE reply: the chunk prints one line, but the RPC stream can put a banner
+    # in front of it. Reading only the first line silently produced
+    # {"game_type": "?", "building_id": null} for a farm plot that WAS placed (measured
+    # 2026-11-21) - and a null id means /resize-building cannot be called, so the sanctioned
+    # 1x1 -> setSize path for multi-tile workshops dies at the reporting step.
+    m = re.search(r"type=(\S+) id=(\S+)", out)
     return {"placed": resolved, "at": [int(x), int(y), elev], "complete": complete,
-            "game_type": m.group(1) if m else "?", "building_id": int(m.group(2)) if m and m.group(2).isdigit() else None,
+            "game_type": m.group(1) if m else "?",
+            "building_id": int(m.group(2)) if m and m.group(2).isdigit() else None,
             "verified": "findAtTile"}
 
 
@@ -459,21 +465,31 @@ print("OK id=" .. tostring(b.id) .. " | after: " .. table.concat(after, " ") .. 
     return {"success": True, "line": line, "allow": wanted, "deny": denied}
 
 async def resize_building(dec, building_id: int, w: int, h: int) -> dict:
-    """Resize a building (stockpiles included) through the game's own dfhack.buildings.setSize.
+    """setSize (w, h) - and it is ONLY legal on an ABSTRACT building.
 
-    Measured: constructBuilding with nominal=true makes a 1x1 stockpile even when w/h are
-    passed - pile 12 came out x1=x2=44, y1=y2=116 (room 1x1), exactly what the player saw.
-    The game's own resize is `dfhack.buildings.setSize(b, w, h)`; extents are read back from
-    b.x1..b.x2 / b.y1..b.y2 and the usable tile count from countExtentTiles.
+    Measured on 2026-11-21 with a real fort:
+      setSize(pile 4, 11, 11) ->
+        "In bool DFHack::Buildings::setSize(df::building*, df::coord2d, int):
+         Invalid argument; expected: bld->id == -1"
+    A committed building has a real id, so it can never be resized through this call:
+    a pile is sized by create_stockpile (which setSize's the ABSTRACT before
+    constructAbstract commits it), and a built building keeps its footprint.
+    The old version also searched only the STOCKPILE list, so it reported
+    "building 19 not found" for a farm plot that exists - the lookup is now by id
+    through the game's own findBuilding.
     """
     expr = """
 local b = nil
-for _,lst in ipairs({df.global.world.buildings.other.STOCKPILE}) do
-  for _,sp in ipairs(lst) do if sp.id == __ID__ then b = sp end end
-end
-if b == nil then print("FAIL building __ID__ not found") return end
+pcall(function() b = dfhack.buildings.findBuilding(__ID__) end)
+if b == nil then print("FAIL building __ID__ not found (findBuilding)") return end
+local is_abstract = false
+pcall(function() is_abstract = (b.id == -1) end)
 local ok, err = pcall(function() dfhack.buildings.setSize(b, __W__, __H__) end)
-if not ok then print("FAIL setSize: " .. tostring(err)) return end
+if not ok then
+  print(string.format("REFUSED id=%d abstract=%s built=%s extent=%d..%d,%d..%d : %s",
+    b.id, tostring(is_abstract), tostring(b.id ~= -1), b.x1, b.x2, b.y1, b.y2, tostring(err)))
+  return
+end
 local n = 0
 pcall(function() n = dfhack.buildings.countExtentTiles(b) end)
 print(string.format("OK id=%d extent=%d..%d,%d..%d tiles=%s", b.id, b.x1, b.x2, b.y1, b.y2, tostring(n)))
@@ -481,8 +497,15 @@ print(string.format("OK id=%d extent=%d..%d,%d..%d tiles=%s", b.id, b.x1, b.x2, 
     out = await _lua(expr)
     line = _one(out)
     if line.startswith("FAIL"):
-        raise LuaOpError(line)
+        raise LuaOpError(line[5:])
+    if line.startswith("REFUSED"):
+        return {"success": False,
+                "error": "setSize refuses this building: " + line[9:].strip(),
+                "rule": "dfhack.buildings.setSize works on an ABSTRACT building only (bld->id == -1). "
+                        "A committed building keeps its footprint: size piles at creation via "
+                        "/create-stockpile (allocInstance -> setSize -> constructAbstract)."}
     return {"success": True, "line": line}
+
 
 _ZONE_HINTS = {
     "meeting": ("meeting",),
@@ -825,8 +848,16 @@ async def place_building_plan(dec, name: str, x: int, y: int, elev: int,
 local pos = xyz2pos(__X__, __Y__, __Z__)
 local W, H = __W__, __H__
 local area = W * H
-local ext = df.reinterpret_cast(df.building_extents_type, df.new('uint8_t', area))
-for i = 0, area - 1 do ext[i] = 1 end
+-- building_extents is a 256-BIT field indexed (x - x1) + 16*(y - y1). Measured
+-- 2026-11-21: allocating W*H BYTES and setting the first W*H bits made the "3x4"
+-- still a 12-tile strip in ONE row (tile (42,127) read back as null), and a legal
+-- 3x3 farm plot was refused ("cannot place at this position") because the mask
+-- claimed tiles the site does not have. 32 bytes = 256 bits, stride 16.
+local ext = df.reinterpret_cast(df.building_extents_type, df.new('uint8_t', 32))
+for i = 0, 31 do ext[i] = 0 end
+for dy = 0, H - 1 do
+  for dx = 0, W - 1 do ext[dy * 16 + dx] = 1 end
+end
 local before = {}
 for _,bb in ipairs(df.global.world.buildings.all) do before[bb.id] = true end
 local bld, err = dfhack.buildings.constructBuilding{
