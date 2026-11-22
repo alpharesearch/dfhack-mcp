@@ -196,3 +196,22 @@ into drowning depth. Two measurements from trying it:
 So on this kind of site the water plan is: **well above the water** (needs mechanisms -> metal
 chain), or **pump/drain the pool** first. Deep water access by hand is how fortresses lose
 dwarves, not how they get drink.
+
+## Zone kinds are the game's list, not my guesses
+
+`/create-zone` answers with the accepted kinds when you get it wrong (measured 2026-11-21):
+`archery, barracks, bedroom, dining, dormitory, dump, dungeon, fishing, garbage, meeting,
+office, pasture, pen, pit, pond, refuse, sand, tomb, training, water, watersource`. The
+outdoor waste zone is **`dump`** (a "Garbage Dump" request is refused by name), the farm's
+livestock pen is **`pen`**/**`pasture`**, and the refuse pile is a **stockpile category**, not
+a zone kind.
+
+## A silent write may already have happened - verify BEFORE you retry
+
+Measured on this fort: a `bedroom` zone write answered `"lua produced no output; the chunk
+printed nothing"`, so I retried - and the zone list then showed **two identical Bedroom
+zones** (ids 36 and 38 on `60..65,138..143 @36`): the first write had landed and its reply
+was silent. Silent replies on writes are a property of the RPC reply stream (see
+`tool_missing.md`), not evidence about the game. So: **read the live list first, then decide
+whether a retry is even needed.** (The removal path is already fixed this way; zone creation
+needs the same gate.)
