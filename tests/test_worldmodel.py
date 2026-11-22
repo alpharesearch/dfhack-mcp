@@ -328,6 +328,26 @@ def test_a_stockpile_request_must_not_lie_about_its_size():
     assert "world.cache.reset()" in fn and "world.forget_band()" in fn, "cache + memo dropped"
 
 
+def test_an_emptied_scan_says_NO_DATA_it_does_not_report_zero():
+    """`/stockpiles` and `/zones` answered 0 for a fort that has a 10x13 general pile and a
+    25-tile meeting zone, because the RPC hiccup swallowed the chunk's print and the
+    readers turned "printed nothing" into `[]`. A caller that trusts `count: 0` digs a
+    second general pile next to the first. An empty fort is a fact; an unread fort is not."""
+    lo = pathlib.Path("luaops.py").read_text()
+    assert "class NoData(LuaOpError)" in lo, "there must be a distinct no-data signal"
+    for fn in ("list_zones", "list_stockpiles"):
+        i = lo.index("async def " + fn + "(")
+        body = lo[i:lo.index("async def ", i + 10)]
+        assert "raise NoData(" in body, f"{fn}: a scan that printed nothing must raise NoData"
+        assert "return []          # an empty fort is a fact, not a failure" not in body, \
+            f"{fn}: the old silent [] is what made 3 piles read as zero"
+    main = pathlib.Path("main.py").read_text()
+    for ep in ('operation_id="list_zones"', 'operation_id="list_stockpiles"'):
+        i = main.index(ep)
+        seg = main[i:main.index("@app.", i + 10)]
+        assert '"success": False' in seg, f"{ep}: a failed read must not answer a bare count"
+
+
 def test_the_general_pile_rung_measures_categories_not_a_pile_count():
     """A wood-only pile flipped the GENERAL pile rung DONE (measured 2026-11-21, rung #4:
     the fort had one pile accepting `wood`). `count_built("stockpile") >= 1` cannot tell a

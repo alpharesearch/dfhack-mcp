@@ -542,6 +542,16 @@ def _usable(tiles: int, area: int) -> tuple[int | None, str]:
     return tiles, "countExtentTiles"
 
 
+class NoData(LuaOpError):
+    """The read ran and the game printed NO rows.
+
+    This is NOT "the fort has none of these". Measured 2026-11-21: /stockpiles and /zones
+    answered 0 for a fort holding a 10x13 general pile and a 25-tile meeting zone - the RPC
+    hiccup swallowed the chunk's print, callers saw `count: 0`, and an agent trusting that
+    would dig a second general pile next to the first.
+    """
+
+
 def _rows(out: str) -> list[str]:
     """Scan rows only. An EMPTY fort must read as empty: a scan that prints nothing is
     a legitimate answer (no zones / no piles), not a failure - and `_lua` raises
@@ -584,7 +594,7 @@ async def list_zones(dec) -> list[dict]:
         out = await _lua(lua)
     except LuaOpError as e:
         if 'no output' in str(e):
-            return []          # an empty fort is a fact, not a failure
+            raise NoData("the zone scan printed no rows: NO DATA (not a zone-free fort)")
         raise
     rows = []
     for line in _rows(out):
@@ -639,7 +649,7 @@ end
         out = await _lua(lua)
     except LuaOpError as e:
         if 'no output' in str(e):
-            return []          # an empty fort is a fact, not a failure
+            raise NoData("the pile scan printed no rows: NO DATA (not a pile-free fort)")
         raise
     rows = []
     for line in _rows(out):
