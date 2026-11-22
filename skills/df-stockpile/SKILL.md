@@ -98,3 +98,41 @@ plain (`x73-78, y116-122, in-game 36`), stone pile next to the dig face and late
 mason. Keep piles off walls/ramps (survey first) and never overlap a building footprint.
 
 Measured pile notes (sizes, coverage, loose-item tiles, order-the-room-first): [references/pile-notes.md](references/pile-notes.md)
+
+## 9. Ground first: a pile needs a dug floor under EVERY tile of its footprint
+
+The game accepts a stockpile on cavern air and fog without complaining, and the pile then
+floats. Measured on this fort: three piles placed on tiles the survey labels `open`
+(OpenSpace - cave air) - the player's words: *"you had build the three stockpiles in mid
+air"*. The rule for any pile site, surface or underground:
+
+- read the footprint before placing it: every tile must be dug, walkable floor
+  (`floor` / `stairs` / `ramp` / `ramp_top` / `furrowed`); `open`, rock and fog are not ground;
+- a surface pile stands on the surface's own floors (grass/dirt floors near the wagon),
+  not on the lip of a cavern;
+- `ramp_top` is ground - a site with 3 floors and a ramp top is a legal 2x2.
+
+Removing a pile is a mark, not a poof: `deconstruct` marks it and a dwarf finishes the job.
+A stockpile usually disappears quickly because it needs no materials; a workshop takes a
+mason. Read the tile afterwards - "I sent the removal" is not "the tile is empty".
+
+## 10. "A pile exists" is not "the general pile exists"
+
+The quickstart rung is a **general** pile: everything except stone, wood, corpses, refuse and
+gems. Measured: a fort with a single wood-only pile satisfied a rung that only asked "is
+there a stockpile", while hauling was doing nothing for the fort. When you check the general
+pile, check the categories (about 12 accepted, none of the five excluded) - the pile list
+from the game reports them, and a pile accepting nothing is a rectangle of paint.
+
+Sizes on this site: general pile 4x3..6x6 near the entrance on a dug level; refuse pile
+outdoors (5x5+, corpses+refuse only, no bins/barrels/wheelbarrows); wood pile 2x2 near the
+road, wood only. No stone pile in early game - the player's rule, and it is right: on a
+7-dwarf embark a stone pile buys hauling labour and nothing else. Add it when a dig face
+out-produces the general pile, with wheelbarrows and Max wheelbarrows=3.
+
+## 11. Workshops near the piles are plans, not paint
+
+A 3x4 still (the wiki's early brewery) is a multi-tile **plan**: the game creates it and a
+mason builds it with real materials. It is not an abstract building - asking for the abstract
+route is refused (`constructAbstract ... expected !bld->isActual()`). Keep the workshop's
+footprint clear of stairs and of other piles' footprints, and give the mason a path.

@@ -119,6 +119,22 @@ ladder rung is literally *"Stairs connecting the levels"*. So:
   pumps) **before** the shaft is opened through the band - this is the flood the game's
   "damp" warning is telling you about.
 
+### The top tile of a shaft is the one that stalls forts (measured Y100, 20 days idle)
+
+A shaft dug from below needs a stair designation on the tile ABOVE the top stair. Use
+**UP_DOWN stairs** there. A plain *down-stair* on the top tile asks the miner to stand on a
+tile that does not exist yet, so the job never queues: the adit and stairway finished, `pending`
+stayed 0, and the fort ran 20 in-game days with 3 idle miners while the room below the surface
+never started. The fix is one of:
+
+- designate the top tile **UP_DOWN_STAIR** (it is diggable from the stair below - measured:
+  the four tiles turned into `SoilStairUD` within the day), or
+- dig a **helper stair** next to it (the player's method: a second 2-wide column from the
+  adit floor up, so the top level becomes reachable, then the room's designations stick).
+
+Symptom to recognise: `to_dig 54, dug 0, pending 0` on a fog face whose stairs are finished.
+That is not a queue problem - it is reachability. Adding more designations does nothing.
+
 ## 5. Band ordering: middle first
 A 3-wide designation whose flanks have no walkable neighbour is **cancelled silently**.
 Order the band middle-first: the middle touches the access you came from, and each dug tile
@@ -133,6 +149,16 @@ becomes the access point for the next. `scripts/dig_run.py` and `dig_adit.py` do
 
 `absence of walls != presence of a tunnel`: a box of unexplored rock has zero `#` glyphs.
 My watchers announced "DUG COMPLETE at 0s" twice because they measured absence.
+
+A designation count of 0 proves nothing, and the two ways it happens look identical:
+**finished work vanishes** (the tile is now a floor, the designation is gone - so "my
+designations disappeared" is often "they completed"), and **unreachable work vanishes** (the
+game cancels designations a miner cannot path to). Distinguish them by reading the tiles:
+floors/stairs = completed; rock still standing = cancelled by reachability.
+
+A dug floor that becomes a **farm plot** is still dug: its tile type becomes `FurrowedSoil`.
+Counting that as lost tile state made the observer shout "dug 54 -> 45, floors destroyed"
+nine times over nine plots, and reopened a to-do that was genuinely finished.
 
 ## 7. Waits are background jobs
 Never busy-poll in model turns. `scripts/dig_run.py` designates a box then reports
@@ -164,3 +190,17 @@ thickness, 2-tile walls between rooms and between rooms and halls. Ordered outwa
 (nearest first) so the dug hub is the access point for every spoke, and the spokes are the
 access points for the rooms. Level 36 on this fort: hub 25 + halls 51 + eight 4x4 + four 2x2
 rooms + 24 opening tiles = 244 tiles, gates clean (damp 0, shallow 0, over-stuff 0).
+
+## 17. A stall is a question about reachability, not about queue size
+
+Measured across three embarks on this site: a face with `pending 0` and `dug` unchanged for
+5+ reads is one of exactly three things - (1) it is finished (read the tiles), (2) it is
+unreachable (top-stair problem, a wall in the way, a caged path), (3) the crew cannot work
+(no picks, no food, no path to the site). Re-survey, read the stair column tile by tile, and
+check the crew facts. Ordering more designations on a stalled face is noise: the game cancels
+them and the ledger fills up with vanished counts.
+
+**Pause when the crew is idle, unpause the moment work is queued.** A fort running with 0
+pending burns in-game days (food drops, seasons pass, animals breed) for nothing; a fort
+paused with work queued just wastes no time. The pause is a measurement tool: it freezes a
+stall so you can read it, and it is the polite thing to do while you think.

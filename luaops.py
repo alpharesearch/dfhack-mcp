@@ -529,6 +529,19 @@ _CIVZONE_TYPES = {
 }
 
 
+def _usable(tiles: int, area: int) -> tuple[int | None, str]:
+    """A tile count the game can return for a legal building.
+
+    countExtentTiles returned 0 for a 130-tile stockpile that the game accepted, the
+    categories applied and the ladder rung satisfied. `usable_tiles: 0, holes: 130` is not
+    a measurement - it is the probe failing. Report it as unmeasured so nobody plans a fort
+    around a phantom hole count.
+    """
+    if area > 0 and tiles == 0:
+        return None, "countExtentTiles returned 0 for a non-empty footprint: usable tiles UNMEASURED (not 0)"
+    return tiles, "countExtentTiles"
+
+
 def _rows(out: str) -> list[str]:
     """Scan rows only. An EMPTY fort must read as empty: a scan that prints nothing is
     a legitimate answer (no zones / no piles), not a failure - and `_lua` raises
@@ -725,10 +738,11 @@ print(string.format("OK|%d|%d|%d..%d,%d..%d|%d|%d",
     if len(parts) < 5:
         raise LuaOpError(f"zone row came back malformed: {line!r}")
     bid, tval, extent, tiles, area = parts
+    _u, _src = _usable(int(tiles), int(area))
     return {"success": True, "kind": k, "zone_type": ztype, "zone_type_id": int(tval),
             "building_id": int(bid), "extent": extent,
-            "usable_tiles": int(tiles), "rect_tiles": int(area),
-            "holes": int(area) - int(tiles),
+            "usable_tiles": _u, "usable_tiles_source": _src, "rect_tiles": int(area),
+            "holes": (int(area) - _u) if _u is not None else None,
             "route": "allocInstance(30, subtype=<kind>) -> setSize -> constructAbstract "
                      "(the create_stockpile path; the kind is never written afterwards)"}
 
@@ -822,9 +836,12 @@ print(string.format("OK|%d|%d..%d,%d..%d|%d|%d|%s",
     if len(parts) < 5:
         raise LuaOpError(f"plan row came back malformed: {line!r}")
     bid, extent, tiles, area2, ready = parts[:5]
+    _u, _src = _usable(int(tiles), int(area2))
     return {"success": True, "building": resolved, "building_id": int(bid),
-            "extent": extent, "usable_tiles": int(tiles), "rect_tiles": int(area2),
-            "holes": int(area2) - int(tiles), "ready_for_construction": ready == "true",
+            "extent": extent, "usable_tiles": _u, "usable_tiles_source": _src,
+            "rect_tiles": int(area2),
+            "holes": (int(area2) - _u) if _u is not None else None,
+            "ready_for_construction": ready == "true",
             "route": "constructBuilding(type, subtype, custom, width, height, room.extents) "
                      "- quickfort's workshop plan path (no constructAbstract)"}
 
@@ -880,10 +897,13 @@ print(string.format("OK|%d|%s|%d..%d,%d..%d|%d|%d", b.id, desc, b.x1, b.x2, b.y1
     line = _one(out)
     if line.startswith("ERR|"):
         raise LuaOpError(line[4:])
-    bid, desc, extent, tiles, area = line[2:].split("|")
+    parts = line.split("|")[1:]
+    bid, desc, extent, tiles, area = parts
+    _u, _src = _usable(int(tiles), int(area))
     return {"success": True, "building_id": int(bid), "game_description": desc,
-            "extent": extent, "usable_tiles": int(tiles), "rect_tiles": int(area),
-            "holes": int(area) - int(tiles)}
+            "extent": extent, "usable_tiles": _u, "usable_tiles_source": _src,
+            "rect_tiles": int(area),
+            "holes": (int(area) - _u) if _u is not None else None}
 
 
 async def create_stockpile(dec, x: int, y: int, elev: int, w: int, h: int) -> dict:
