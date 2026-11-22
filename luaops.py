@@ -542,6 +542,29 @@ def _usable(tiles: int, area: int) -> tuple[int | None, str]:
     return tiles, "countExtentTiles"
 
 
+async def _lua_read(expr: str, attempts: int = 3) -> str:
+    """Run a READ-ONLY chunk, retrying the empty answers.
+
+    `lua produced no output` on a scan is usually the reply stream, not the fort: the drain
+    waits 0.5s and under load the RPC_REPLY_TEXT frames land later than that. Measured
+    2026-11-21 on one fort: `/zones` printed the 25-tile MeetingHall and the ladder read
+    "no zones" a second later, so the meeting rung flipped open on a fort that has one.
+    Retrying with a longer settle turns most flakes into measurements.
+
+    READ-ONLY by contract: a write chunk must never be replayed (a doubled build is worse
+    than a missing row), so only pure readers call this.
+    """
+    last: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            return await _lua(expr, settle=0.5 + 0.7 * i)
+        except (LuaOpError, DFHackError, DFHackTransportError) as e:
+            last = e
+            await asyncio.sleep(0.4)
+    assert last is not None
+    raise last
+
+
 class NoData(LuaOpError):
     """The read ran and the game printed NO rows.
 
@@ -591,7 +614,7 @@ async def list_zones(dec) -> list[dict]:
            '    tostring(tname), zz.x1, zz.x2, zz.y1, zz.y2, zz.z, rm))\n'
            "end")
     try:
-        out = await _lua(lua)
+        out = await _lua_read(lua)
     except LuaOpError as e:
         if 'no output' in str(e):
             raise NoData("the zone scan printed no rows: NO DATA (not a zone-free fort)")
@@ -646,7 +669,7 @@ for _,sp in ipairs(df.global.world.buildings.other.STOCKPILE) do
 end
 """.strip()
     try:
-        out = await _lua(lua)
+        out = await _lua_read(lua)
     except LuaOpError as e:
         if 'no output' in str(e):
             raise NoData("the pile scan printed no rows: NO DATA (not a pile-free fort)")
