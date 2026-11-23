@@ -1649,9 +1649,12 @@ function OPS.unit_labors(args)
     end
   end
   table.sort(units, function(a,b) return a.unit_id < b.unit_id end)
+  -- Count citizens holding the filtered labor. `labor_count` is a NUMBER (it is the length
+  -- already); `#x.labor_count` was my slip - the game answered:
+  -- "attempt to get length of a number value (field 'labor_count')" (measured 2026-11-22).
   local with = 0
   if filter ~= nil then
-    for _,x in ipairs(units) do if #x.labor_count > 0 then with = with + 1 end end
+    for _,x in ipairs(units) do if (x.labor_count or 0) > 0 then with = with + 1 end end
   end
   return { filter = filter, citizens = #units, with_labor = with, units = units }
 end
