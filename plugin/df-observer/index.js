@@ -1244,6 +1244,18 @@ export default class DFObserver extends TypertRemoteService {
           this.note(`filter model route rejected: ${e?.message ?? e}`)
         }
       }
+      // Title the chat we created. Without this the sidebar shows it as "Untitled" (a created
+      // session has no human prompt to title from), which is how the player met the leaked
+      // filter chats. `rename` needs the mounted session-title service; a refusal is a note,
+      // never a reason to fail the filter.
+      if (agent) {
+        try {
+          const titled = await controller.rename?.({ sessionId: this.filterSessionId, title: 'df-observer-filter' })
+          if (titled?.title) this.note(`filter session live: ${titled.title}`)
+        } catch (error) {
+          this.note(`filter session title refused: ${error?.message ?? error}`)
+        }
+      }
       this.note(agent ? `filter session live: ${this.filterSessionId}` : 'filter session created but not live yet')
       return agent
     } catch (error) {
