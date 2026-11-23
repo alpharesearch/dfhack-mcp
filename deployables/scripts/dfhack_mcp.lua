@@ -1814,6 +1814,56 @@ function OPS.work_details(args)
   error("unknown work_details action '"..tostring(action).."' (expected list, assign, set-labor)")
 end
 
+-- 17. buildings_live: EVERY building the game holds, from `df.global.world.buildings`.
+-- Measured 2026-11-22: the RPC census (`GET /list-buildings`) works - 762 blocks, the wagon at
+-- 65-67,116-118 @38 with 66 items - but a siege **artery** ("An artery has been opened by the
+-- attack!") never appears: RemoteFortressReader publishes only its own building enum. The game's
+-- full list is the authority for what is standing in the fort, so the census walks it directly.
+function OPS.buildings_live(args)
+  local e0 = tonumber(args and args.elev0)
+  local e1 = tonumber(args and args.elev1)
+  local want = args and args.type and tostring(args.type):upper() or nil
+  local out, total = {}, 0
+  local list = df.global.world.buildings.all
+  local n = 0
+  pcall(function() n = #list end)
+  for i = 0, n - 1 do
+    local b = list[i]
+    if b ~= nil then
+      local z = nil
+      pcall(function() z = tonumber(b.z) end)
+      local cx, cy = nil, nil
+      pcall(function() cx = tonumber(b.centerx) end)
+      pcall(function() cy = tonumber(b.centery) end)
+      if z ~= nil and (e0 == nil or e1 == nil or (z - M.GAME_Z_OFFSET) >= e0 and (z - M.GAME_Z_OFFSET) <= e1) then
+        -- Measured: `df.building_defnames` and `df.building_idnames` DO NOT exist on this build
+        -- (probe: both false; `dfhack.buildings.getGeneralBuild`, `df.is_id`, `df.building.get_name`
+        -- are all nil). The honest answer from Lua is the TYPE ID; the server names it through the
+        -- RPC decoder it already uses (`dec.building_name`), which is where "Wagon" came from.
+        local tid = nil
+        pcall(function() tid = tonumber(b:getType()) end)
+        local kind = tid ~= nil and ("type" .. tostring(tid)) or "?"
+        if want == nil or kind:upper():find(want) ~= nil then
+          total = total + 1
+          local flags = {}
+          pcall(function()
+            for k, v in pairs(b.flags) do if v == true then flags[#flags+1] = tostring(k) end end
+          end)
+          out[#out+1] = {
+            building_id = tonumber(b.id), type = kind, type_id = tid,
+            x = cx, y = cy, elev = z - M.GAME_Z_OFFSET,
+            hidden = (function() local r = false; pcall(function() r = (b.flags.hidden == true) end); return r end)(),
+            marked_for_removal = (function() local r = false; pcall(function() r = (b.flags.marked_for_removal == true) end); return r end)(),
+            flags = flags,
+          }
+        end
+      end
+    end
+  end
+  table.sort(out, function(a, b) return tostring(a.type) < tostring(b.type) end)
+  return { elev0 = e0, elev1 = e1, filter = want, buildings_listed = n, count = total, buildings = out }
+end
+
 function M.dispatch(op, raw_args)
   local fn = OPS[tostring(op)]
   if not fn then

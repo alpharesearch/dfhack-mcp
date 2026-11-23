@@ -2451,6 +2451,42 @@ async def unit_labors(unit_ids: str = Query("", description="comma-separated uni
         return {"success": False, "error": str(e)}
 
 
+@app.get("/buildings-live", operation_id="buildings_live")
+async def buildings_live(elev0: int = Query(None), elev1: int = Query(None),
+                         type: str = Query(None, description="substring filter on the building type name, e.g. artery, chain, depot, bed")):
+    """The game's FULL building list (`df.global.world.buildings.all`) - type, tile, elevation, flags.
+
+    Why a second census: `GET /list-buildings` reads the RPC block payload, and RemoteFortressReader
+    publishes only its own building enum. Measured 2026-11-22: with the game announcing "An artery
+    has been opened by the attack!", the RPC census over 762 blocks found the wagon and a chair and
+    **no artery**. The fort's own list is the authority for what is standing in it.
+    """
+    try:
+        res = await LO.buildings_live(elev0=elev0, elev1=elev1, type=type)
+        # Lua has no building defname tables on this build (measured), so the type NAME comes from
+        # the RPC decoder - the same source that named "Wagon" in the block census.
+        try:
+            dec = await world._dec(await world._gen())
+            for row in res.get("buildings", []):
+                tid = row.get("type_id")
+                if tid is not None:
+                    try:
+                        row["type_name"] = str(dec.building_name(int(tid)))
+                    except Exception:
+                        row["type_name"] = f"type {tid} (not in the decoder's list)"
+        except (DFHackError, DFHackTransportError) as e:
+            res["names_note"] = f"type names unavailable: {e}"
+        if type:
+            needle = str(type).lower()
+            res["buildings"] = [r for r in res.get("buildings", [])
+                                if needle in str(r.get("type_name", "")).lower()
+                                or needle in str(r.get("type", "")).lower()]
+            res["count"] = len(res["buildings"])
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e), "hint": "a Lua read failure is a read failure - retry once the game answers"}
+
+
 @app.get("/list-buildings", operation_id="list_buildings")
 async def list_buildings(elev0: int = Query(...), elev1: int = Query(...),
                          max_levels: int = Query(12, ge=1, le=12), type: str = Query(None, description="filter by building type name substring (case-insensitive), e.g. artery, depot, workshop, bed")):

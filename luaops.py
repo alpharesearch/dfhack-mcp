@@ -1535,6 +1535,23 @@ async def gather_and_items(action: str = "gather_plants",
     return await call_module("gather_and_items", payload)
 
 
+async def buildings_live(elev0: int | None = None, elev1: int | None = None,
+                         type: str | None = None) -> dict:
+    """Every building the GAME holds (`df.global.world.buildings.all`), not just what the RPC publishes.
+
+    Measured 2026-11-22: the RPC block census reported the wagon and a chair, and never the siege
+    **artery** the game announced - RemoteFortressReader only publishes its own building enum.
+    """
+    payload: dict = {}
+    if elev0 is not None:
+        payload["elev0"] = int(elev0)
+    if elev1 is not None:
+        payload["elev1"] = int(elev1)
+    if type:
+        payload["type"] = str(type)
+    return await call_module("buildings_live", payload)
+
+
 async def unit_profession(action: str = "list", unit_id: int | None = None,
                           profession: str | None = None,
                           profession_id: int | None = None) -> dict:
