@@ -28,7 +28,7 @@ Running `./start.sh` (or `./start.sh setup`) automatically finds Miniconda (`con
 | [`luaops.py`](luaops.py) | the Lua-side operations driven over DFHack + the auto-bootstrapping JSON bridge to `deployables/scripts/dfhack_mcp.lua` |
 | [`vendor/dfhack-client-python/`](vendor/dfhack-client-python) | the vendored DFHack RPC client (per-call task-local `ContextVar` reply isolation, auto-reconnect — see [License](#license)) |
 | [`plugin/df-observer/`](plugin/df-observer) | a harness-side companion plugin: watches the game and pushes briefings, to-dos and alerts unprompted |
-| [`skills/`](skills) | agent skills (`df-dig`, `df-stockpile`, `df-placement`) — the labour playbook the tools assume |
+| [`skills/`](skills) | agent skills (`df-quickstart`, `df-dig`, `df-stockpile`, `df-placement`) — the dependency graph & labour playbook the tools assume |
 | [`deployables/`](deployables) | quickfort blueprints and [`deployables/scripts/dfhack_mcp.lua`](deployables/scripts/dfhack_mcp.lua), deployed by copy into the game dir |
 | [`scripts/`](scripts) | operator scripts: `mcp-reload.sh`, `deploy.sh`, dig/watch helpers |
 | [`tests/`](tests) | unit + live-game tests (python) and the plugin's node test |

@@ -7,6 +7,7 @@ into one harness install.
 ## Library
 | Skill | Covers |
 |---|---|
+| [`df-quickstart`](df-quickstart/SKILL.md) | full Quickstart Dependency Graph & Execution Playbook (from `FlowchartDF.png` & the DF Wiki Quickstart Guide), mapping every resource, workshop, stockpile, zone, noble, and goal node to exact `dfhack-mcp` tools and prerequisite checks |
 | [`df-dig`](df-dig/SKILL.md) | tunnels, rooms, stair shafts (`box`, `boxes`, `middle_first`, `stair_shaft`): depth/overburden, damp & hot hazards, designating into fog, labour, band ordering, proving the dig (`transitions`), background-job waits, this world's geometry |
 | [`df-placement`](df-placement/SKILL.md) | workshops, furniture, trade depots, farm plots (`configure_farmplot`), stockpiles (`create_stockpile` + category/container config), zones (`create_zone`), building status & stall diagnostics (`building_status`) |
 
