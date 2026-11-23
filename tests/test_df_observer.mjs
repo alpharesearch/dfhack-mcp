@@ -750,6 +750,11 @@ test('title coverage is partial, never all-or-nothing', () => {
 
 test('the panel mute pauses injections only - never the game', async () => {
   const registered = []
+  const watchTarget = {
+    id: 'watched-1', session: { header: { origin: 'chat' } }, status: 'running',
+    inbox: { nextStep: [], nextTurn: [], replace: () => false },
+    ctx: { effect: () => () => {} },
+  }
   const ctx = {
     // The Cordis base registers the service: ctx.reflect.provide(name, self).
     reflect: { provide: () => {} },
@@ -757,13 +762,17 @@ test('the panel mute pauses injections only - never the game', async () => {
     effect: (fn) => { fn(); return () => {} },
     commands: { register: (def) => { registered.push(def.name); return () => {} } },
     tools: { register: () => () => {} },
-    agents: { list: () => [], on: () => () => {} },
+    agents: { list: () => [watchTarget], on: () => () => {} },
     systemPrompt: { section: () => () => {} },
     sessionProjections: { register: () => () => {} },
     timers: { register: () => () => {} },
     storage: { open: async () => ({ table: () => ({ entries: () => [], put: () => {}, get: () => null }), close: () => {} }) },
   }
   const inst = new DFObserver(ctx, Config.parse({ panel_pause_button: true }))
+  // The session must CONTACT the observer before it can be briefed (require_tool_contact).
+  const agent = watchTarget
+  inst.agents.set(agent.id, { lastTick: 0, lastAt: 0, lastSignal: null, lastWakeAt: 0, pendingSteerId: null })
+  inst.markWatched(agent, 'test')
   assert.equal(inst.quiet, false, 'starts unmuted')
   // The game-write path is spied: the mute must never touch it.
   let pauseWrites = 0
@@ -811,8 +820,11 @@ test('the panel mute pauses injections only - never the game', async () => {
   const injected = []
   // liveTargets() adopts agents through their OWN Context (agent.ctx.effect), so the
   // mock agent must carry one - measured: 'Cannot read properties of undefined (reading effect)'.
-  ctx.agents = { list: () => [{ id: 'play-1', ctx: { effect: () => () => {} }, inject: (m) => injected.push(assertInboxMessage(m, 'inject')) }], on: () => () => {} }
+  const play1 = { id: 'play-1', session: { header: { origin: 'chat' } }, ctx: { effect: () => () => {} }, inject: (m) => injected.push(assertInboxMessage(m, 'inject')) }
+  ctx.agents = { list: () => [play1], on: () => () => {} }
   const inst2 = new DFObserver(ctx, Config.parse({ panel_pause_button: true }))
+  // CONTACT, through the shipped path: a df-* session command marks the session watched.
+  inst2.markWatched(play1, 'test')
   inst2.setQuiet(true, 'test')
   assert.equal(injected.length, 1, `the toggle announces itself once (saw ${injected.length} injected rows)`)
   assert.match(inboxText(injected[0]), /injections PAUSED/, inboxText(injected[0]).slice(0, 120))
@@ -874,6 +886,7 @@ test('every inbox boundary takes a message object - a raw string corrupts the se
     storage: { open: async () => ({ table: () => ({ entries: () => [], put: () => {}, get: () => null }), close: () => {} }) },
   }
   const inst = new DFObserver(ctx, Config.parse({ wake_min_spacing_ms: 10000, inject_min_spacing_ms: 0 }))
+  inst.markWatched({ id: 'play-1', session: { header: { origin: 'chat' } }, ctx: { effect: () => () => { } } }, 'test')
   inst.model.ingestFast(fastData())
   inst.model.ingestDeep(deepData())
   inst.model.evaluate({})
@@ -2133,6 +2146,7 @@ test('delivery: the plugin replaces its pending steer instead of stacking one', 
     storage: { open: async () => ({ table: () => ({ entries: () => [], put: () => {}, get: () => null }), close: () => {} }) },
   }
   const inst = new DFObserver(ctx, Config.parse({ wake_min_spacing_ms: 10000 }))
+  inst.markWatched({ id: 'a1', session: { header: { origin: 'chat' } }, ctx: { effect: () => () => { } } }, 'test')
   inst.model.ingestFast(fastData())
   inst.model.ingestDeep(deepData())
   inst.model.evaluate({})
@@ -2344,6 +2358,52 @@ test('the auto-seeded basics do not push an early-game stone pile', () => {
          'the pile basics that DO pay off are still seeded')
   assert(/deliberately NO stone pile/i.test(src.slice(0, i)),
          'and the reason is written where the next reader looks')
+})
+// The player's bug report, 2026-11-22: "the dsh observer plugin sometimes starts some other
+// chats, this looks like a bug". It was: `targetAgent` excluded only subagents and honoured the
+// `agents` allowlist when NON-empty, so with the default empty allowlist every session in the
+// profile was a briefing/wake target - and `liveTargets()` adopts agents created before activation.
+// The gate now requires the session to CONTACT the observer (a df_* tool, a df-* command, the
+// panel) before any message lands there.
+const selectorStub = (cfg) => {
+  const sel = Object.create(DFObserver.prototype)
+  sel.config = { agents: [], brief_subagents: false, require_tool_contact: true, ...cfg }
+  sel.watched = new Set()
+  sel.agents = new Map()
+  sel.disposers = new Map()
+  sel.log = () => {}
+  return sel
+}
+test('an untouched session is never a briefing target (the "starts other chats" fix)', () => {
+  const sel = selectorStub({})
+  const chat = { id: 'chat-1', session: { header: { origin: 'chat' } } }
+  assert(sel.eligibleAgent(chat) !== null, 'it IS eligible by config (no allowlist, not a subagent)')
+  assert(sel.targetAgent(chat) === null, 'but it is NOT a target until it contacts the observer')
+  assert(sel.markWatched(chat, 'tool call') === true, 'contact marks it')
+  assert(sel.targetAgent(chat) !== null, 'and only then does it become a briefing target')
+})
+test('the allowlist and subagent rules still gate before contact', () => {
+  const sel = selectorStub({ agents: ['pinned'] })
+  const other = { id: 'other', session: { header: { origin: 'chat' } } }
+  const pinned = { id: 'pinned', session: { header: { origin: 'chat' } } }
+  assert(sel.markWatched(other, 'tool call') === false, 'a non-allowlisted session cannot self-subscribe')
+  assert(sel.targetAgent(other) === null, 'and stays out')
+  sel.markWatched(pinned, 'tool call')
+  assert(sel.targetAgent(pinned) !== null, 'the pinned session gets through')
+  const sub = { id: 'sub', session: { header: { origin: 'subagent' } } }
+  const s2 = selectorStub({})
+  assert(s2.eligibleAgent(sub) === null, 'subagents stay out by default (brief_subagents=false)')
+})
+test('require_tool_contact=false restores the old broadcast, and the fix is documented in the code', () => {
+  const sel = selectorStub({ require_tool_contact: false })
+  const chat = { id: 'chat-2', session: { header: { origin: 'chat' } } }
+  assert(sel.targetAgent(chat) !== null, 'explicit broadcast: every eligible session is a target')
+  const src = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  assert(/require_tool_contact: z\.boolean\(\)\.default\(true\)/.test(src),
+         'the default is the safe one (opt-in contact)')
+  assert(/starts\n   \* some other chats/.test(src) || /some other chats/.test(src),
+         "the player\"s report is quoted where the gate is defined")
+  assert(/name: 'df-watch'/.test(src), 'and there is an explicit command to see/control who is watched')
 })
 for (const [name, fn] of queue) {
   try {

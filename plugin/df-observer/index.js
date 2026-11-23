@@ -157,6 +157,16 @@ export const Config = z.object({
   agents: z.array(z.string()).default([]),
   /** Also brief/wake subagent sessions (they inherit the briefing in their log). */
   brief_subagents: z.boolean().default(false),
+  /** Require a session to CONTACT the observer (a df_* tool call, a df-* session
+   * command, the panel) before it becomes a briefing/wake target. Default true.
+   * Measured 2026-11-22 (player report: "the dsh observer plugin sometimes starts
+   * some other chats, this looks like a bug"): `targetAgent` excluded only subagents and
+   * honoured the `agents` allowlist when NON-empty, so with the default empty allowlist
+   * EVERY session in the profile was a wake target - `liveTargets()` even adopts agents
+   * created before activation, so any chat opened in this profile gets DF briefings
+   * injected and wakes. Session contact is the honest signal of interest; set false to
+   * restore the old broadcast. */
+  require_tool_contact: z.boolean().default(true),
   /** Quiet switches (player asks for a silent agent). */
   wake_enabled: z.boolean().default(true),
   /** Rules section budget (measured: the full text costs ~316 tokens on EVERY
@@ -275,6 +285,7 @@ export default class DFObserver extends TypertRemoteService {
       announceEveryMs: config.announce_every_ms,
     }, (message) => this.note(message))
     /** Per-agent briefing/wake bookkeeping: {lastTick, lastAt, lastSignal, lastWakeAt}. */
+    this.watched = new Set()   // sessions that CONTACTED the observer (see require_tool_contact)
     this.agents = new Map()
     this.disposers = new Map()
     this.projection = null
@@ -317,13 +328,16 @@ export default class DFObserver extends TypertRemoteService {
     }), 'df-observer: prompt section')
 
     // ---- the pull tools ----
-    const sessionFilter = (exec) => this.targetAgent(exec.agent) !== null
+    // Tool EXECUTION is the opt-in: a session that calls a df_* tool asked for this data.
+    // `when` keeps tools visible to eligible sessions (visibility must not require contact
+    // first - that would make the opt-in unreachable); delivery requires contact.
+    const sessionFilter = (exec) => { this.markWatched(exec.agent, 'tool call'); return this.eligibleAgent(exec.agent) !== null }
     for (const definition of toolDefinitions({
       model: this.model, projection: this.projection, config, sessionFilter,
       onReset: (why) => this.observerReset({ swapped: true, source: 'tool', why: why || 'reset requested via df_todo' }),
     })) {
       ctx.effect(() => ctx.tools.register(definition, {
-        when: ({ agent }) => this.targetAgent(agent) !== null,
+        when: ({ agent }) => this.eligibleAgent(agent) !== null,
       }), `df-observer: tool ${definition.name}`)
     }
 
@@ -371,6 +385,7 @@ export default class DFObserver extends TypertRemoteService {
       description: 'Silence repeats of one DF observer alert until its condition clears: /df-ack <alert-id>',
       input: { hint: '<alert-id> (from df_alerts / the observer panel)' },
       handler: ({ agent, rawInput }) => {
+        this.markWatched(agent, '/df-ack')
         const id = String(rawInput ?? '').trim().split(/\s+/)[0]
         if (!id) return { kind: 'error', text: 'df-ack: give an alert id, e.g. /df-ack A12' }
         const alert = this.model.ackAlert(id)
@@ -390,6 +405,7 @@ export default class DFObserver extends TypertRemoteService {
       description: 'Pause (or resume) the DF observer\'s context injections - briefings and alert wakes. The game keeps running: /df-quiet [on|off]',
       input: { hint: '[on|off] (toggles when omitted)' },
       handler: ({ agent, rawInput }) => {
+        this.markWatched(agent, '/df-quiet')
         const arg = String(rawInput ?? '').trim().toLowerCase().split(/\s+/)[0]
         const next = arg === 'on' ? true : arg === 'off' ? false : !this.quiet
         const changed = next !== this.quiet
@@ -410,6 +426,7 @@ export default class DFObserver extends TypertRemoteService {
       description: 'Throw out everything the DF observer derived from the current game (to-dos, watched boxes, baselines, alerts, facts - archived, not deleted) and re-read the fort in full. Use it after loading a different save. /df-reset [why]',
       input: { hint: '[reason, optional]' },
       handler: async ({ agent, rawInput }) => {
+        this.markWatched(agent, '/df-reset')
         const why = String(rawInput ?? '').trim() || 'reset requested by the player'
         const out = await this.observerReset({ swapped: true, source: 'command', why })
         void agent
@@ -424,11 +441,37 @@ export default class DFObserver extends TypertRemoteService {
       description: 'Read the observer\'s full current panel payload (ladder, boxes, piles, shafts, ledger, alerts, notes, designation scan) as JSON.',
       input: { hint: '(no arguments)' },
       handler: ({ agent }) => {
+        this.markWatched(agent, '/df-panel')
         const sessionId = agent?.session ?? agent?.id
         const payload = this.panelPayload(typeof sessionId === 'string' ? sessionId : undefined)
         return { kind: 'success', text: JSON.stringify(payload) }
       },
     }), 'df-observer: /df-panel command')
+
+    // ---- explicit watch control: who may be briefed ----
+    ctx.effect(() => ctx.commands.register({
+      name: 'df-watch',
+      description: 'Which sessions the DF observer briefs. /df-watch list | on (this session) | off (this session). Sessions become targets by CONTACTING the observer (a df_* tool call, a df-* command, the panel) - before that they are never woken, so unrelated chats stay clean (player-measured bug, 2026-11-22).',
+      input: { hint: '[list|on|off] (default: list)' },
+      handler: ({ agent, rawInput }) => {
+        const arg = String(rawInput ?? '').trim().toLowerCase().split(/\s+/)[0] || 'list'
+        const id = agent ? String(agent.id) : null
+        if (arg === 'on') {
+          if (!this.markWatched(agent, '/df-watch on'))
+            return { kind: 'error', text: 'df-watch: this session is not an eligible target (allowlist/subagent rule)' }
+          return { kind: 'success', text: `df-watch: session ${id} is now a briefing target` }
+        }
+        if (arg === 'off') {
+          this.watched.delete(id)
+          this.agents.delete(id)
+          const dispose = this.disposers.get(id)
+          this.disposers.delete(id)
+          dispose?.()
+          return { kind: 'success', text: `df-watch: session ${id} is NO LONGER a briefing target (it re-subscribes by calling a df_* tool)` }
+        }
+        return { kind: 'success', text: `df-watch: require_tool_contact=${this.config.require_tool_contact}; watched=[${[...this.watched].join(', ') || 'none'}]; briefing targets now=${this.liveTargets().length}` }
+      },
+    }), 'df-observer: /df-watch command')
 
     // ---- filter subagent surface (Config-gated; OFF by default) ----
     if (config.filter_enabled) this.installFilterSurface()
@@ -447,12 +490,34 @@ export default class DFObserver extends TypertRemoteService {
   // Targeting
   // ---------------------------------------------------------------------
 
-  targetAgent(agent) {
+  /** Who the observer MAY talk to: config allowlist + the subagent rule. */
+  eligibleAgent(agent) {
     if (!agent) return null
     const origin = agent.session?.header?.origin
     if (origin === 'subagent' && !this.config.brief_subagents) return null
     if (this.config.agents.length && !this.config.agents.includes(String(agent.id))) return null
     return agent
+  }
+
+  /** Mark a session as interested (it used a df_* tool, a df-* command, or the panel). */
+  markWatched(agent, why = 'contact') {
+    const a = this.eligibleAgent(agent)
+    if (!a) return false
+    const id = String(a.id)
+    if (!this.watched.has(id)) this.log?.('info', `df-observer: session ${id} is now a briefing target (${why})`)
+    this.watched.add(id)
+    return true
+  }
+
+  /** Who the observer DOES talk to (briefings, wakes, panel data, tools' `when`). */
+  targetAgent(agent) {
+    const a = this.eligibleAgent(agent)
+    if (!a) return null
+    // THE FIX (player-measured 2026-11-22): with an empty allowlist the old code returned
+    // every session in the profile, so unrelated chats got DF wakes. Contact is required
+    // unless the operator explicitly asks for the broadcast.
+    if (this.config.require_tool_contact && !this.watched.has(String(a.id))) return null
+    return a
   }
 
   liveTargets() {

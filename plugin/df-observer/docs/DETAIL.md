@@ -99,6 +99,15 @@ config object, so copy the keys you change.
   probe provides (`items.other.IN_PLAY`), not per material stack.
 - Reachability/stall explanations are the skills' job (`df-dig`); the observer
   reports the state pattern (pending drained with no dug change), not the cause.
+- **A session must contact the observer before it is briefed** (`require_tool_contact: true`,
+  since 0.1.96). Contact = a `df_*` tool call, a `df-*` session command (`/df-ack`, `/df-quiet`,
+  `/df-reset`, `/df-panel`, `/df-watch`) or the panel. Before that a session is **not** a wake
+  target. This fixed a player-reported bug: *"the dsh observer plugin sometimes starts some other
+  chats, this looks like a bug"* - the old selector excluded only subagents and honoured the
+  `agents` allowlist **when non-empty**, so with the default empty allowlist every session in the
+  profile received briefings and wakes, and the plugin adopts agents created before activation.
+  `GET` the panel/`/df-watch list` to see who is watched; `/df-watch off` drops a session (it
+  re-subscribes by calling a tool); `require_tool_contact: false` restores the broadcast.
 - Subagents are not briefed by default (`brief_subagents: false`): they inherit
   the parent's log; the parent session carries the live state.
 - The plugin targets live root agents in its own Host process; game state is
