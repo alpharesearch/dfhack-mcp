@@ -270,3 +270,21 @@ Rules:
 3. Trust the map over my tool: connectivity claims about walkable floors, soil patches and stair
    links get re-measured after any change to the band logic (measured after the fix: 8 components /
    25,869 tiles, and the soil patch `(90,106)@36` is component 1 - walkable from the fort).
+
+## §23 - digging one level below the surface CREATES soil (the player's rule; my census missed it)
+
+A dug floor takes the material of the layer above it. So on a map whose only soil is the surface
+layer, **a room dug one level under the soil surface has a soil floor** - and that is where a farm
+plot belongs. My census reported *existing* soil tiles, concluded "there is no underground soil on
+this world", and put the farm on the bare surface; the conclusion was an artifact of asking the
+wrong question. Existing soil is not the farmable set; **soil-coverable space** is.
+
+Rules:
+1. The farmable set at elevation `e` = tiles at `e` whose tile at `e+1` is soil/earth. `GET /find-soil`
+   reports this as `potential_soil_clusters` (`soil_tiles` alone is the surface, which is not the answer).
+2. Depth math: surface at 36 → farm room at **35**, with cover ≥1 from the soil layer and the ≥2 rule
+   satisfied by the soil above plus the layer over it - gate with `/depth-profile` and `/hazards`
+   before designating, and keep the box middle-first.
+3. Do not place a farm plot on open-sky surface soil as a design choice. It grows (measured: plot id 6
+   at (90,106)@36 came up complete with plump helmets in all four seasons), but the quickstart's room
+   is underground, and a surface plot is exposed to frost and visitors.

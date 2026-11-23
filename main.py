@@ -2488,13 +2488,62 @@ async def find_soil(elev0: int = Query(...), elev1: int = Query(...),
                     c["sample"] = [x, y]
                 nm = soil_names.get(tid, str(tid))
                 c["types"][nm] = c["types"].get(nm, 0) + 1
+    # The player's rule (2026-11-22): a DUG FLOOR TAKES THE MATERIAL OF THE LAYER ABOVE, so a room
+    # dug one level under the soil surface has a SOIL FLOOR - that is the farmable set, and my
+    # census answering only existing soil tiles said "no underground soil on this world", which was
+    # the wrong question. Potential soil = a diggable tile at `e` with soil at `e+1` above it.
+    cover_above: dict[tuple[int, int, int], bool] = {}
+    for e in levels:
+        z = e + GAME_Z_OFFSET
+        blocks = await world.cache.blocks(z, z + 1, gen)
+        for b in blocks:
+            if int(b.map_z) != z:
+                continue
+            base_x, base_y = int(b.map_x), int(b.map_y)
+            for idx, tile in enumerate(b.tiles):
+                x, y = base_x + (idx % 16), base_y + (idx // 16)
+                if int(tile) in soil_ids:
+                    cover_above[(x, y, e)] = True
+    pot: dict[tuple[int, int, int], dict] = {}
+    pot_total = 0
+    for e in levels:
+        z = e + GAME_Z_OFFSET
+        blocks = await world.cache.blocks(z, z + 1, gen)
+        for b in blocks:
+            if int(b.map_z) != z:
+                continue
+            base_x, base_y = int(b.map_x), int(b.map_y)
+            for idx, tile in enumerate(b.tiles):
+                x, y = base_x + (idx % 16), base_y + (idx // 16)
+                if int(tile) in soil_ids:
+                    continue
+                hid = bool(b.hidden[idx]) if idx < len(b.hidden) else False
+                if hid:
+                    continue
+                if not cover_above.get((x, y, e + 1)):
+                    continue
+                cls = str(dec.tile_class(tile).key) if hasattr(dec, "tile_class") else "?"
+                if cls not in ("rock", "wall"):
+                    continue
+                pot_total += 1
+                key = (e, x // step, y // step)
+                c = pot.setdefault(key, {"elev": e, "x0": (x // step) * step, "y0": (y // step) * step,
+                                         "x1": (x // step) * step + step - 1,
+                                         "y1": (y // step) * step + step - 1,
+                                         "potential_soil_tiles": 0, "sample": None})
+                c["potential_soil_tiles"] += 1
+                if c["sample"] is None:
+                    c["sample"] = [x, y]
+    pot_clusters = sorted(pot.values(), key=lambda c: -c["potential_soil_tiles"])[:24]
     clusters = sorted(cells.values(), key=lambda c: -c["soil_tiles"])[:24]
     for c in clusters:
         c["types"] = [k for k, _ in sorted(c["types"].items(), key=lambda kv: -kv[1])[:3]]
     return {"success": True, "elev0": int(elev0), "elev1": int(elev1), "cell": step,
             "levels_scanned": list(levels), "blocks_scanned": blocks_scanned,
             "soil_tiles": total, "soil_tiletypes_seen": sorted(set(soil_names.values()))[:24],
-            "clusters": clusters,
+            "potential_soil_tiles": pot_total,
+            "potential_soil_note": "a dug floor takes the material of the layer above, so rock under soil becomes a SOIL FLOOR - this is the farmable set (the player's rule, df-dig §23). `soil_tiles` alone is only existing soil, and a map with no underground soil is NOT a map with no farm site",
+            "clusters": clusters, "potential_soil_clusters": pot_clusters,
             "note": "a farm plot needs a FLOOR on soil inside mined space: check /survey for the "
                     "class (floor, not rock) at the sample, and soil_tiles is only meaningful when "
                     "blocks_scanned > 0 - a scan of 0 blocks answering 0 is a read failure, not a map fact"}

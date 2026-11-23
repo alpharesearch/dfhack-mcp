@@ -1008,6 +1008,23 @@ def test_transition_store_records_wall_to_floor_and_stair_transitions():
             pass
 
 
+def test_the_soil_census_reports_dig_to_soil_ground_not_only_existing_soil():
+    """The player's rule: **a dug floor takes the material of the layer above**, so a room dug one
+    level under the soil surface has a SOIL FLOOR. My census reported only existing soil tiles,
+    answered 'no underground soil on this world', and put the farm on open sky - the question was
+    wrong, because the farmable set is soil-COVERED rock, not soil tiles. The census must report
+    potential soil as its own answer, and the skill must state the rule (df-dig §23)."""
+    main = pathlib.Path("main.py").read_text()
+    i = main.index('@app.get("/find-soil"')
+    seg = main[i:main.index('@app.post("/pile-arrays"', i)]
+    assert "potential_soil_clusters" in seg and "potential_soil_tiles" in seg, "the census reports dig-to-soil ground"
+    assert "cover_above" in seg, "it checks the layer above, which is what the rule is about"
+    assert "a dug floor takes the material of the layer above" in seg, "the rule is in the tool's own words"
+    skill = pathlib.Path("skills/df-dig/SKILL.md").read_text()
+    assert "digging one level below the surface CREATES soil" in skill, "the rule is in the skill"
+    assert "potential_soil_clusters" in skill, "and it names the field to use"
+
+
 def test_the_reachability_graph_is_anchored_on_civilians_not_wildlife_density():
     """`/dig-reachable` said walkable fort floors were unreachable: `fort_band()` scored unit
     density over ALL units, so ~90 wildlife units at RPC z 11-26 beat the fort's 17 citizens at
