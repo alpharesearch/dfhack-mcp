@@ -1,6 +1,6 @@
 {
   "name": "@local/df-observer",
-  "version": "0.1.101",
+  "version": "0.1.102",
   "private": true,
   "type": "module",
   "description": "Watches Dwarf Fortress through the DF MCP server and tells the model what matters unprompted: bounded briefings, to-dos with plugin-run acceptance tests, alerts that wake the agent, pause attribution, and a live panel.",
