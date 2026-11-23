@@ -785,7 +785,11 @@ export class FortModel {
       // `stagnant` to 0 on every non-drained read, so an idle face never counted).
       // Fire dig_stalled ONLY when designations were actually queued (drained or pending > 0):
       // never spam on untouched fog boxes where pending === 0 && prev.pending === 0 (tool_missing #47).
-      const pureFog = box.rock != null && Number(box.rock) === 0
+      // Measured 2026-11-22: a pure-fog box answers `{"hidden": 49}` - there is NO `rock` key at all,
+      // so `box.rock != null && Number(box.rock) === 0` was FALSE for exactly the boxes this guard
+      // exists for, and A14 fired on `x57-63 y113-119 elev36` with pending 0 and dug 0. Fog is
+      // "no positive rock count", which covers the absent key.
+      const pureFog = !(Number(box.rock) > 0)
       const unchanged = box.to_dig === prev.to_dig && box.dug === prev.dug
       const drained = prev.pending > 0 && box.pending === 0 && unchanged
       const activeStall = box.pending > 0 && unchanged
@@ -795,8 +799,12 @@ export class FortModel {
         if (stagnant >= cfg.stall_ticks) {
           const coord = `x${box.box[0]}-${box.box[2]} y${box.box[1]}-${box.box[3]} elev${box.elev}`
           const ev = drained
-            ? `${coord}: pending 0, to_dig ${box.to_dig} unchanged ${stagnant} reads, dug ${box.dug} unchanged - designations drained with no dug change`
-            : `${coord}: pending ${box.pending}, to_dig ${box.to_dig}, dug ${box.dug} unchanged for ${stagnant} reads - designations queued but no tiles dug`
+            ? `${coord}: pending 0, to_dig ${box.to_dig} unchanged ${stagnant} reads, dug ${box.dug} unchanged - designations drained with no dug change (drained)`
+            : idle
+              // Idle means: nothing queued, nothing dug, and the face has rock to cut. Say which, and
+              // never call pending 0 "designations queued" (measured: A14 did exactly that).
+              ? `${coord}: pending 0, to_dig ${box.to_dig}, dug ${box.dug} unchanged for ${stagnant} reads - rock face present (${box.rock} rock, ${box.hidden ?? 0} hidden) with nothing designated: queue the face (idle)`
+              : `${coord}: pending ${box.pending}, to_dig ${box.to_dig}, dug ${box.dug} unchanged for ${stagnant} reads - designations queued but no tiles dug (activeStall)`
           this.digEvents.push({ tick: this.tick, kind: 'stalled', box: box.box, elev: box.elev, evidence: ev })
           this.trim('digEvents', 40)
           const hazard = faceAquiferNote(this.shafts, box)

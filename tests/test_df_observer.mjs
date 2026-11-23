@@ -1366,7 +1366,7 @@ test('water growth in the band raises the whitelisted water alert', () => {
 
 test('stall advice names the aquifer when the stalled face sits in one', () => {
   const model = freshModel()
-  const box = { elev: 25, box: [43, 121, 44, 122], to_dig: 4, dug: 0, pending: 0 }
+  const box = { elev: 25, box: [43, 121, 44, 122], to_dig: 4, dug: 0, pending: 0, rock: 4, hidden: 0 }
   const ingest = () => model.ingestFast({ paused: false, generation: 1,
     facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 20, drink: 0, wood: 0, stone: 141, metal: 0, barrels: 18, pending_dig: 103 },
     buildings: [], boxes: [{ ...box }],
@@ -1387,7 +1387,7 @@ test('stall advice names the aquifer when the stalled face sits in one', () => {
   assert.match(hit.suggested, /clear the DAMP designations/, 'the advice orders the safe step first')
   // a dry face keeps the plain advice
   const dry = freshModel()
-  const dryBox = { elev: 35, box: [45, 121, 66, 122], to_dig: 20, dug: 24, pending: 0 }
+  const dryBox = { elev: 35, box: [45, 121, 66, 122], to_dig: 20, dug: 24, pending: 0, rock: 20, hidden: 0 }
   const dryIngest = () => dry.ingestFast({ paused: false, generation: 1,
     facts: { pop: 102, dwarves: 21, miners: 3, picks: 3, food: 20, drink: 0, wood: 0, stone: 141, metal: 0, barrels: 18, pending_dig: 0 },
     buildings: [], boxes: [{ ...dryBox }],
@@ -1405,7 +1405,7 @@ test('stall advice names the aquifer when the stalled face sits in one', () => {
 
 test('idle-plan stall: pending 0 with dug frozen raises dig_stalled after stall_ticks', () => {
   const model = freshModel()
-  const box = { elev: 35, box: [45, 121, 66, 122], to_dig: 44, dug: 0, pending: 0 }
+  const box = { elev: 35, box: [45, 121, 66, 122], to_dig: 44, dug: 0, pending: 0, rock: 44, hidden: 0 }
   const ingest = () => model.ingestFast({ paused: false, generation: 1,
     facts: { pop: 79, dwarves: 21, miners: 3, picks: 3, food: 40, drink: 0, wood: 0, stone: 138, metal: 0, barrels: 21, pending_dig: 0 },
     buildings: [], boxes: [{ ...box }], shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [] })
