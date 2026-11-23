@@ -1771,12 +1771,20 @@ function OPS.work_details(args)
     end
     local changed = "none"
     if mode == "add" and pos == nil then
-      local okc, errc = pcall(function() list:insert(uid) end)
-      if not okc then error("insert into assigned_units failed: "..tostring(errc)) end
+      -- Measured 2026-11-22: `list:insert(uid)` FAILS with "Cannot call field
+      -- vector<int32_t>.insert(): wrong argument count" - insert needs (index, value). The route
+      -- that works is resize-then-assign, and it put unit 6493 in the Miners detail (size 2 -> 3).
+      local n = #list
+      local okc, errc = pcall(function() list:resize(n + 1); list[n] = uid end)
+      if not okc then error("growing assigned_units failed: "..tostring(errc)) end
+      local present = false
+      for i = 0, #list - 1 do if tonumber(list[i]) == uid then present = true end end
+      if not present then error("the write reported success but unit "..tostring(uid).." is not in assigned_units") end
       changed = "added"
     elseif mode == "remove" and pos ~= nil then
-      local okc, errc = pcall(function() list:remove(pos) end)
-      if not okc then error("remove from assigned_units failed: "..tostring(errc)) end
+      -- `remove` is nil on this vector type; the game's own scripts use `erase(index)`.
+      local okc, errc = pcall(function() list:erase(pos) end)
+      if not okc then error("erase from assigned_units failed: "..tostring(errc)) end
       changed = "removed"
     elseif mode == "add" and pos ~= nil then
       changed = "already-assigned"

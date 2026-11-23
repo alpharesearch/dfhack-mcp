@@ -1039,7 +1039,8 @@ def test_the_labor_menu_is_driven_at_the_work_detail_layer_and_labor_writes_say_
     assert "df.global.plotinfo.labor_info" in seg and "li.work_details" in seg, \
         "the real container (found in the game's own scripts), not a guess at world.*"
     assert "assigned_units" in seg and "allowed_labors" in seg, "it reads the tick list and the granted labors"
-    assert "list:insert(" in seg and "list:remove(" in seg, "assign ticks and unticks, it does not only describe"
+    assert "list:resize(" in seg and "list:erase(" in seg, "assign uses the measured vector API: resize+assign, erase"
+    assert "remove" not in seg.split("list:")[2] or "erase" in seg, "list:remove is nil on vector<int32_t> - never used"
     assert "read_back" not in seg or "assigned_after" in seg, "assign answers with the list as the game now holds it"
     lo = pathlib.Path("luaops.py").read_text()
     assert "async def work_details(" in lo, "the bridge exists"
