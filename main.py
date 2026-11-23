@@ -2441,6 +2441,7 @@ async def find_soil(elev0: int = Query(...), elev1: int = Query(...),
     """
     from worldmodel import GAME_Z_OFFSET
     gen = await world._gen()
+    dec = await world._dec(gen)      # the tile-class decoder (measured: NameError 'dec' is not defined)
     tt = await GetTiletypeList()
     soil_ids, soil_names = set(), {}
     # Measured 2026-11-22: `Tiletype.material` is an ENUM INTEGER, not a name - my first version
