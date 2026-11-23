@@ -329,3 +329,19 @@ said `designated_total: 4` (tool_missing #45). So:
 2. If it is designated, check the access rule (§19): plain digs need a walkable neighbour; under a floor it
    must be a stair. Rock *beside* dug floor is workable - that is how a tunnel extends (measured: queuing
    `x74-76 y114-118` + `x68-69 y114-118 @36` beside the dug band took `pending` 66 → 75 and floors 26 → 35).
+
+## §27 - the player's staircase-then-tunnel pattern (demonstrated live 2026-11-22)
+
+Watched the player designate it in-game, measured from the tile reads:
+
+1. **Main staircase first, over many levels.** One column, `UP_DOWN_STAIR_DIG` on **every** level the
+   shaft passes (measured at (36,119): elev 37,36,35,34,33) and **`UP_STAIR_DIG` at the bottom**
+   (elev 32). The top tile stays undesignated while it is solid wall above the surface line.
+2. **Then the connection tunnel** - a horizontal run off the staircase into the fort, designated
+   beside dug/standing ground so every tile has a walkable neighbour (§19).
+3. Why this beats my first attempt: I designated a wide room first (63 tiles at elev 35) and a stair
+   under a floor. A room in fog has no walkable neighbour, so the game queued nothing - `dug 0` over
+   95 reads. The staircase creates the connection; the tunnel carries it; the room gets dug last.
+
+Measured proof that it works: with the staircase running, `stone 18 -> 29` and designations were
+consumed (`pending` moving), where the fog room alone moved nothing for 12+ minutes.
