@@ -290,3 +290,19 @@ Rules:
 3. Do not place a farm plot on open-sky surface soil as a design choice. It grows (measured: plot id 6
    at (90,106)@36 came up complete with plump helmets in all four seasons), but the quickstart's room
    is underground, and a surface plot is exposed to frost and visitors.
+
+## §24 - before believing a reachability answer, check the seed and the band
+
+Measured 2026-11-22 (the forest at elev 43, the fort at 36-38):
+
+1. **The band must cover the target.** `/dig-reachable` used to build its graph on the default fort
+   band (12 levels, elev 28-39), so elev-43 tiles answered `reachable: False` by construction
+   (tool_missing #42, fixed: the band now spans seed and target).
+2. **The seed must be a tile the graph accepts.** `tile-at` and the graph disagree about some
+   classes (`open` at (70,118)@38 is `walkable=True` to the decoder and "not walkable" to the
+   graph; `ramp_top` likewise). Self-test the seed: `dig-reachable(x,y,elev,from=x,y,elev)` must
+   return True. `self-reachable=False` means the answer is not a measurement (tool_missing #43).
+3. **`/reach-map` takes `e0`/`e1`** - pass `elev0`/`elev1` and you silently get the default band.
+4. A high plain is its own component (measured: 4,674 tiles at elev 42 as comp 12). Trees up there
+   need a ramp/stair route from the fort's ground before `cut_trees` designations can be worked -
+   which is exactly why wood stayed 0 with 3-5 trunks designated.
