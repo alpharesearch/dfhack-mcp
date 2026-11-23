@@ -1681,6 +1681,23 @@ async def walkable_between(x0: int = Query(...), y0: int = Query(...), e0: int =
     except LO.LuaOpError as e:
         return {"error": str(e)}
 
+@app.get("/unit-activity", operation_id="unit_activity")
+async def unit_activity(unit_ids: str = Query(None, description="comma-separated unit ids to inspect (default: all active units)"), limit: int = Query(20, ge=1, le=40)):
+    """What each dwarf is actually doing: position, move target, mining labour, and its job list.
+
+    Why this exists: `df.global.world.jobs.list` is EMPTY on DF 50, so `/job-queue` answered
+    `total_jobs: 0` while 56 designations sat pending (tool_missing #46) - a zero that was a read
+    failure, not a fact. Jobs live on the units, so the stall question ("are the miners mining?")
+    is answered per unit here.
+    """
+    ids = [int(x) for x in str(unit_ids).split(",") if x.strip().isdigit()] if unit_ids else None
+    try:
+        res = await LO.unit_activity(unit_ids=ids, limit=int(limit))
+        return {"success": True, **res}
+    except LO.LuaOpError as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/job-queue", operation_id="job_queue")
 async def job_queue(limit: int = Query(40)):
     """The jobs queue - RemoteFortressReader exposes NONE of it. Returns total job count and job descriptions with the acting unit. This is how you find out why nothing is happening."""
