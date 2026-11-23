@@ -252,3 +252,21 @@ Rules:
    known from a unit that carries it, otherwise the player's UI is the route.
 3. Labors are not professions: 5 citizens have `MINE` and the digging proceeds regardless of who is
    labelled Miner - so this rung rarely needed the profession write at all.
+
+## §22 - a reachability tool that builds its graph from the wrong band is worse than no tool
+
+Measured 2026-11-22: `/dig-reachable` answered `reachable: False` for **floors the dwarves
+standing on** - the walk graph was empty because `fort_band()` scored unit density over *all*
+units, and deep wildlife (~90 units at RPC z 11-26) out-scored the fort's 17 citizens at z 167,
+landing the band at elevations **-125..-114**. The band is the map window the graph is built from;
+when it misses the fort, every connectivity answer becomes a false negative.
+
+Rules:
+1. **An empty graph is NO DATA, never "unreachable".** `reach_map` now reports `tiles` and
+   `band_source` (and retries around the player's view); if `tiles == 0`, the answer is a read
+   failure - do not plan from it, do not tell the plugin a designation was cancelled.
+2. The fort is where **civilian dwarves** stand (non-hostile, non-caged, race contains "dwarf"),
+   weighted against the player's view - wildlife density is not fort position.
+3. Trust the map over my tool: connectivity claims about walkable floors, soil patches and stair
+   links get re-measured after any change to the band logic (measured after the fix: 8 components /
+   25,869 tiles, and the soil patch `(90,106)@36` is component 1 - walkable from the fort).

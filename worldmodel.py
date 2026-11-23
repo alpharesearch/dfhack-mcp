@@ -1519,6 +1519,20 @@ class WorldModel:
             e0, e1 = z0 - GAME_Z_OFFSET, z1 - GAME_Z_OFFSET
         band, _ = await self._stack(e0, e1)
         W = self.WALK
+        # An empty graph is a read failure, never a map fact: retry once around the player's view
+        # (GetViewInfo answers RPC z, so the band is view_z - GAME_Z_OFFSET) and say which band
+        # produced the graph. A caller that gets `band_source` "empty" must treat the answer as NO DATA.
+        band_source = "fort_band"
+        if not band:
+            try:
+                from dfhack_client_python.dfhack import GetViewInfo
+                vi = await GetViewInfo()
+                if -1000 < vi.view_pos_z < 10000:
+                    e0, e1 = vi.view_pos_z - GAME_Z_OFFSET - 5, vi.view_pos_z - GAME_Z_OFFSET + 6
+                    band, _ = await self._stack(e0, e1)
+                    band_source = "view_fallback"
+            except Exception:
+                pass
         comp: dict = {}
         cid = 0
         seed_all = [(x, y, z) for (x, y), col in band.items()
@@ -1553,7 +1567,10 @@ class WorldModel:
                     if ng in W and (nx, ny, nz) not in comp:
                         comp[(nx, ny, nz)] = cid
                         stack.append((nx, ny, nz))
-        return {"components": comp, "count": cid, "elev_range": [e0, e1]}
+        return {"components": comp, "count": cid, "tiles": len(comp),
+                "elev_range": [e0, e1], "band_source": band_source,
+                "note": "no walkable tiles in this band - NO DATA, not 'unreachable'" if cid == 0
+                        else "components over explored walkable tiles in the band"}
 
     async def reachable(self, x: int, y: int, elev: int,
                         from_x: int | None = None, from_y: int | None = None,
@@ -2387,7 +2404,15 @@ class WorldModel:
         gen = await self._gen()
         dec = await self._dec(gen)
         units = await load_units(dec, gen, self._state)
-        hist: Counter = Counter(u["z"] for u in units)
+        # Measured 2026-11-22: scoring `hist` over ALL units made the band land at RPC z 4-15
+        # (elevations -125..-114) because ~90 wildlife units sit deep underground, out-voting the
+        # fort's 17 citizens at z 167. An empty graph 125 levels under the fort is what made every
+        # /dig-reachable answer "not walkable" - the tool that once made me report a valid
+        # designation as "cancelled silently". The fort is where the CIVILIAN dwarves stand.
+        civ = [u for u in units
+               if not u.get("hostile") and not u.get("caged")
+               and "dwarf" in str(u.get("race", "")).lower()]
+        hist: Counter = Counter(u["z"] for u in civ) if civ else Counter(u["z"] for u in units)
         focus: Counter = Counter()
         try:
             from dfhack_client_python.dfhack import GetViewInfo
@@ -2408,7 +2433,7 @@ class WorldModel:
         top = max(0, self.cache.z_count - window)
         best, best_z = -1, top
         for lo in range(0, top + 1):
-            s = sum(hist[z] * 3 + activity[z] * 2 + focus[z] for z in range(lo, lo + window))
+            s = sum(hist[z] * 3 + activity[z] * 2 + focus[z] * 6 for z in range(lo, lo + window))
             if s > best:
                 best, best_z = s, lo
         self._band = (best_z, best_z + window - 1)

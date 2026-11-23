@@ -2424,20 +2424,80 @@ async def unit_labors(unit_ids: str = Query("", description="comma-separated uni
 
 @app.get("/find-soil", operation_id="find_soil")
 async def find_soil(elev0: int = Query(...), elev1: int = Query(...),
-                    cell: int = Query(16, ge=4, le=64)):
-    """Where the FARM can legally go: soil floors, measured by material, clustered.
+                    cell: int = Query(16, ge=4, le=64), max_levels: int = Query(8, ge=1, le=12)):
+    """Where the FARM can legally go: soil-floor tiles, clustered, read through the RPC.
 
-    The quickstart's farm rung is "3x3 plot in a 5x5 soil room", and no existing tool answers
-    where soil is: `/survey` counts tile CLASSES (floor/rock/ramp/open/hidden), and soil is a
-    MATERIAL property. This is the census that closes tool_missing #28 - it reads the map blocks
-    and reports soil clusters per `cell` with the material names, so a farm site is chosen from
-    coordinates, and a wrong soil predicate shows up as an empty answer with the materials it saw.
+    The farm rung is "3x3 plot in a 5x5 soil room" and `/survey` answers tile CLASSES only -
+    soil is a tiletype property. Two attempts failed before this one, both measured:
+    (1) a Lua module op - dead on this build: `world.T_map.all: not found`, `map:find` returns nil
+    for real tile coordinates, and every block grid is unreadable from Lua (`matgrid`, `typegrid`,
+    `tileptr`, `regiongrid`, `water` all fail; `pairs(block)` itself raises). It answered
+    `blocks_scanned: 0, soil_tiles: 0` - a read failure wearing a census, tool_missing #28/#30.
+    (2) a material-flag census (MUDPYROCLASTIC/PYROPLASTIC) - unreachable for the same reason.
+    This uses the RPC the rest of the server already relies on: `GetTiletypeList` carries
+    `material` per tiletype and the enum is `SOIL = 1` (measured from the proto:
+    NO_MATERIAL=-1, AIR=0, SOIL=1, STONE=2, ... GRASS_LIGHT=8..GRASS_DEAD=11). Grass tiletypes are
+    included because a grass floor is soil ground, which is what a farm plot wants.
     """
-    try:
-        res = await LO.find_soil(int(elev0), int(elev1), int(cell))
-        return {"success": True, **res}
-    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
-        return {"success": False, "error": str(e)}
+    from worldmodel import GAME_Z_OFFSET
+    gen = await world._gen()
+    tt = await GetTiletypeList()
+    soil_ids, soil_names = set(), {}
+    # Measured 2026-11-22: `Tiletype.material` is an ENUM INTEGER, not a name - my first version
+    # stringified it ("1") and matched nothing, answering soil_tiles: 0 over 762 scanned blocks.
+    # The enum (from the proto): SOIL=1, GRASS_LIGHT=8, GRASS_DARK=9, GRASS_DRY=10, GRASS_DEAD=11.
+    SOIL_MATS = {1, 8, 9, 10, 11}
+    for t in tt.tiletype_list:
+        tid = int(t.id)
+        try:
+            mat = int(getattr(t, "material", -1))
+        except Exception:
+            mat = -1
+        nm = str(getattr(t, "name", "") or "")
+        if mat in SOIL_MATS:
+            soil_ids.add(tid)
+            soil_names[tid] = nm
+    step = max(4, int(cell))
+    levels = range(int(elev0), int(elev0) + min(int(max_levels), 12))
+    cells: dict[tuple[int, int, int], dict] = {}
+    total, blocks_scanned = 0, 0
+    for e in levels:
+        z = e + GAME_Z_OFFSET
+        blocks = await world.cache.blocks(z, z + 1, gen)     # max_z is EXCLUSIVE (measured)
+        for b in blocks:
+            if int(b.map_z) != z:
+                continue
+            blocks_scanned += 1
+            base_x, base_y = int(b.map_x), int(b.map_y)      # map_x/map_y ARE tile coords
+            for idx, tile in enumerate(b.tiles):
+                x, y = base_x + (idx % 16), base_y + (idx // 16)
+                hid = bool(b.hidden[idx]) if idx < len(b.hidden) else False
+                if hid:
+                    continue
+                tid = int(tile)
+                if tid not in soil_ids:
+                    continue
+                total += 1
+                key = (e, x // step, y // step)
+                c = cells.setdefault(key, {"elev": e, "x0": (x // step) * step, "y0": (y // step) * step,
+                                           "x1": (x // step) * step + step - 1,
+                                           "y1": (y // step) * step + step - 1,
+                                           "soil_tiles": 0, "sample": None, "types": {}})
+                c["soil_tiles"] += 1
+                if c["sample"] is None:
+                    c["sample"] = [x, y]
+                nm = soil_names.get(tid, str(tid))
+                c["types"][nm] = c["types"].get(nm, 0) + 1
+    clusters = sorted(cells.values(), key=lambda c: -c["soil_tiles"])[:24]
+    for c in clusters:
+        c["types"] = [k for k, _ in sorted(c["types"].items(), key=lambda kv: -kv[1])[:3]]
+    return {"success": True, "elev0": int(elev0), "elev1": int(elev1), "cell": step,
+            "levels_scanned": list(levels), "blocks_scanned": blocks_scanned,
+            "soil_tiles": total, "soil_tiletypes_seen": sorted(set(soil_names.values()))[:24],
+            "clusters": clusters,
+            "note": "a farm plot needs a FLOOR on soil inside mined space: check /survey for the "
+                    "class (floor, not rock) at the sample, and soil_tiles is only meaningful when "
+                    "blocks_scanned > 0 - a scan of 0 blocks answering 0 is a read failure, not a map fact"}
 
 
 @app.post("/pile-arrays", operation_id="pile_arrays")
