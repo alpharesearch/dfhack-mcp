@@ -218,7 +218,7 @@ if oka then at = r end
 if at == nil then print("FAIL placed but not found at tile") return end
 local tn = tostring(at._type)
 local dot = tn:match("<type: ([_%w]+)")
-print("OK building={resolved!r} bt={bt} type="..(dot or tn).." id="..tostring(at.id))
+print("OK building=RESOLVED_NAME bt={bt} type="..(dot or tn).." id="..tostring(at.id))
 '''.strip()
     out = await _lua(expr)
     line = _one(out)
