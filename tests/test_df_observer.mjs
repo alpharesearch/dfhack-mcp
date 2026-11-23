@@ -2425,7 +2425,7 @@ test('the filter reuses one session and can never leak chats', () => {
          'the filter session inherits the briefed workspace - not the Host cwd ("Ungrouped")')
   assert(/filter: \$\{this\.filterSpawns\} spawn/.test(index),
          'the cap announces itself and falls back to the rule gate')
-  assert(/typeof controller\.rename !== 'function'/.test(index),
+  assert(/typeof ctl\.rename !== 'function'/.test(index),
          "the title call is made and its outcome is reported, never skipped in silence")
   assert(/async titleFilterSession\(controller\)/.test(index)
          && /if \(existing\) \{ void this\.titleFilterSession\(\); return existing \}/.test(index),
