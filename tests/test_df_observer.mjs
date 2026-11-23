@@ -1021,10 +1021,10 @@ test('closing a to-do keeps its acceptance identity (no re-seed after a reload)'
     buildings: [{ name: 'Well', count: 1 }], boxes: [], shafts: [], warnings: { designated_tiles: 0, damp_tiles: 0, hot_tiles: 0 }, notes: [] })
   first.ingestDeep({ rungs: [{ id: 'labors', title: 'Two dwarves on Miners', done: true }, { id: 'farm', title: 'Farm plot', done: true }, { id: 'water', title: 'Well', done: true }], notes: [], piles: [] })
   first.evaluate(cfg)
-  const well = first.todos.find((t) => t.accept?.kind === 'buildings_kw' && t.accept?.keyword === 'well')
+  const well = first.todos.find((t) => t.accept?.kind === 'water_supply' || t.accept.kind === 'buildings_kw' && t.accept?.keyword === 'well')
   assert.ok(well, 'the seeded ledger has the well to-do')
   assert.equal(well.state, 'done', 'the building read closed it')
-  assert.deepEqual(well.accept, { kind: 'buildings_kw', keyword: 'well', min: 1 }, 'closing kept the acceptance test (no {kind:manual} rewrite)')
+  assert.deepEqual(well.accept, { kind: 'water_supply', min: 1 }, 'closing kept an acceptance test, and it is the zone-aware one (tool_missing #56: buildings_kw cannot see a WaterSource zone)')
   assert.equal(well.manualClosed, undefined, 'no manual-close marker on an acceptance closure')
 
   // Reload: a new model, the closed record restored from storage, ladder read again.
@@ -1056,7 +1056,7 @@ test('a non-box completion names its acceptance, not an empty coordinate', () =>
   // Drive a real acceptance flip: the seeded `well` to-do is buildings_kw, so a
   // building read containing "Well" closes it and raises the completion alert.
   const model = freshModel()
-  const well = model.todos.find((t) => t.accept?.kind === 'buildings_kw' && t.accept?.keyword === 'well' && t.state !== 'done')
+  const well = model.todos.find((t) => t.accept?.kind === 'water_supply' || t.accept.kind === 'buildings_kw' && t.accept?.keyword === 'well' && t.state !== 'done')
   assert.ok(well, 'the seeded ledger has a box-less buildings_kw to-do (the well)')
   // `model.buildings` comes from the FAST read (model.js: `if (data.buildings)`),
   // so the acceptance snapshot only sees it there - measured, not assumed.
@@ -1065,7 +1065,7 @@ test('a non-box completion names its acceptance, not an empty coordinate', () =>
   const done = alerts.find((a) => a.kind === 'dig_complete' && a.key === `todo-${well.id}`)
   assert.ok(done, `the acceptance flip raises the completion alert (saw ${alerts.map((a) => a.kind).join(',') || 'none'})`)
   assert.ok(String(done.coord ?? '').length > 0, `coord must not be empty for a box-less to-do (saw ${JSON.stringify(done.coord)})`)
-  assert.match(done.coord, new RegExp(`#${well.id}.*buildings_kw`), `coord names the acceptance: ${done.coord}`)
+  assert.match(done.coord, new RegExp(`#${well.id}.*(water_supply|buildings_kw)`), `coord names the acceptance: ${done.coord}`)
   return `box-less completion labelled: ${done.coord}`
 })
 

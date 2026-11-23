@@ -153,7 +153,7 @@ export const BASIC_TODOS = [
   { key: 'farm-plot', title: 'Farm plot: 3x3 in a 5x5 soil room, plump helmets in ALL seasons',
     accept: { kind: 'rung', rung: 'farm' }, cite: 'fort ladder (farm)' },
   { key: 'well', title: 'Well (or cistern plan) for the water supply',
-    accept: { kind: 'buildings_kw', keyword: 'well', min: 1 }, cite: 'fort ladder (water)' },
+    accept: { kind: 'water_supply', min: 1 }, cite: 'fort ladder (water); tool_missing #56 (zones are not buildings)' },
   { key: 'doors', title: 'Doors on ordered openings (count against openings you designated)',
     accept: { kind: 'buildings_kw', keyword: 'door', min: 1 }, cite: 'df-dig §16b (openings)' },
 ]
@@ -269,6 +269,18 @@ export function runAcceptance(todo, snapshot) {
       if (!rung) return { ok: false, noData: true, evidence: `ladder rung ${accept.rung} not in the read (no data, not a fact)` }
       return { ok: !!rung.done, evidence: `rung ${rung.id} ${rung.done ? 'satisfied' : 'open'}: ${rung.title}` }
     }
+    case 'water_supply': {
+      // Measured 2026-11-22 (tool_missing #56): a player-added water source is a ZONE
+      // (`/zones` id 20 WaterSource x74-76 y111-114 @36, 12 tiles), and `buildings_kw` can never see a
+      // zone - the rung read `not checked yet` while the fort had water. The plugin has no zone feed, so
+      // accept either the named building OR water measured in the band, and say which one proved it.
+      const kwHits = buildings.filter((b) => /well|cistern|pond/.test(String(b.name).toLowerCase()))
+      const water = num(facts.water_tiles)
+      const ok = kwHits.length >= num(accept.min, 1) || water > 0
+      return { ok, evidence: `water supply: ${kwHits.length} building(s) named well/cistern/pond` +
+        ` + water_tiles ${water} in band (accept: a named building or water > 0; zones are not in the` +
+        ` plugin feed - a WaterSource zone is proven by /zones, not here)` }
+    }
     case 'buildings_kw': {
       const kw = String(accept.keyword).toLowerCase()
       const hits = buildings.filter((b) => String(b.name).toLowerCase().includes(kw))
@@ -319,6 +331,7 @@ export function todoAdvice(todo) {
     return 'pile acceptance verified by the live pile read: keep its categories and container limits as the build grows (df-stockpile §3, §5)'
   }
   if (kind === 'buildings_kw') return 'building count proven by the live building read: check access and materials before relying on it (df-stockpile §2)'
+  if (kind === 'water_supply') return 'water supply proven by a named well/cistern building OR water tiles in the band; a WaterSource zone needs the /zones read (the plugin has no zone feed)'
   if (kind === 'rung') return 'ladder rung satisfied: take the NEXT rung from fort_progress, in order (PLAN §4)'
   return 'to-do acceptance passed on the live read: cite the evidence, do not re-probe blindly'
 }
