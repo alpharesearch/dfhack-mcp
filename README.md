@@ -244,6 +244,45 @@ no Lua eval over RPC, fog reading empty until `reveal`).
 * **Candidate action ranking** beyond the ladder, so the next step carries evaluated
   options rather than the canonical one.
 
+## New tools, 2026-11-22 (all measured on the live save)
+
+The fort work in this session exposed three tools that were wrong, and the fixes are the point of
+this section. Endpoint list, with the measurement each one exists because of:
+
+| Endpoint | Why it exists (measured) |
+|---|---|
+| `GET /work-details` | **The Labor menu itself.** `df.global.plotinfo.labor_info.work_details` (found in the game's own `autofish.lua` / `gui/manipulator.lua` / `gui/settings-manager.lua` after my probes of `world.*`, `fortress_entity`, the raws and the RPC all failed). Each detail: `name`, `icon`, `flags` (`cannot_be_everybody`, `no_modify`), `allowed_labors`, and **`assigned_units` = the green tick column (unit ids)**. `action=list`, `action=assign&detail=Miners&unit_id=6493&mode=add`, `action=set-labor`. Writes use the measured vector API: `insert(value)` is rejected ("wrong argument count") and `remove` is nil, so add = `resize(#list+1)` + index assign, remove = `erase(index)` |
+| `GET /unit-labors` | The read-back for labor writes: which `labors` each citizen really holds (`pairs(u.status.labors)`; the field name is `MINE`, not `MINING`) |
+| `GET /unit-professions` | The profession layer the Labor screen labels. `set` writes `u.profession = pid`, with `pid` taken from a dwarf who already carries that profession (the profession table is unreadable: `raws.professions`, `raws.dwarves`, `entity_raw.profession`, `world.professions/proficiencies`, `dfhack.units.getProfessionId/setProfession` and RPC `MapInfo` are all absent) |
+| `GET /find-soil` | The farm rung's census, on the RPC: tiletype `material` enum `SOIL=1` + grass 8-11 (my Lua version could not read any block grid and answered `blocks_scanned: 0, soil_tiles: 0`). It reports **`potential_soil_tiles` / `potential_soil_clusters`** as well: a dug floor takes the material of the layer above, so rock under soil becomes a soil floor - the farmable set, not just existing soil |
+| `GET /pile-arrays` | Pile health for the Custom-settings crash: enabled category flags over unallocated material arrays, checked and fixed to a UI pile's measured sizes |
+
+Changed behaviour in existing tools:
+
+- **`POST /set-unit-labors` is honest now.** `applied: N` validates *names*, not the game's state.
+  It returns `read_back` (the units' labor counts from the game), `governing_details` (which work
+  details contain each unit) and `durability: "not-in-detail: the game can reset these flags"`.
+  Proof it needed: a write said `applied: 2`, the player's screen showed one tick, and a census of
+  5 dropped to 2 the moment a tick was added - the detail owns the flags.
+- **`GET /dig-reachable` and `/reach-map` were rebuilt at the root.** `fort_band()` scored unit
+  density over *all* units, so ~90 deep wildlife units (RPC z 11-26) out-voted the fort's 17
+  citizens (z 167): band `(4,15)` = elevations **-125..-114**, an empty walk graph, and every
+  connectivity answer said `reachable: False` for floors dwarves stand on. The band is now scored
+  on civilian dwarves with the view weighted 6x; `reach_map` retries around `GetViewInfo`, reports
+  `tiles` + `band_source`, and an empty graph is labelled **NO DATA, never "unreachable"**.
+  After the fix: 8 components, 25,869 tiles, the fort's floors all component 1.
+- **`POST /remove-zone`** requires `acknowledge_risk`, refuses ids the live list does not show, and
+  answers with a read-back verdict; **`POST /create-zone`** is idempotent (same footprint returns
+  `already_exists`); **`GET /configure-stockpile`** refuses a take-nothing write from the raw body
+  and reads the categories back; **corpses/refuse** categories are refused by default
+  (`allow_crash_categories` opts in, unlocked only by measured reference sizes 1327/113).
+
+Rules these produced are in the skills: `df-dig` §20 (three answers to "how many miners"),
+§21 (never take the only holder of a craft - I made the fort's only Metalcrafter a Miner),
+§22 (a reachability tool with the wrong band is worse than none), §23 (digging one level below
+the surface creates soil); `df-placement` §19 (labors belong to work details).
+Log: `tool_missing.md` entries 29-37. Suites: 47 worldmodel + 12 luaops + 88 plugin + observe.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

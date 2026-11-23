@@ -257,6 +257,23 @@ appointment the menu accepts can be one the depot refuses. Rules:
 3. Appointments by index are a UI-visible lie. If a tool cannot verify eligibility, it must say
    so on the result (the module now stamps `legibility: UNVERIFIED`).
 
+## §18a - the tool inventory for people (2026-11-22)
+
+| Question | Tool | Read-back that counts |
+|---|---|---|
+| Who is ticked in a work detail? (the green box) | `GET /work-details` `action=list` | `assigned_units` (unit ids) from the game |
+| Tick/untick a dwarf | `GET /work-details` `action=assign&detail=…&unit_id=…&mode=add\|remove` | `assigned_after` (the list re-read) |
+| What labors does a detail grant? | same, `allowed_labors` | after `action=set-labor`, `allowed_labors_after` |
+| Who really has the labor flag? | `GET /unit-labors?labor=MINE` | per-citizen `labors_on` lists |
+| Set a labor flag | `POST /set-unit-labors` | `read_back` + `governing_details` + `durability` (not-in-detail = the game can reset it) |
+| Who is labelled Miner/Planter/Smith? | `GET /unit-professions` (`action=set` needs a name the fort has, or `profession_id`) | `read_back` profession + `read_back_id` |
+| Which categories can a pile open in Custom without crashing? | `GET /pile-arrays` `action=check` | per-pile empty arrays; `action=fix` sizes them to a UI pile's measured lengths |
+
+**No Lua is needed for any of these.** The labor menu's container is
+`df.global.plotinfo.labor_info.work_details` - found in the game's own scripts (`autofish.lua`,
+`gui/manipulator.lua`, `gui/settings-manager.lua`) after my probes of `world.*`, the fortress
+entity, the raws and the RPC all failed (tool_missing #36).
+
 ## §19 - labors belong to work details; `/set-unit-labors` alone is not a labor plan
 
 Measured 2026-11-22 from the player's Labor screen and the live structures:

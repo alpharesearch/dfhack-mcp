@@ -84,3 +84,24 @@ Measured session 2026-11-21, fort `start`, world *The Universes of Destiny*, DF 
   throwaway save first (the `game_lua` docstring says this; entry 4 is what ignoring it cost).
 - When raw Lua becomes the permanent answer, the gap gets a typed endpoint and a test in the
   same change, and the entry says "Built ...".
+- **A success flag is not a fact.** `applied: N` (labors), `success: true` (writes), `pending: 0`
+  (while paused) are all answers the game can overturn. Every write gets a read from the game that
+  does not depend on the write's own reply (`/unit-labors`, `/work-details`, `/zones`,
+  `/list-stockpiles`, `dug` counts).
+- **The layer you write is not always the layer that owns the value.** Measured: labors are
+  recomputed from work details (a census of 5 fell to the 2 ticked dwarves), professions are a
+  separate layer again, and a profession does not grant labors. When a tool writes a derived layer,
+  its answer must name the owner (`governing_details`, `durability`).
+- **Before writing a roster, check it for uniqueness.** I converted the fort's only Metalcrafter
+  into a Miner; the craft, not the dwarf, was the resource (df-dig §21).
+- **A scan of nothing must never print a zero as a fact.** `blocks_scanned: 0, soil_tiles: 0` and an
+  empty walk graph are read failures. Label them NO DATA; the field that proves coverage
+  (`blocks_scanned`, `tiles`, `band_source`) is mandatory in census answers.
+- **Check the game's own scripts before declaring a capability unreachable.** The work-detail
+  container sat in `autofish.lua` / `gui/manipulator.lua` / `gui/settings-manager.lua` for all the
+  probes I ran against `world.*`, the entity, the raws and the RPC. "No tool route exists" is a
+  claim about where I looked, not about the game (entry 36).
+- Enum fields are integers: comparing `Tiletype.material` to a name answered "no soil on this
+  world" (entry 35). Read the enum values from the proto before writing the predicate.
+- A dug floor takes the material of the layer above, so farmable ground is soil-**covered** rock,
+  not only soil tiles (entry 35, df-dig §23).

@@ -165,3 +165,26 @@ Rule for the model: derived spatial facts (edges, bands, surface elevations) are
 from the tile-level store on demand**, never quoted from an older summary. Cache by
 generation, invalidate on mutation, and print the window/box the number came from so a stale
 edge is visible as one.
+
+
+## Correction 2026-11-22 (measured): the reachability layer was anchored on the wrong thing
+
+Technique 4 shipped a walk graph over the fort band, and the band came from `fort_band()`, which
+scored **unit density over all units**. Measured on the live save: ~90 wildlife units sit at RPC
+z 11-26, the fort's 17 citizens at z 167, so the 12-level window landed at `(4,15)` = elevations
+**-125..-114**. `_stack` on that band is empty, the graph has **0 components**, and every
+`/dig-reachable` answer came back `reachable: False` - including for floors the dwarves are
+standing on. Two of my past reports ("the designation was cancelled silently", "the soil patch is
+unreachable") were artifacts of this, not map facts.
+
+What the model must enforce:
+1. **Anchor on civilians.** The band is scored on non-hostile, non-caged units whose race contains
+   "dwarf", with the player's view/cursor weighted 6x. Wildlife density is not fort position.
+2. **An empty graph is NO DATA, not a fact.** `reach_map` now reports `tiles` and `band_source`
+   (and retries around `GetViewInfo`, converting RPC z with `GAME_Z_OFFSET`). `tiles == 0` means
+   the read failed; connectivity claims built on it are void.
+3. After any band change, re-measure the fort: live answer is band `(156,167)` = elev 27-38,
+   8 components, 25,869 tiles, and `(66,115,36)`, `(72,116,36)`, `(68,116,35)`, `(90,106,36)` all
+   component 1.
+4. The census discipline generalises: `blocks_scanned` in `/find-soil`, `tiles` in `/reach-map`,
+   `dug` in the watched boxes - every "0" must arrive with the coverage that makes it meaningful.

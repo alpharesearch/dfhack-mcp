@@ -691,3 +691,56 @@ Correct rule now in `dig_adit.py`, per column, before designating:
 - Consequence for the plan: work continues on the levels that exist - 38 (surface/road/piles),
   37 and 36 (wings), 31-30 (already reachable off the stair) - and the ladder rungs that need
   depth (smelter, farm irrigation, cistern) are deferred, not assumed.
+
+
+---
+
+# Addendum 2026-11-22: the labor menu, professions, and the soil question
+
+## Verdicts on the P0/P1 items this session actually closed
+
+- **Labor menu / work details (P0, "mouse-only")**: **built**, and the plan's premise was wrong -
+  it is not mouse-only. `df.global.plotinfo.labor_info.work_details` is the menu's own data
+  (`name`, `icon`, `flags`, `allowed_labors`, `assigned_units`), found in the game's shipped Lua.
+  `GET /work-details` lists, ticks (`mode=add/remove`) and grants labors per detail.
+  Mutations measured: `vector<int32_t>.insert(value)` is rejected (needs `(index, value)`),
+  `.remove` is nil, so add = `resize(#list+1)` + index assign, remove = `erase(index)`.
+  **Open half (tool_missing #37):** writing the membership does not make the game rebuild
+  `unit.status.labors` - the census stayed 2 of 14 after the tick. The durable recipe is
+  detail membership **+** `/set-unit-labors`, verified by `/unit-labors`; a detail write alone
+  must never be reported as a labor change.
+- **Professions**: built (`/unit-professions`), read-only for names the fort no longer has
+  (tool_missing #32 - the profession table is unreachable). Cost recorded: `/unit-professions set`
+  made the fort's only Metalcrafter a Miner. **Rule: check the roster for uniqueness before
+  converting a profession.**
+- **Soil census (P1)**: built as `/find-soil` on the RPC (every Lua route to block grids is dead on
+  this build), and it must answer two questions: existing soil (`SOIL=1` + grass tiletypes) **and**
+  `potential_soil_*` - a diggable rock tile with soil at `e+1`. The player's rule: *a dug floor
+  takes the material of the layer above*, so a room one level under the soil surface has a soil
+  floor. Measured on this world: 25,003 existing soil tiles (all at elev 36, the surface) and
+  **1,432 potential soil tiles**, nearest farmable ground elev 36 `x72-79 y104-111`.
+- **Farm placed with it**: `Farm Plot` id 6 at (90,106)@36, complete, plump helmets in
+  spring/summer/autumn/winter (read back) - and the honest note that the surface placement was a
+  consequence of asking only for existing soil; the in-room version is the potential-soil route.
+
+## Traps recorded this session (add to the "Known RPC traps" habits)
+
+1. `pairs()` on a `map_block` **raises** (`Cannot read field map_block.map_elements: not found`);
+   `matgrid`, `typegrid`, `tileptr`, `regiongrid`, `water` are unreadable from Lua, `map.all` does
+   not exist and `map:find(x,y,z)` returns nil for tile coordinates. Tile data: use the RPC blocks.
+2. `Tiletype.material` (RPC) is an **enum integer** (SOIL=1, GRASS_LIGHT=8..GRASS_DEAD=11). A string
+   comparison on it answers "no soil" with a straight face.
+3. A census that reports `blocks_scanned: 0` has not read the map. Never let a scan of nothing
+   print a zero as a fact (this is how `soil_tiles: 0` and `miners 0` both happened here).
+4. `fort_band()` must anchor on **civilian dwarves** + the player's view. Wildlife density is not
+   fort position; the band is the window the walk graph is built from, so a wrong band silently
+   turns every reachability answer into a false negative.
+5. `applied: N` from a labor write validates names only. The read-back is `/unit-labors`, and
+   `/work-details` names the layer that owns the flags.
+
+## Ladder state when this was written
+
+6 of 21 rungs verified done (labors, entry tunnel, stairs, general stockpile, meeting zone x2,
+pile near the wagon); farm plot placed (id 6); 35 district queued with cover >=2 enforced
+(19 low-cover tiles I designated and then cleared); piles 1-4 standing, `pile-arrays check` clean;
+2 -> 4 ticked miners.
