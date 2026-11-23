@@ -202,11 +202,16 @@ local function resolve_material(kind, want, nearx, neary, nearz)
   return out
 end
 local b = nil
-local ok, res = pcall(function()
-  return dfhack.buildings.constructBuilding{{type={bt}, subtype={sub}, custom={cus},
+-- Measured 2026-11-22 (hack/lua/dfhack/buildings.lua:485-541): constructBuilding returns
+-- `nil, "cannot place at this position"` / `nil, "could not construct the building"` - THE REASON IS
+-- THE SECOND RETURN VALUE, and my old code captured only the first, so every workshop refusal came
+-- back as a bare "FAIL construct: nil" and I had no explanation (tool_missing #54). Capture it.
+local ok, res, reason = pcall(function()
+  local r, why = dfhack.buildings.constructBuilding{{type={bt}, subtype={sub}, custom={cus},
     x={int(x)}, y={int(y)}, z={z}, {dims}{extra}nominal=true}}
+  return r, why
 end)
-if not (ok and res) then print("FAIL construct: "..tostring(res)) return end
+if not (ok and res) then print("FAIL construct: "..tostring(res).." reason="..tostring(reason)) return end
 b = res
 if {str(bool(complete)).lower()} then
   local okc = pcall(function() dfhack.buildings.completeBuild(b) end)
