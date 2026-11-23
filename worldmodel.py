@@ -1633,7 +1633,14 @@ class WorldModel:
         the dwarves' component. Designations that fail this are cancelled silently by the
         game - the exact failure that ate my 3-wide adit designation.
         """
-        r = await self.reach_map()
+        # Measured 2026-11-22: the graph was built from the DEFAULT fort band (12 levels), so a
+        # target outside that band - trees on high ground at elev 43, a shaft at 30 - answered
+        # `reachable: False` no matter what the map said. The band must cover seed AND target.
+        lo = min(int(from_elev), int(elev)) - 1
+        hi = max(int(from_elev), int(elev)) + 1
+        if hi - lo > 11:
+            hi = lo + 11
+        r = await self.reach_map(lo, hi)
         comp = r["components"]
         ref = comp.get((int(from_x), int(from_y), int(from_elev)))
         if ref is None:

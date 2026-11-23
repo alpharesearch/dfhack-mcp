@@ -366,6 +366,22 @@ def test_the_quickstart_skill_does_not_instruct_a_removed_tool():
         "the wagon rule is the player's wood rule, quoted"
 
 
+def test_reachability_is_measured_over_a_band_that_covers_the_target():
+    """`/dig-reachable` said the forest at elev 43 was unreachable from the fort. It built its walk
+    graph with the DEFAULT fort band (12 levels, elev 28-39), so any target outside the band is
+    unreachable by construction - a false negative, the same class as the wildlife-anchored band in
+    #34. The band must cover seed AND target, and a connectivity answer is only meaningful inside
+    the band it was built from."""
+    w = pathlib.Path("worldmodel.py").read_text()
+    i = w.index("async def dig_reachable")
+    seg = w[i:w.index("async def ", i + 30)]
+    assert "lo = min(int(from_elev), int(elev)) - 1" in seg, "the band covers the seed"
+    assert "hi = max(int(from_elev), int(elev)) + 1" in seg, "and the target"
+    assert "await self.reach_map(lo, hi)" in seg, "the graph is built on that band, not the default"
+    log = pathlib.Path("tool_missing.md").read_text()
+    assert "reported the forest unreachable" in log, "and the artifact is recorded where the next reader looks"
+
+
 def test_the_building_census_exists_because_the_artery_had_no_coordinates():
     """The game said "An artery has been opened by the attack!" and the server could not say WHERE:
     `/building-status` needs an id you already hold, `/list-buildings` and `/buildings` returned 404,
