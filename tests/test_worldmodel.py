@@ -344,6 +344,23 @@ def test_pile_categories_are_the_flags_the_game_exposes_not_a_wiki_list():
     assert "plants" not in names, "this build has no plants flag - plump helmets are FOOD"
 
 
+def test_the_building_census_exists_because_the_artery_had_no_coordinates():
+    """The game said "An artery has been opened by the attack!" and the server could not say WHERE:
+    `/building-status` needs an id you already hold, `/list-buildings` and `/buildings` returned 404,
+    and `/world-objects` is a 422 without params. The block payload the server already reads carries
+    `b.buildings` with pos_x_min/max, pos_y_min/max, building_type, items and active - so the census
+    must be a block walk that reports type, footprint, elev and coverage, and must say how many
+    blocks it scanned (0 scanned is a read failure, not an empty fort)."""
+    main = pathlib.Path("main.py").read_text()
+    i = main.index('@app.get("/list-buildings"')
+    seg = main[i:main.index('@app.get("/find-soil"', i)]
+    assert "for bd in b.buildings" in seg, "it reads the block's own building records"
+    assert "pos_x_min" in seg and "pos_x_max" in seg, "and reports the footprint, not just a name"
+    assert "dec.building_name" in seg, "types come from the game's decoder, not invented names"
+    assert "blocks_scanned" in seg, "with the coverage field that makes a zero meaningful"
+    assert 'Query(None' in seg and 'needle in r["type"].lower()' in seg, "and it can filter by type (artery, depot, ...)"
+
+
 def test_the_soil_census_is_a_python_tool_that_reports_what_it_scanned():
     """The farm rung ("3x3 plot in a 5x5 soil room") had no tool. My first census was a Lua module
     op, and the Lua route to the tile grids is CLOSED on this build - measured: `world.T_map.all:

@@ -2451,6 +2451,67 @@ async def unit_labors(unit_ids: str = Query("", description="comma-separated uni
         return {"success": False, "error": str(e)}
 
 
+@app.get("/list-buildings", operation_id="list_buildings")
+async def list_buildings(elev0: int = Query(...), elev1: int = Query(...),
+                         max_levels: int = Query(12, ge=1, le=12), type: str = Query(None, description="filter by building type name substring (case-insensitive), e.g. artery, depot, workshop, bed")):
+    """CENSUS of the fort's buildings - type, footprint, active flag, attached items - from the RPC
+    block data, because the server had no way to list buildings at all.
+
+    Measured gap (2026-11-22): the game reported **"An artery has been opened by the attack!"** and
+    I could not tell the player WHERE. `/building-status` needs a building id you already have;
+    `/list-buildings` and `/buildings` did not exist (404), and `/world-objects` is a 422 without
+    params. The data was always in the blocks I already read: `b.buildings` carries
+    `pos_x_min..pos_x_max`, `pos_y_min..pos_y_max`, `pos_z_min`, `building_type`, `items`, `active`
+    (the layer builder uses exactly these), so the census is a block walk, not new plumbing.
+    """
+    from worldmodel import GAME_Z_OFFSET
+    gen = await world._gen()
+    dec = await world._dec(gen)
+    levels = range(int(elev0), int(elev0) + min(int(max_levels), 12))
+    found: dict[tuple, dict] = {}
+    blocks_scanned = 0
+    for e in levels:
+        z = e + GAME_Z_OFFSET
+        blocks = await world.cache.blocks(z, z + 1, gen)      # max_z is EXCLUSIVE (measured)
+        for b in blocks:
+            if int(b.map_z) != z:
+                continue
+            blocks_scanned += 1
+            for bd in b.buildings:
+                try:
+                    x0, x1 = int(bd.pos_x_min), int(bd.pos_x_max)
+                    y0, y1 = int(bd.pos_y_min), int(bd.pos_y_max)
+                    zmin = int(getattr(bd, "pos_z_min", z))
+                    name = str(dec.building_name(bd.building_type))
+                except Exception:
+                    continue
+                key = (name, x0, y0, zmin - GAME_Z_OFFSET)
+                row = found.get(key)
+                if row is None:
+                    found[key] = {
+                        "type": name,
+                        "x0": x0, "x1": x1, "y0": y0, "y1": y1,
+                        "elev": zmin - GAME_Z_OFFSET,
+                        "w": x1 - x0 + 1, "h": y1 - y0 + 1,
+                        "items": int(len(getattr(bd, "items", []) or [])),
+                        "active": bool(getattr(bd, "active", False)),
+                    }
+                else:
+                    row["items"] = max(row["items"], int(len(getattr(bd, "items", []) or [])))
+    rows = list(found.values())
+    if type:
+        needle = str(type).lower()
+        rows = [r for r in rows if needle in r["type"].lower()]
+    rows.sort(key=lambda r: (r["type"], r["elev"], r["x0"], r["y0"]))
+    by_type: dict[str, int] = {}
+    for r in rows:
+        by_type[r["type"]] = by_type.get(r["type"], 0) + 1
+    return {"success": True, "elev0": int(elev0), "levels_scanned": list(levels),
+            "blocks_scanned": blocks_scanned, "count": len(rows),
+            "by_type": by_type, "buildings": rows[:300],
+            "note": "the census reads the blocks the game sent: blocks_scanned 0 is a read failure, not an empty fort"}
+
+
 @app.get("/find-soil", operation_id="find_soil")
 async def find_soil(elev0: int = Query(...), elev1: int = Query(...),
                     cell: int = Query(16, ge=4, le=64), max_levels: int = Query(8, ge=1, le=12)):
