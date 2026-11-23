@@ -372,7 +372,9 @@ def test_the_soil_census_reads_the_block_list_and_names_its_materials():
     mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
     i = mod.index("function OPS.find_soil")
     body = mod[i:mod.index("function M.dispatch")]
-    assert "df.global.world.map.all" in body, "the block list, not the struct"
+    assert "map:find(" in body, "map:find is the block accessor on this build (map.all measured as 'not found')"
+    assert "blocks_scanned" in body, "the census reports how many blocks it walked"
+    assert "x_dim" in body, "bounds come from the map's own dimensions"
     assert "MUDPYROCLASTIC" in body, "the soil predicate is the material flag DF checks"
     assert "hidden" in body, "fog is not soil evidence"
     assert "materials" in body, "the answer names the materials it matched"
