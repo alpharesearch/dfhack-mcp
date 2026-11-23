@@ -1206,8 +1206,34 @@ export default class DFObserver extends TypertRemoteService {
     return undefined
   }
 
+  /** Title the filter chat. A created session has no human prompt to title from, so it shows as
+   * "Untitled" in the sidebar; and the session is REUSED across activations (the stable id), so
+   * titling only on the spawn path leaves it Untitled forever - measured 2026-11-22: a reused
+   * filter log had NO title event. Run this whenever the filter agent exists. */
+  async titleFilterSession(controller) {
+    if (this.filterTitled || !this.filterSessionId) return
+    const ctl = controller ?? this.ctx.get('sessionController')
+    if (ctl === undefined) return
+    if (typeof ctl.rename !== 'function') {
+      this.filterTitled = true
+      this.note(`filter title skipped: the mounted sessionController face has no rename (typeof=${typeof ctl.rename})`)
+      return
+    }
+    try {
+      const titled = await ctl.rename({ sessionId: this.filterSessionId, title: 'df-observer-filter' })
+      this.filterTitled = true
+      this.note(titled?.title ? `filter session titled: ${titled.title} (seq ${titled.seq})`
+                              : 'filter title call returned no title')
+    } catch (error) {
+      this.filterTitled = true
+      this.note(`filter session title refused: ${error?.message ?? error}`)
+    }
+  }
+
   async ensureFilterAgent() {
-    if (!this.config.filter_enabled || this.filterAgent()) return this.filterAgent()
+    if (!this.config.filter_enabled) return undefined
+    const existing = this.filterAgent()
+    if (existing) { void this.titleFilterSession(); return existing }
     const cap = Math.max(0, Number(this.config.filter_max_spawns ?? 1))
     if (this.filterSpawns >= cap) {
       // The cap is the leak plug: never more than this many chats for the filter, and say so once.
@@ -1258,25 +1284,7 @@ export default class DFObserver extends TypertRemoteService {
           this.note(`filter model route rejected: ${e?.message ?? e}`)
         }
       }
-      // Title the chat we created. Without this the sidebar shows it as "Untitled" (a created
-      // session has no human prompt to title from), which is how the player met the leaked
-      // filter chats. `rename` needs the mounted session-title service; a refusal is a note,
-      // never a reason to fail the filter.
-      if (agent) {
-        try {
-          if (typeof controller.rename !== 'function') {
-            // Measured 2026-11-22: the chat was created but stayed Untitled, and the session log
-            // had NO title event - so say plainly what the mounted face exposes, do not skip silently.
-            this.note(`filter title skipped: the mounted sessionController face has no rename (typeof=${typeof controller.rename})`)
-          } else {
-            const titled = await controller.rename({ sessionId: this.filterSessionId, title: 'df-observer-filter' })
-            this.note(titled?.title ? `filter session titled: ${titled.title} (seq ${titled.seq})`
-                                    : 'filter title call returned no title')
-          }
-        } catch (error) {
-          this.note(`filter session title refused: ${error?.message ?? error}`)
-        }
-      }
+      if (agent) await this.titleFilterSession(controller)
       this.note(agent ? `filter session live: ${this.filterSessionId}` : 'filter session created but not live yet')
       return agent
     } catch (error) {

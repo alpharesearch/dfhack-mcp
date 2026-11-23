@@ -2427,6 +2427,9 @@ test('the filter reuses one session and can never leak chats', () => {
          'the cap announces itself and falls back to the rule gate')
   assert(/typeof controller\.rename !== 'function'/.test(index),
          "the title call is made and its outcome is reported, never skipped in silence")
+  assert(/async titleFilterSession\(controller\)/.test(index)
+         && /if \(existing\) \{ void this\.titleFilterSession\(\); return existing \}/.test(index),
+         "the title runs on the REUSE path too - a reused session never takes the spawn path, which is why it stayed Untitled")
   assert(/const rows = await controller\.list\(\{\}, this\.abort\.signal\)/.test(index),
          "the cwd comes from the documented SessionSummary rows (agents do not expose the header)")
 })
