@@ -1482,7 +1482,7 @@ function OPS.pile_arrays(args)
                        "stone","weapons","wood"}) do
       local ok = pcall(function()
         for k,v in pairs(sp.settings[c]) do
-          if type(v) == "table" then
+          if type(v) == "table" or type(v) == "userdata" then
             local n = 0
             pcall(function() n = #v end)
             if n > (reference[c] and reference[c][k] or 0) then
@@ -1506,13 +1506,18 @@ function OPS.pile_arrays(args)
         if on then
           pcall(function()
             for k,v in pairs(sp.settings[c]) do
-              if type(v) == "table" and tostring(v):find("vector<char>") then
+              if (type(v) == "table" or type(v) == "userdata") and tostring(v):find("vector<char>") then
                 local want = (reference[c] and reference[c][k]) or 1
                 if want < 1 then want = 1 end
-                if #v < 1 then
-                  entry.empty_fields[#entry.empty_fields+1] = c.."."..k
+                local ref = reference[c] and reference[c][k] or 0
+                -- 0 is a LEGAL size when the game's own pile has 0 there (wood.mats measures 0 on
+                -- a UI pile and opens fine). Only an array that the game fills and this pile does
+                -- not is the crash condition.
+                if ref > 0 and #v < ref then
+                  entry.empty_fields[#entry.empty_fields+1] = c.."."..k.." size="..tostring(#v).."/"..tostring(ref)
                   if action == "fix" then
-                    v:resize(want)
+                    v:resize(ref)
+                    want = ref
                     for i = 0, want - 1 do pcall(function() v[i] = 1 end) end
                     entry.fixed[#entry.fixed+1] = c.."."..k.."->"..tostring(want)
                   end

@@ -344,6 +344,25 @@ def test_pile_categories_are_the_flags_the_game_exposes_not_a_wiki_list():
     assert "plants" not in names, "this build has no plants flag - plump helmets are FOOD"
 
 
+def test_the_crash_categories_carry_the_measured_reference_sizes():
+    """The player built a UI pile so I could measure what the game allocates:
+    corpses.corpses = vector<char>[1327] (race-indexed), every refuse.* sub-vector = 1327,
+    refuse.type = 113 (item-type-indexed), while wood.mats = 0 is legal. My table's 0s were
+    measured from a TOOL-made pile - measuring the crash and calling it the reference - and my
+    allocator tested `type(v) == "table"`, which skips these fields entirely because they are
+    userdata. Both are pinned here."""
+    import re
+    lo = pathlib.Path("luaops.py").read_text()
+    corps = re.search(r'"corpses":\s*\{([^}]*)\}', lo).group(1)
+    refuse = re.search(r'"refuse":\s*\{([^}]*)\}', lo, re.S).group(1)
+    assert "1327" in corps, "corpses.corpses allocated to the measured race length"
+    assert "1327" in refuse and "113" in refuse, "refuse sub-vectors 1327 and refuse.type 113"
+    assert "skulls" in refuse and "teeth" in refuse, "the fields my old table never knew existed"
+    assert 'type(v)=="table" or type(v)=="userdata"' in lo, "userdata is not skipped by the alloc scan"
+    mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
+    assert "ref > 0 and #v < ref" in mod, "check is reference-anchored: a 0-size field is legal when the game's pile has 0 (wood.mats)"
+
+
 def test_corpses_and_refuse_flags_are_refused_without_an_opt_in():
     """The player's click test, one save, three piles: general (12 categories) and wood opened
     the Custom screen; `corpses` + `refuse` crashed the game (SIGSEGV, render_things ->

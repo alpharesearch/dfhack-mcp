@@ -423,7 +423,8 @@ async def configure_stockpile(dec, building_id: int, allow: list[str] | None = N
     # filled. So they are refused here; the player's own screen is the safe path, and a measured
     # reference size is the only thing that unlocks the write.
     CRASH_CATEGORIES = ("corpses", "refuse")
-    hit = [c for c in wanted if c in CRASH_CATEGORIES]
+    hit = [c for c in wanted if c in CRASH_CATEGORIES
+           and not any(int(v) > 0 for v in SETTINGS_ARRAYS.get(c, {}).values())]
     if hit and not allow_crash_categories:
         raise LuaOpError(
             "categories %s are refused: opening Custom on a pile with these flags set "
@@ -1186,7 +1187,12 @@ SETTINGS_ARRAYS = {
     "cloth": {"cloth_metal": 1, "cloth_plant": 8, "cloth_silk": 49, "cloth_yarn": 8, "color": 136,
               "thread_metal": 1, "thread_plant": 8, "thread_silk": 49, "thread_yarn": 8},
     "coins": {"mats": 319},
-    "corpses": {"corpses": 0},
+    # MEASURED on the player's UI-made pile (2026-11-22, pile 1 at 75-81,119-124 @36):
+    # corpses.corpses = vector<char>[1327] (indexed by RACE), refuse.* = [1327] each and
+    # refuse.type = [113] (indexed by ITEM TYPE). My old table said 0 for these - I had read a
+    # TOOL-made pile, which is the crash, not the reference. wood.mats = [0] IS legal: a UI pile
+    # with wood enabled has an empty mats array and opens fine.
+    "corpses": {"corpses": 1327},
     "finished_goods": {"color": 136, "mats": 319, "other_mats": 16, "quality_core": 7,
                        "quality_total": 7, "type": 113},
     "food": {"cheese_animal": 26, "cheese_plant": 0, "drink_animal": 2, "drink_plant": 76,
@@ -1197,7 +1203,8 @@ SETTINGS_ARRAYS = {
     "furniture": {"mats": 319, "other_mats": 15, "quality_core": 7, "quality_total": 7, "type": 35},
     "gems": {"cut_mats": 319, "cut_other_mats": 659, "rough_mats": 319, "rough_other_mats": 659},
     "leather": {"color": 136, "mats": 892},
-    "refuse": {"body_parts": 0, "bones": 0, "corpses": 0, "hair": 0, "horns": 0, "shells": 0},
+    "refuse": {"body_parts": 1327, "bones": 1327, "corpses": 1327, "hair": 1327, "horns": 1327,
+               "shells": 1327, "skulls": 1327, "teeth": 1327, "type": 113},
     "sheet": {"paper": 9, "parchment": 892},
     "stone": {"mats": 319},
     "weapons": {"mats": 319, "other_mats": 10, "quality_core": 7, "quality_total": 7,

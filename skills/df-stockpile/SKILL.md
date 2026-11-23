@@ -189,3 +189,23 @@ game never filled. So:
   sizes from a pile the game's UI built, and the caller must pass `allow_crash_categories=true`.
 - A refuse pile's *categories* are therefore a player action. Placement, size, containers and
   everything else stay the tool's.
+
+## §17 - the reference sizes, measured from a pile the GAME made
+
+From the player's UI pile (75..81,119..124 @36, corpses+refuse):
+
+| field | class | length |
+|---|---|---|
+| `corpses.corpses` | `vector<char>` | **1327** (race-indexed) |
+| `refuse.body_parts/bones/corpses/hair/horns/shells/skulls/teeth` | `vector<char>` | **1327** each |
+| `refuse.type` | `vector<char>` | **113** (item-type-indexed) |
+| `wood.mats` | `vector<char>` | **0** - and that is LEGAL (a UI pile with wood enabled opens fine) |
+
+Three lessons, each earned the hard way:
+1. **Measure from a UI-made pile.** My table's 0s came from a tool-made pile: measuring the crash and
+   calling it the reference is how you get a crash twice.
+2. **These arrays are `userdata`, not Lua tables.** Any `type(v) == "table"` test silently skips every
+   settings array, which is why "the allocation runs" was true in code and false in the game.
+3. **A size of 0 is not automatically a defect** (`wood.mats`). `/pile-arrays check` is therefore
+   reference-anchored: a field is under-allocated only when the game's own pile has a non-zero size
+   there.
