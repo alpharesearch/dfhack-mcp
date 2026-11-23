@@ -2425,8 +2425,10 @@ test('the filter reuses one session and can never leak chats', () => {
          'the filter session inherits the briefed workspace - not the Host cwd ("Ungrouped")')
   assert(/filter: \$\{this\.filterSpawns\} spawn/.test(index),
          'the cap announces itself and falls back to the rule gate')
-  assert(/controller\.rename\?\.\(\{ sessionId: this\.filterSessionId, title: 'df-observer-filter' \}\)/.test(index),
-         "and the chat it creates is titled, not left Untitled (the player's ask)")
+  assert(/typeof controller\.rename !== 'function'/.test(index),
+         "the title call is made and its outcome is reported, never skipped in silence")
+  assert(/const rows = await controller\.list\(\{\}, this\.abort\.signal\)/.test(index),
+         "the cwd comes from the documented SessionSummary rows (agents do not expose the header)")
 })
 for (const [name, fn] of queue) {
   try {
