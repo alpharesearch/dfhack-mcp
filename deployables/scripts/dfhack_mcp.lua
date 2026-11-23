@@ -1534,86 +1534,11 @@ function OPS.pile_arrays(args)
     local n = 0 for _,_ in pairs(reference) do n = n + 1 end return n end)() }
 end
 
--- 13. find_soil: where the FARM can go, measured - the farm rung needs soil floors, and
--- `/survey` reports tile CLASSES (floor/rock/ramp/...), never the soil property.
--- Soil is a MATERIAL fact: DF's farm plot wants matinfo is_soil (MUDPYROCLASTIC/PYROPLASTIC).
--- Blocks are read from df.global.world.map.all (my first probe iterated `df.global.world.map`
--- and measured blocks=0 - that is the struct's method table, not the block list: tool_missing #28).
-function OPS.find_soil(args)
-  local e0 = tonumber(args and args.elev0) or 0
-  local e1 = tonumber(args and args.elev1) or e0
-  local step = math.max(4, tonumber(args and args.cell) or 16)
-  local zmin, zmax = e0 + M.GAME_Z_OFFSET, e1 + M.GAME_Z_OFFSET
-  local cells, total, mats = {}, 0, {}
-  -- The block accessor on this build is `map:find(x, y, z)` (measured: `world.T_map.all:
-  -- not found`), so the scan walks the block GRID over the requested z band only.
-  local map = df.global.world.map
-  local bx_max, by_max = 0, 0
-  pcall(function() bx_max = math.floor((map.x_dim or 0) / 16) - 1 end)
-  pcall(function() by_max = math.floor((map.y_dim or 0) / 16) - 1 end)
-  local blocks = 0
-  for bz = zmin, zmax do
-   for bx = 0, bx_max do
-    for by = 0, by_max do
-      local b = nil
-      pcall(function() b = map:find(bx * 16, by * 16, bz) end)
-      if b == nil then goto continue end
-      blocks = blocks + 1
-      local z = bz
-      local base_x, base_y = bx * 16, by * 16
-      for i = 0, 255 do
-        local mat = tonumber(b.matgrid[i]) or -1
-        if mat >= 0 then
-          local hid = false
-          pcall(function() hid = (b.hidden[i] == true) end)
-          if not hid then
-            local soil = false
-            local mname = "?"
-            pcall(function()
-              local mi = dfhack.matinfo.find(mat)
-              if mi and mi.flags then
-                soil = (mi.flags.MUDPYROCLASTIC == true) or (mi.flags.PYROPLASTIC == true)
-              end
-              if mi and mi.name then mname = tostring(mi.name) end
-            end)
-            if soil then
-              local x, y = base_x + (i % 16), base_y + (i // 16)
-              local elev = z - M.GAME_Z_OFFSET
-              mats[mname] = (mats[mname] or 0) + 1
-              total = total + 1
-              local key = elev .. ":" .. (x // step) .. ":" .. (y // step)
-              local c = cells[key]
-              if c == nil then
-                c = { elev = elev, x0 = (x // step) * step, y0 = (y // step) * step,
-                      x1 = (x // step) * step + step - 1, y1 = (y // step) * step + step - 1,
-                      soil_tiles = 0, sample = {x, y}, materials = {} }
-                cells[key] = c
-              end
-              c.soil_tiles = c.soil_tiles + 1
-              c.materials[mname] = (c.materials[mname] or 0) + 1
-            end
-          end
-        end
-      end
-      ::continue::
-    end
-   end
-  end
-  local list = {}
-  for _,c in pairs(cells) do
-    local mats = {}
-    for k,v in pairs(c.materials) do mats[#mats+1] = { material = k, tiles = v } end
-    table.sort(mats, function(a,b) return a.tiles > b.tiles end)
-    c.materials = mats
-    list[#list+1] = c
-  end
-  table.sort(list, function(a,b) return a.soil_tiles > b.soil_tiles end)
-  local out_mats = {}
-  for k,v in pairs(mats) do out_mats[#out_mats+1] = { material = k, tiles = v } end
-  table.sort(out_mats, function(a,b) return a.tiles > b.tiles end)
-  return { elev0 = e0, elev1 = e1, cell = step, blocks_scanned = blocks,
-           soil_tiles = total, clusters = list, materials = out_mats }
-end
+-- (13 was find_soil. REMOVED: the Lua route to the tile grids is closed on this build - measured
+-- `world.T_map.all: not found`, `map:find` nil, and every block grid (`matgrid`, `typegrid`,
+-- `tileptr`, `regiongrid`, `water`) is unreadable; `pairs(block)` itself raises. It answered
+-- `blocks_scanned: 0, soil_tiles: 0`, which is a read failure wearing a census. The census lives in
+-- the server now (`GET /find-soil`), on the RPC block cache, reading the game's tiletype list.)
 
 -- 14. unit_labors: the read-back for labor writes. `/set-unit-labors` validates names against
 -- the RPC labor list and reports `applied` - that is validation, not the game's state. Measured
@@ -1710,7 +1635,9 @@ function OPS.unit_profession(args)
       if cit and alive then
         local nm = "?"
         pcall(function() nm = tostring(u.name.first_name).." "..tostring(u.name.last_name) end)
-        out[#out+1] = { unit_id = tonumber(u.id), name = nm, profession = prof_name(u),
+        local pid = nil
+        pcall(function() pid = tonumber(u.profession) end)
+        out[#out+1] = { unit_id = tonumber(u.id), name = nm, profession = prof_name(u), profession_id = pid,
                         has_mine_labor = (function() local r=false; pcall(function() r=(u.status.labors.MINE==true) end); return r end)() }
       end
     end
@@ -1733,11 +1660,22 @@ function OPS.unit_profession(args)
     local u = (uid ~= nil) and df.unit.find(uid) or nil
     if u == nil then error("unit_id required and must name a living unit") end
     local pname = args and args.profession and tostring(args.profession) or nil
-    if pname == nil then error("profession required (e.g. 'Miner'); action='list' shows the names") end
-    local pid = prof_id_by_name(pname)
+    if pname == nil and tonumber(args and args.profession_id) == nil then
+      error("profession (name) or profession_id required; action='list' shows both, per citizen")
+    end
+    -- The name->id route can only see professions SOMEONE IN THE FORT carries: every lookup here
+    -- reads the live roster, because the profession TABLE is unreachable from Lua on this build
+    -- (measured: raws.professions, raws.dwarves, entity_raw.profession, world.professions,
+    -- world.proficiencies, dfhack.units.getProfessionId, dfhack.units.setProfession and the RPC
+    -- MapInfo are all absent). So restoring a profession that NO unit holds now - my own case:
+    -- I made the fort's only Metalcrafter a Miner - has no tool route, and an explicit
+    -- profession_id is accepted for exactly that case.
+    local pid = tonumber(args and args.profession_id)
+    if pid == nil and pname ~= nil then pid = prof_id_by_name(pname) end
     if pid == nil then
       local avail = {}
       for _,x in ipairs(names) do avail[#avail+1] = tostring(x.name) end
+      avail[#avail+1] = "(only professions a living citizen currently carries are nameable here - pass profession_id for the rest)"
       error("profession '"..pname.."' not found for the fortress entity; available: "..table.concat(avail, ", "))
     end
     -- `dfhack.units.setProfession` is NOT on this build (measured: "attempt to call a nil value
@@ -1747,7 +1685,7 @@ function OPS.unit_profession(args)
     local okp, errp = pcall(function() u.profession = pid end)
     if not okp then error("writing u.profession failed: "..tostring(errp)) end
     return { action = "set", unit_id = tonumber(u.id), profession = pname, profession_id = pid,
-             read_back = prof_name(u) }
+             read_back = prof_name(u), read_back_id = (function() local r; pcall(function() r = tonumber(u.profession) end); return r end)() }
   end
   error("unknown unit_profession action '"..tostring(action).."' (expected list or set)")
 end

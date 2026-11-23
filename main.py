@@ -2386,7 +2386,8 @@ class PileArraysRequest(BaseModel):
 @app.get("/unit-professions", operation_id="unit_professions")
 async def unit_professions(action: str = Query("list", description="'list' shows each citizen's profession and the fortress's profession names; 'set' assigns one"),
                            unit_id: int = Query(None, description="set: the citizen to reassign"),
-                           profession: str = Query(None, description="set: the profession name, e.g. Miner (case-insensitive; 'list' shows what exists)")):
+                           profession: str = Query(None, description="set: the profession name, e.g. Miner (case-insensitive; 'list' shows what exists)"),
+                           profession_id: int = Query(None, description="set: the numeric profession id (from action=list). Use this to restore a profession NO citizen currently carries - the name route can only see professions a living unit holds, because the profession table is unreachable from Lua on this build")):
     """The profession layer - what the Labor screen's tick marks mean on this build.
 
     Measured 2026-11-22: the player's Miners page showed ONE tick (Aban, Proficient Miner) while
@@ -2396,7 +2397,8 @@ async def unit_professions(action: str = Query("list", description="'list' shows
     flags back.
     """
     try:
-        res = await LO.unit_profession(action=action, unit_id=unit_id, profession=profession)
+        res = await LO.unit_profession(action=action, unit_id=unit_id, profession=profession,
+                                       profession_id=profession_id)
         return {"success": True, **res}
     except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
         return {"success": False, "error": str(e)}

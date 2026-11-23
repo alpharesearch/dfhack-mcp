@@ -1536,7 +1536,8 @@ async def gather_and_items(action: str = "gather_plants",
 
 
 async def unit_profession(action: str = "list", unit_id: int | None = None,
-                          profession: str | None = None) -> dict:
+                          profession: str | None = None,
+                          profession_id: int | None = None) -> dict:
     """Who is a miner in the game's own terms - the profession layer the Labor screen shows.
 
     Measured 2026-11-22: the player's Miners page ticked one dwarf while my `u.status.labors`
@@ -1548,7 +1549,24 @@ async def unit_profession(action: str = "list", unit_id: int | None = None,
         payload["unit_id"] = int(unit_id)
     if profession:
         payload["profession"] = str(profession)
+    if profession_id is not None:
+        payload["profession_id"] = int(profession_id)
     return await call_module("unit_profession", payload)
+
+
+async def unit_labors(unit_ids: list[int] | None = None, labor: str | None = None) -> dict:
+    """Read the labors the GAME holds per citizen - the read-back for labor writes.
+
+    Field names are DFHack's (`MINE`, not `MINING`); `u.status.labors.MINING` does not exist on
+    this build and a `pcall` probe reads it as a silent false, which is how a labor census from
+    raw Lua can lie to you.
+    """
+    payload: dict = {}
+    if unit_ids:
+        payload["unit_ids"] = [int(i) for i in unit_ids]
+    if labor:
+        payload["labor"] = str(labor)
+    return await call_module("unit_labors", payload)
 
 
 async def unit_labors(unit_ids: list[int] | None = None, labor: str | None = None) -> dict:

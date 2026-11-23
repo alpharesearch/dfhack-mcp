@@ -234,3 +234,21 @@ Rules:
    `u.profession = pid`, and the pid is taken from a dwarf already in that profession.
 3. `/set-unit-labors` answers `applied: N`, which validates **names**, not the game's state -
    read `/unit-labors` after it.
+
+## §21 - never take the only holder of a craft (I did, and it cost the fort its smith)
+
+Measured with the player's screenshot: `/unit-professions action=set unit_id=6491 profession=Miner`
+worked - the game's own roster shows `Åblel Rakustàlil, Miner` - and **the fort has no metalsmith
+now**. Åblel was the only Metalcrafter. Rung #1 ("two dwarves on Miners") was satisfied; the price
+is the craft that makes metal, which is what the well (mechanisms), buckets, anvil and the furnace
+chain all need downstream.
+
+Rules:
+1. **Read the roster for uniqueness first** (`GET /unit-professions` lists every citizen's
+   profession). If a craft has exactly one holder, do not convert them - find a dwarf with no
+   load-bearing craft (an expedition leader, a title, not a trade).
+2. Restoring a profession the fort no longer has is **not reachable from the tools on this build**:
+   the profession table is unreadable (see `tool_missing.md` #32). Use `profession_id` when the id is
+   known from a unit that carries it, otherwise the player's UI is the route.
+3. Labors are not professions: 5 citizens have `MINE` and the digging proceeds regardless of who is
+   labelled Miner - so this rung rarely needed the profession write at all.
