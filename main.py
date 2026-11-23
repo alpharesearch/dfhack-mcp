@@ -443,7 +443,7 @@ class WorkOrderRequest(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
     action: str | None = Field(None, description="One of 'create' (default when job or json is given), 'list' (default when job is omitted: inspect active manager orders & manager status), or 'cancel' (remove matching order_id or job)")
     order_id: int | None = Field(None, description="Manager order ID to cancel when action='cancel'")
-    job: str | None = Field(None, description="df.job_type name (e.g. 'MakeBarrel', 'MakeBed', 'MakeTable', 'MakeChair', 'BrewDrink', 'MakeCharcoal', 'SmeltOre')")
+    job: str | None = Field(None, description="df.job_type name. Measured 2026-11-22: furniture takes the Construct* names - 'MakeBed' answers CR_FAILURE while 'ConstructBed' creates order 4; 'ConstructDoor' is in the game's own list. Production jobs are Make*/Smelt* (e.g. 'MakeCharcoal', 'SmeltOre', 'MakeBarrel', 'MakeTable', 'MakeChair', 'BrewDrink'). Names must be real df.job_type entries: pairs(df.job_type) yields type metadata, not the list (#49 family), so do not enumerate names that way")
     amount: int | None = Field(None, ge=1, description="Total amount to produce")
     material: str | None = Field(None, description="Optional material filter (e.g. 'rock', 'wood')")
     item_type: str | None = Field(None, description="Optional item_type filter")
