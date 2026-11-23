@@ -1199,6 +1199,35 @@ def _array_alloc_lua(category: str, sizes: dict) -> str:
     return "\\n".join(lines)
 
 
+def _json_balanced(raw: str) -> bool:
+    """True when `raw` is a complete JSON value: braces/brackets close outside strings.
+
+    Used by the MCP_JSON reader because a module print is not guaranteed to arrive as one
+    console line - a control byte inside a DF string splits it.
+    """
+    depth = 0
+    in_str = False
+    esc = False
+    for ch in raw:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+            if depth < 0:
+                return True
+    return depth == 0 and not in_str
+
+
 async def repair_stockpile_settings(dec, building_id: int) -> dict:
     """Allocate the per-category material arrays the game's custom-settings UI walks.
 
@@ -1261,10 +1290,19 @@ _module_sha: str = ""
 
 def _parse_mcp_json(out: str) -> dict:
     """Extract and parse the `MCP_JSON|{...}` payload printed by dfhack_mcp.lua."""
-    for line in reversed(out.splitlines()):
-        s = line.strip()
+    lines = out.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        s = lines[i].strip()
         if s.startswith("MCP_JSON|"):
             raw = s[len("MCP_JSON|"):]
+            # A module print can arrive as SEVERAL text fragments; a raw control byte in a
+            # DF string (trader names) splits the payload mid-string, so a "single line"
+            # read is not a safe assumption. Keep appending following lines until the JSON
+            # balances - only then is it parsed. (Measured 2026-11-22 on /trade-depot.)
+            j = i + 1
+            while not _json_balanced(raw) and j < len(lines):
+                raw += lines[j].strip()
+                j += 1
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError as e:

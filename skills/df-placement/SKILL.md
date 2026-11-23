@@ -227,3 +227,17 @@ came out of it, in order of preference:
 2. Zone writes stay behind `acknowledge_risk` (create *and* remove), and never retried on the
    same id without reading `/zones` first.
 3. `pcall` is not a safety story: a native fault kills the process, not the coroutine.
+
+## Trading, measured on a live caravan (Y100, this site)
+
+* `manage_nobles(action='auto_assign')` appointed **MANAGER / BOOKKEEPER / BROKER** in one call
+  (fresh embark: all vacant; read-back: all `vacant: false`). Trading needs the BROKER.
+* `trade-depot` actions measured: `status` (goods/queue/caravan state), `mark_goods`
+  (**hauling works**: marked 25 -> depot stock 227 -> 252, haul queue drained),
+  `unmark_goods`, `request_broker` (read-back `trader_requested: true`), `barter_status`.
+* A depot the dwarves cannot walk to is a depot that cannot trade: the tool reports
+  **`accessible: false`**, and that is why the barter lists stay empty (`have_talker: false`).
+  Build the 3-wide wagon passage BEFORE any trade plan, and treat `accessible` as the gate.
+* The Trade **screen** is UI state: `main_interface.trade.open` is a boolean, not a function.
+  Feeding `tr.bld` + `open = true` opens it, but the good lists only fill once a fort trader
+  and a merchant are actually talking - so "open the screen" is not a route to barter.

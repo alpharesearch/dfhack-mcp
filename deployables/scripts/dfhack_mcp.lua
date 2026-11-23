@@ -10,12 +10,21 @@ M.GAME_Z_OFFSET = 129
 local ok_json, df_json = pcall(require, "json")
 
 local function escape_str(s)
-  return tostring(s)
+  -- Escape EVERY control character. DF strings (trader/group names, formatted text)
+  -- contain raw control bytes, and a raw newline inside MCP_JSON splits the printed
+  -- payload across text frames: the python parser reads only the first line and reports
+  -- "malformed MCP_JSON payload: Unterminated string starting at line 1 column 307" for
+  -- /trade-depot status (measured 2026-11-22) - the envelope was broken, not the tool.
+  local out = tostring(s)
     :gsub("\\", "\\\\")
     :gsub('"', '\\"')
     :gsub("\n", "\\n")
     :gsub("\r", "\\r")
     :gsub("\t", "\\t")
+  out = out:gsub("[\1-\31]", function(c)
+    return string.format("\\u%04x", string.byte(c))
+  end)
+  return out
 end
 
 local function encode_json(val)
