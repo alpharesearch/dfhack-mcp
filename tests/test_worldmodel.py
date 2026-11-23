@@ -344,6 +344,19 @@ def test_pile_categories_are_the_flags_the_game_exposes_not_a_wiki_list():
     assert "plants" not in names, "this build has no plants flag - plump helmets are FOOD"
 
 
+def test_the_quickstart_skill_does_not_instruct_a_removed_tool():
+    """The player's quickstart playbook (.dsh/skills/df-quickstart) was written before
+    `/set-unit-labors` was removed (it writes a layer the game recomputes from work details). A skill
+    that tells the agent to call a removed tool is a live bug in the instructions, so the skill must
+    name the work-detail route - and the wagon removal must be opt-in, because that removal is
+    irreversible and the player keeps the wagon."""
+    skill = pathlib.Path(".dsh/skills/df-quickstart/SKILL.md").read_text()
+    assert "set_unit_labors" not in skill, "no instruction to call the removed tool"
+    assert "work_details" in skill and "unit_labors" in skill, "the staffing route is named instead"
+    assert "removed" in skill.lower(), "and the skill says why"
+    assert "OPT-IN ONLY" in skill, "the wagon removal is not a silent chain step"
+
+
 def test_the_building_census_exists_because_the_artery_had_no_coordinates():
     """The game said "An artery has been opened by the attack!" and the server could not say WHERE:
     `/building-status` needs an id you already hold, `/list-buildings` and `/buildings` returned 404,

@@ -4,7 +4,7 @@ description: The Dwarf Fortress Quickstart Dependency Graph & Execution Playbook
 whenToUse: When starting a new fortress, deciding what to dig/build/queue next in the Quickstart sequence, diagnosing why a downstream workshop or noble is blocked by a missing upstream input, or progressing from embark to farming, brewing, furniture, offices, healthcare, trading, metalworking, and fortress defense.
 metadata:
   source: https://dwarffortresswiki.org/images/e/e6/FlowchartDF.png and https://dwarffortresswiki.org/index.php/Quickstart_guide
-  tools: look, fort_progress, alerts_and_wellbeing, set_pause_state, list_units, set_unit_labors, gather_and_items, manage_nobles, send_dig_command, transitions, find_trees, cut_trees, place_building, building_status, configure_farmplot, create_zone, assign_zone_owner, assign_pasture, create_stockpile, configure_stockpile, work_order, trade_depot, magma_depth, hazards, depth_profile
+  tools: look, fort_progress, alerts_and_wellbeing, set_pause_state, list_units, work_details, unit_labors, unit_professions, gather_and_items, manage_nobles, send_dig_command, transitions, find_trees, cut_trees, place_building, building_status, configure_farmplot, create_zone, assign_zone_owner, assign_pasture, create_stockpile, configure_stockpile, work_order, trade_depot, magma_depth, hazards, depth_profile
 ---
 
 # Dwarf Fortress Quickstart Dependency Graph & Execution Playbook
@@ -18,7 +18,15 @@ You are controlling a live Dwarf Fortress fortress via `dfhack-mcp`. **Never bui
 ## 0. Global Embark Setup (`Start` & Grey System Nodes)
 
 1. **Pause & Survey**: Call `set_pause_state(paused=True)`, then `look`, `fort_progress`, and `alerts_and_wellbeing`.
-2. **Assign Initial Labors (`(y) Labor menu`)**: Call `list_units` and `set_unit_labors` so the 7 starting dwarves cover:
+2. **Staff the work details (`(y) Labor menu`, the green tick marks)**: Call `list_units` for the
+   unit ids, then `GET /work-details action=assign detail=Miners unit_id=<id> mode=add` for each
+   dwarf who should mine. `GET /work-details action=list` shows every detail with the unit ids it
+   contains, and `GET /unit-labors?labor=MINE` is the read-back of the effective flags.
+   > `set_unit_labors` is **removed** (the player's decision, 2026-11-22): it wrote
+   > `unit.status.labors`, a layer the game **recomputes from the work details** - measured, a census
+   > of 5 `MINE` holders fell to the 2 ticked dwarves the moment a tick was added, and the tool's
+   > `applied: N` only validated labor *names*. Staffing means the detail; the flags follow it.
+   Cover:
    - `MINE` (2–3 dwarves; check `building_status` `diagnostics.crew.picks` so every miner has a pick)
    - `CUTWOOD` (1 dwarf; requires a battle axe)
    - `CARPENTER`, `MASON`, `PLANT` (farming), `HERBALISM` (plant gathering), `BREWER`, `COOK`, `BUTCHER`, `MECHANIC`, and stone/wood crafting.
@@ -100,7 +108,12 @@ Every production chain in the flowchart stems from two initial designations:
    - **`Office`**: Place a `Table` + `Chair` via `place_building`, then `create_zone(kind="office", x=..., y=..., elev=..., w=3, h=3, owner_unit_id=<manager_unit_id>, acknowledge_risk=True)` (or `assign_zone_owner`) for **`Manager`** and **`Bookkeeper`**.
    - **`Dining hall`**: Place `Tables` + `Thrones`, then `create_zone(kind="dining", x=..., y=..., elev=..., w=5, h=5, acknowledge_risk=True)`.
    - **`Bedrooms`**: Place `Beds` (from `Carpenter's workshop`) + `Doors`, then `create_zone(kind="bedroom", x=..., y=..., elev=..., w=3, h=3, acknowledge_risk=True)`.
-   - **`Remove embark wagon`**: Once indoor stockpiles (`All stockpiles` / `Food pile`) exist, remove the surface wagon via `remove_building`.
+   - **`Remove embark wagon`** - **OPT-IN ONLY, ask the player first.** Once indoor stockpiles
+     (`All stockpiles` / `Food pile`) exist, the wagon can go via `remove_building` (it also yields
+     3 logs). The player's standing rule on this fort is **keep the wagon**: it is the trade route's
+     anchor and the next caravan needs it, and a removal is an irreversible write, so it is never a
+     silent step in the chain. (Measured cost of acting on a flowchart line without asking: the zone
+     writes on this fort have crashed the game twice.)
 3. **`Hospital` (Orange Location Node)**:
    - **Converging Prerequisites**: `Chief Medical Dwarf` (`manage_nobles`) + `Thread` + `Cloth` + `Buckets` + `Splint/Crutches` + `Beds` + `Tables` + `Chests`.
 4. **`Craftdwarf's workshop`** (`Labor: Crafting`)
