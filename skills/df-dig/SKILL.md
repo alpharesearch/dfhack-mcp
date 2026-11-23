@@ -318,3 +318,14 @@ said `designated_total: 4` (tool_missing #45). So:
 - A stall alert quoting `pending 0` with a suspiciously small `designated_total` is a *scan* question
   first: check the box, then the access (stair vs plain dig from above, §19), then the labour census
   (§20) - in that order.
+
+## §26 - a stall alert on a box you never designated is about fog, not your plan
+
+`to_dig` in the observer's box row counts **unexplored tiles** as well as designated ones (tool_missing #47:
+`x57-63 y113-119 elev36` reported `to_dig 49, dug 0` six times, and `/survey` on that exact box answered
+`{"hidden": 49}` with nothing designated). So before acting on a stall:
+
+1. `/survey` the box. If `already_designated` is 0, nothing is stalled - the face simply does not exist yet.
+2. If it is designated, check the access rule (§19): plain digs need a walkable neighbour; under a floor it
+   must be a stair. Rock *beside* dug floor is workable - that is how a tunnel extends (measured: queuing
+   `x74-76 y114-118` + `x68-69 y114-118 @36` beside the dug band took `pending` 66 → 75 and floors 26 → 35).
