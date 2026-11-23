@@ -351,7 +351,14 @@ def test_the_quickstart_skill_does_not_instruct_a_removed_tool():
     name the work-detail route - and the wagon removal must be opt-in, because that removal is
     irreversible and the player keeps the wagon."""
     skill = pathlib.Path(".dsh/skills/df-quickstart/SKILL.md").read_text()
-    assert "set_unit_labors" not in skill, "no instruction to call the removed tool"
+    # The tool may be MENTIONED (the skill explains that it was removed); it must never be
+    # INSTRUCTED, and the tools line must not advertise it.
+    import re
+    assert not re.search(r"Call[^.
+]*`set_unit_labors`", skill), "no instruction to call the removed tool"
+    tool_line = [l for l in skill.split("\n") if l.strip().startswith("tools:")][0]
+    assert "set_unit_labors" not in tool_line, "the tools line does not advertise it"
+    assert "is **removed**" in skill, "the skill states the removal and its reason"
     assert "work_details" in skill and "unit_labors" in skill, "the staffing route is named instead"
     assert "removed" in skill.lower(), "and the skill says why"
     assert "OPT-IN ONLY" in skill, "the wagon removal is not a silent chain step"
