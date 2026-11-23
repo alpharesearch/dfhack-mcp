@@ -2427,6 +2427,8 @@ test('the filter reuses one session and can never leak chats', () => {
          'the cap announces itself and falls back to the rule gate')
   assert(/typeof ctl\.rename !== 'function'/.test(index),
          "the title call is made and its outcome is reported, never skipped in silence")
+  assert(/void this\.titleFilterSession\(\)/.test(index),
+         "the chat is titled at ACTIVATION - the live filter self-polls, so the spawn path is unreachable")
   assert(/async titleFilterSession\(controller\)/.test(index)
          && /if \(existing\) \{ void this\.titleFilterSession\(\); return existing \}/.test(index),
          "the title runs on the REUSE path too - a reused session never takes the spawn path, which is why it stayed Untitled")

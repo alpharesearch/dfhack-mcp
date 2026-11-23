@@ -480,7 +480,14 @@ export default class DFObserver extends TypertRemoteService {
     }), 'df-observer: /df-watch command')
 
     // ---- filter subagent surface (Config-gated; OFF by default) ----
-    if (config.filter_enabled) this.installFilterSurface()
+    if (config.filter_enabled) {
+      this.installFilterSurface()
+      // The live path never spawns: the filter chat SELF-POLLS through its `df_observe_state`
+      // tool, so `ensureFilterAgent()` - the only caller of the title - is unreachable once the
+      // chat exists (measured 2026-11-22: 9 turns in the filter log, zero title events, zero
+      // title notes). Title it at activation.
+      void this.titleFilterSession()
+    }
 
     // ---- the poll loop ----
     ctx.effect(() => {
