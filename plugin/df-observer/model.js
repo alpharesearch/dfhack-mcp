@@ -272,14 +272,24 @@ export function runAcceptance(todo, snapshot) {
     case 'water_supply': {
       // Measured 2026-11-22 (tool_missing #56): a player-added water source is a ZONE
       // (`/zones` id 20 WaterSource x74-76 y111-114 @36, 12 tiles), and `buildings_kw` can never see a
-      // zone - the rung read `not checked yet` while the fort had water. The plugin has no zone feed, so
-      // accept either the named building OR water measured in the band, and say which one proved it.
+      // zone. Check WaterSource zones from the `/observe` zone feed, well/cistern/pond buildings, or water tiles.
+      const zones = snapshot.zones ?? []
+      const waterZones = zones.filter((z) => !z.marked_for_removal && /watersource/i.test(String(z.type_name ?? '')))
       const kwHits = buildings.filter((b) => /well|cistern|pond/.test(String(b.name).toLowerCase()))
       const water = num(facts.water_tiles)
-      const ok = kwHits.length >= num(accept.min, 1) || water > 0
-      return { ok, evidence: `water supply: ${kwHits.length} building(s) named well/cistern/pond` +
-        ` + water_tiles ${water} in band (accept: a named building or water > 0; zones are not in the` +
-        ` plugin feed - a WaterSource zone is proven by /zones, not here)` }
+      const ok = waterZones.length > 0 || kwHits.length >= num(accept.min, 1) || water > 0
+      return { ok, evidence: `water supply: ${waterZones.length} WaterSource zone(s), ${kwHits.length} building(s) named well/cistern/pond` +
+        ` + water_tiles ${water} in band` }
+    }
+    case 'zone_type': {
+      const want = String(accept.zone_type ?? accept.kind ?? '').toLowerCase()
+      const minTiles = num(accept.min_tiles, 1)
+      const zones = snapshot.zones ?? []
+      const hits = zones.filter((z) => !z.marked_for_removal
+        && String(z.type_name ?? '').toLowerCase().includes(want)
+        && num(z.tiles, 0) >= minTiles)
+      const ok = hits.length >= num(accept.min, 1)
+      return { ok, evidence: `${hits.length} ${accept.zone_type ?? accept.kind} zone(s) >= ${minTiles} tiles (accept: >= ${accept.min ?? 1})` }
     }
     case 'buildings_kw': {
       const kw = String(accept.keyword).toLowerCase()
@@ -364,6 +374,7 @@ export class FortModel {
     this.generation = null
     this.facts = null
     this.buildings = []
+    this.zones = []
     this.boxes = []
     this.shafts = []
     this.piles = []
@@ -494,6 +505,7 @@ export class FortModel {
     // scope read NO DATA while curl showed rows).
     if (Array.isArray(data.piles)) this.piles = data.piles
     else if (data.piles && typeof data.piles === 'object') this.piles = Object.values(data.piles)
+    if (Array.isArray(data.zones)) this.zones = data.zones
     if (Array.isArray(data.reports)) this.reports = data.reports
     if (data.crashlog !== undefined) this.crashlog = data.crashlog
     if (Array.isArray(data.notes)) this.notes = data.notes
@@ -506,10 +518,19 @@ export class FortModel {
       // second general/stone/wood pile task, and the backlog tripped the
       // overload alert on our own bookkeeping).
       const taken = new Set(this.todos.map((t) => todoSignature(t)))
-      // Title fallback: stored rows closed by an OLD build carry accept={kind:manual}
-      // (the mutation above), so their signature no longer matches the rung; the
-      // title still identifies the same task.
+      // Title fallback & seed migration: if a stored row shares a title with a seed
+      // whose accept spec evolved (e.g. buildings_kw -> water_supply / zone_type),
+      // migrate its accept spec in place so stale old-kind records never persist.
       const normTitle = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
+      const byTitle = new Map(this.todos.map((t) => [normTitle(t.title), t]))
+      for (const s of seeded) {
+        const existing = byTitle.get(normTitle(s.title))
+        if (existing && existing.origin === 'ladder' && existing.accept?.kind !== s.accept?.kind) {
+          existing.accept = { ...s.accept }
+          if (s.cite) existing.cite = s.cite
+          this.onLedgerWrite?.(existing)
+        }
+      }
       const titles = new Set(this.todos.map((t) => normTitle(t.title)))
       const fresh = seeded.filter((t) => !taken.has(todoSignature(t)) && !titles.has(normTitle(t.title)))
         .map((t) => ({ ...t, id: t.id + offset }))
@@ -615,6 +636,7 @@ export class FortModel {
     this.facts = null
     this.statusFacts = {}
     this.buildings = []
+    this.zones = []
     this.boxes = []
     this.shafts = []
     this.piles = []
@@ -761,27 +783,29 @@ export class FortModel {
       }
       // Stagnation, one writer per box (measured bug: the drained-else reset
       // `stagnant` to 0 on every non-drained read, so an idle face never counted).
-      // Two kinds of frozen face:
-      //   drained: designations were queued, drained to 0, nothing dug;
-      //   idle:    nothing queued, nothing dug for stall_ticks reads (the filter
-      //            kept reporting "Ten game days, zero tiles dug, pending 0").
+      // Fire dig_stalled ONLY when designations were actually queued (drained or pending > 0):
+      // never spam on untouched fog boxes where pending === 0 && prev.pending === 0 (tool_missing #47).
+      const pureFog = box.rock != null && Number(box.rock) === 0
       const unchanged = box.to_dig === prev.to_dig && box.dug === prev.dug
       const drained = prev.pending > 0 && box.pending === 0 && unchanged
-      const idle = box.pending === 0 && box.to_dig > 0 && unchanged
-      if (drained || idle) {
+      const activeStall = box.pending > 0 && unchanged
+      const idle = !pureFog && box.pending === 0 && box.to_dig > 0 && unchanged
+      if (drained || activeStall || idle) {
         const stagnant = (prev.stagnant ?? 0) + 1
         if (stagnant >= cfg.stall_ticks) {
           const coord = `x${box.box[0]}-${box.box[2]} y${box.box[1]}-${box.box[3]} elev${box.elev}`
           const ev = drained
             ? `${coord}: pending 0, to_dig ${box.to_dig} unchanged ${stagnant} reads, dug ${box.dug} unchanged - designations drained with no dug change`
-            : `${coord}: to_dig ${box.to_dig}, pending 0, dug ${box.dug} unchanged for ${stagnant} reads - nothing queued and nothing dug (the plan is idle at this face)`
+            : `${coord}: pending ${box.pending}, to_dig ${box.to_dig}, dug ${box.dug} unchanged for ${stagnant} reads - designations queued but no tiles dug`
           this.digEvents.push({ tick: this.tick, kind: 'stalled', box: box.box, elev: box.elev, evidence: ev })
           this.trim('digEvents', 40)
           const hazard = faceAquiferNote(this.shafts, box)
           raise('dig_stalled', `stall-${key}`, ev, coord,
             (drained
               ? 'no access to the rest: read dig_reachable from a dwarf-occupied tile, order the band middle-first (df-dig §5)'
-              : 'queue the next face: survey it, designate ROCK tiles only (never over floors/stairs), middle-first so each dug tile is the next access (df-dig §5)')
+              : activeStall
+                ? 'check miner staffing (work_details) and access to the designated face (df-dig §5)'
+                : 'queue the next face: survey it, designate ROCK tiles only (never over floors/stairs), middle-first so each dug tile is the next access (df-dig §5)')
               // Measured: the generic advice pushed a play agent to queue the
               // elev25 face, which the shaft data says is INSIDE the aquifer.
               + (hazard ? ` - ${hazard}` : ''))
@@ -1162,6 +1186,13 @@ export class FortModel {
     return todo
   }
 
+  deleteTodo(id) {
+    const idx = this.todos.findIndex((t) => t.id === Number(id))
+    if (idx < 0) return null
+    const [removed] = this.todos.splice(idx, 1)
+    return removed
+  }
+
   ackAlert(id) {
     const alert = this.alerts.find((a) => a.id === id)
     if (!alert) return null
@@ -1261,6 +1292,7 @@ export class FortModel {
         water_tiles: num(this.facts.water_tiles), magma_tiles: num(this.facts.magma_tiles),
       } : null,
       buildings: this.buildings.slice(0, 40),
+      zones: (this.zones ?? []).slice(0, 30),
       boxes: this.boxes.slice(0, 12),
       shafts: this.shafts.slice(0, 12),
       piles: this.piles.slice(0, 12),

@@ -119,18 +119,18 @@ export function toolDefinitions({ model, projection, config, sessionFilter, onRe
       properties: {
         action: {
           type: 'string',
-          enum: ['list', 'add', 'done', 'why', 'reset'],
+          enum: ['list', 'add', 'done', 'why', 'reset', 'delete'],
           description: verbose
-            ? 'list: the ledger (bounded). add: register a task the plugin will verify. done: close task `id` - provide the evidence you proved. why: the evidence trail of task `id` (acceptance spec, last check, status flips). reset: throw out everything derived from the CURRENT game - the ledger (archived), watched boxes, dig baselines, alerts, facts - and re-read the fort. Use it when a different save is loaded; the observer does it by itself when it can detect the swap.'
-            : 'list | add | done (id + evidence) | why (id) | reset (drop all derived state, re-read the fort).',
+            ? 'list: the ledger (bounded). add: register a task the plugin will verify. done: close task `id` - provide the evidence you proved. delete: permanently remove task `id` from the ledger. why: the evidence trail of task `id`. reset: throw out everything derived from the CURRENT game - the ledger (archived), watched boxes, dig baselines, alerts, facts - and re-read the fort.'
+            : 'list | add | done (id + evidence) | delete (id) | why (id) | reset (drop all derived state, re-read the fort).',
         },
         title: { type: 'string', description: verbose ? 'For add: short task name. Required with add.' : 'For add: task name.' },
         accept: {
           type: 'object',
           additionalProperties: true,
           description: verbose
-            ? 'For add: the acceptance test the plugin runs. kind: tiles_progress (params elev,x0,y0,x1,y1,min_dug; passes at to_dig==0 && dug>=min_dug in that box - it must be a monitored box, else the test reports NO DATA) | pile_category (category,min_items) | pile_categories (categories[]) | pile_general | rung (rung: ladder rung id) | buildings_kw (keyword,min) | crew_picks | manual (no plugin check). Omit for manual.'
-            : 'For add: {kind, params}. kinds: tiles_progress{elev,x0,y0,x1,y1,min_dug} (box must be monitored) | pile_category{category,min_items} | pile_categories{categories[]} | pile_general | rung{rung} | buildings_kw{keyword,min} | manual.',
+            ? 'For add: the acceptance test the plugin runs. kind: tiles_progress (params elev,x0,y0,x1,y1,min_dug) | pile_category (category,min_items) | pile_categories (categories[]) | pile_general | rung (rung: ladder rung id) | buildings_kw (keyword,min) | zone_type (zone_type,min_tiles,min) | water_supply | crew_picks | manual (no plugin check). Omit for manual.'
+            : 'For add: {kind, params}. kinds: tiles_progress | pile_category | pile_categories | pile_general | rung | buildings_kw | zone_type | water_supply | manual.',
         },
         box: {
           type: 'array', items: { type: 'number' },
@@ -169,6 +169,12 @@ export function toolDefinitions({ model, projection, config, sessionFilter, onRe
         if (!closed) return { action, error: `no task id ${args.id}` }
         const state = model.snapshot()
         return { action, id: closed.id, text: `#${closed.id} closed: ${short(closed.evidence)}`, payload: payloadLine(state, 'tool') }
+      }
+      if (action === 'delete') {
+        const removed = model.deleteTodo(args.id)
+        if (!removed) return { action, error: `no task id ${args.id}` }
+        const state = model.snapshot()
+        return { action, id: removed.id, text: `#${removed.id} deleted: ${removed.title}`, payload: payloadLine(state, 'tool') }
       }
       if (action === 'why') {
         const state = stateOf(exec)

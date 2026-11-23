@@ -83,7 +83,7 @@ Every production chain in the flowchart stems from two initial designations:
   - **Prerequisites**: `Plump helmets` + empty **`Barrel`** (from `Carpenter's workshop`) or **`Stone pots`** (from `Craftdwarf's workshop`).
   - **Build & Queue**: `place_building(building="Still", x=..., y=..., elev=..., w=3, h=3)` → `work_order(job="BrewDrink", amount=15)`.
 - **`Animal pasture` → `Butcher's shop` & `Kitchen` → `Meals`**:
-  - **Pasture Grazing Animals**: `create_zone(kind="pen", x=..., y=..., elev=..., w=6, h=6, acknowledge_risk=True)` on surface grass → `assign_pasture(action="assign", all_grazers=True)`.
+  - **Pasture Grazing Animals**: `create_zone(kind="pen", x=..., y=..., elev=..., w=10, h=10, acknowledge_risk=True)` on **surface grass** (`grass_tiles > 0` — never on bare stone or dug underground floor, which starves grazing animals; `create_zone` rejects 0-grass sites) → `assign_pasture(action="assign", all_grazers=True)`.
   - **`Butcher's shop`** (`Labor: Butchery`) & **`Kitchen`** (`Labor: Cooking`): `place_building(building="Butcher" | "Kitchen", w=3, h=3)` → `work_order(job="PrepareMeal", amount=10)`.
   - **Stockpiles**:
     - **`Food pile`**: `create_stockpile(x=..., y=..., elev=..., w=5, h=5, allow=["food"], max_barrels=15)`

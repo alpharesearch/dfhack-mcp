@@ -157,9 +157,9 @@ async def place_building(dec, name: str, x: int, y: int, elev: int,
     z = int(elev) + GAME_Z_OFFSET
     dims = ""
     if w:
-        dims += f"w={int(w)}, "
+        dims += f"width={int(w)}, "
     if h:
-        dims += f"h={int(h)}, "
+        dims += f"height={int(h)}, "
     # Verified against hack/lua/dfhack/buildings.lua:493: constructBuilding refuses to
     # build without one of items / filters / abstract. Stockpiles and zones are ABSTRACT
     # (no construction materials); furniture and doors need real item ids in `items`.
@@ -218,7 +218,7 @@ local b = nil
 -- back as a bare "FAIL construct: nil" and I had no explanation (tool_missing #54). Capture it.
 local ok, res, reason = pcall(function()
   local r, why = dfhack.buildings.constructBuilding{{type={bt}, subtype={sub}, custom={cus},
-    x={int(x)}, y={int(y)}, z={z}, {dims}{extra}nominal={str(bool(nominal)).lower()}}}
+    x={int(x)}, y={int(y)}, z={z}, {dims}{extra}}}
   return r, why
 end)
 if not (ok and res) then print("FAIL construct: "..tostring(res).." reason="..tostring(reason)) return end
@@ -227,13 +227,15 @@ if {str(bool(complete)).lower()} then
   local okc = pcall(function() dfhack.buildings.completeBuild(b) end)
   if not okc then print("FAIL completeBuild") return end
 end
-local at = nil
+local at = b
 local oka, r = pcall(function() return dfhack.buildings.findAtTile({int(x)}, {int(y)}, {z}) end)
-if oka then at = r end
+if oka and r ~= nil then at = r end
 if at == nil then print("FAIL placed but not found at tile") return end
 local tn = tostring(at._type)
 local dot = tn:match("<type: ([_%w]+)")
-print("OK building=RESOLVED_NAME bt={bt} type="..(dot or tn).." id="..tostring(at.id))
+local rx1, rx2, ry1, ry2 = {int(x)}, {int(x)}, {int(y)}, {int(y)}
+pcall(function() rx1, rx2, ry1, ry2 = at.x1, at.x2, at.y1, at.y2 end)
+print("OK building=RESOLVED_NAME bt={bt} type="..(dot or tn).." id="..tostring(at.id).." rect="..tostring(rx1)..".."..tostring(rx2)..","..tostring(ry1)..".."..tostring(ry2))
 '''.strip()
     out = await _lua(expr)
     line = _one(out)
@@ -245,7 +247,9 @@ print("OK building=RESOLVED_NAME bt={bt} type="..(dot or tn).." id="..tostring(a
     # 2026-11-21) - and a null id means /resize-building cannot be called, so the sanctioned
     # 1x1 -> setSize path for multi-tile workshops dies at the reporting step.
     m = re.search(r"type=(\S+) id=(\S+)", out)
+    rm = re.search(r"rect=(\S+)", out)
     return {"placed": resolved, "at": [int(x), int(y), elev], "complete": complete,
+            "extent": rm.group(1) if rm else None,
             "game_type": m.group(1) if m else "?",
             "building_id": int(m.group(2)) if m and m.group(2).isdigit() else None,
             "verified": "findAtTile"}
@@ -443,28 +447,81 @@ async def unit_activity(unit_ids: list[int] | None = None, limit: int = 20) -> d
 
 
 async def list_jobs(limit: int = 40) -> dict:
-    """The manager/jobs queue, which RemoteFortressReader does not expose at all."""
+    """Active and queued jobs across unit.job.current_job, building.jobs, and world.jobs.list.
+
+    In DF 50/53, world.jobs.list is often empty while dwarves hold jobs on unit.job.current_job
+    and workshops/constructions hold jobs on building.jobs (tool_missing #46).
+    """
     out = await _lua(f'''
-local n=0 local lines={{}}
-for _,j in ipairs(df.global.world.jobs.list) do
-  if n >= {int(limit)} then break end
-  n = n + 1
+local seen = {{}}
+local rows = {{}}
+local u_cnt, b_cnt, w_cnt = 0, 0, 0
+local function add_job(j, src, fallback_unit)
+  if j == nil then return end
+  local jid = tonumber(j.id) or -1
+  if jid >= 0 and seen[jid] then return end
+  if jid >= 0 then seen[jid] = true end
+  if src == "unit" then u_cnt = u_cnt + 1
+  elseif src == "building" then b_cnt = b_cnt + 1
+  else w_cnt = w_cnt + 1 end
+  if #rows >= {int(limit)} then return end
   local desc = "?"
-  local okd, d = pcall(function() return dfhack.job.getName(j) end)
-  if okd and d then desc = tostring(d) end
+  pcall(function() desc = tostring(dfhack.job.getName(j) or "?") end)
   local un = "no unit"
-  if j.unit ~= nil and j.unit.id ~= nil then un = "unit #" .. tostring(j.unit.id) end
-  lines[#lines+1] = desc .. " by " .. un .. " jtype=" .. tostring(j.job_type)
+  local u = fallback_unit
+  if u == nil then
+    pcall(function() u = dfhack.job.getWorker(j) end)
+  end
+  if u ~= nil and u.id ~= nil then
+    local nm = ""
+    pcall(function() nm = tostring(u.name.first_name) end)
+    un = (nm ~= "" and (nm .. " #" .. tostring(u.id)) or ("unit #" .. tostring(u.id)))
+  end
+  local susp = false
+  pcall(function() susp = (j.flags.suspend == true) end)
+  local jtype = "?"
+  pcall(function() jtype = tostring(df.job_type[j.job_type] or j.job_type) end)
+  local pos_s = ""
+  pcall(function()
+    if j.pos and j.pos.x >= 0 then
+      pos_s = string.format(" at (%d,%d,%d)", j.pos.x, j.pos.y, j.pos.z - 129)
+    end
+  end)
+  rows[#rows + 1] = string.format("%s by %s jtype=%s%s%s", desc, un, jtype, pos_s, susp and " [SUSPENDED]" or "")
 end
-local total = 0
-for _ in ipairs(df.global.world.jobs.list) do total = total + 1 end
-print("OK jobs="..tostring(total))
-for _,l in ipairs(lines) do print("  " .. l) end
-'''.strip(), settle=0.8)
+for _, u in ipairs(df.global.world.units.active) do
+  local cj = nil
+  pcall(function() cj = u.job and u.job.current_job or nil end)
+  if cj ~= nil then add_job(cj, "unit", u) end
+end
+for _, b in ipairs(df.global.world.buildings.all) do
+  pcall(function()
+    for _, j in ipairs(b.jobs) do add_job(j, "building", nil) end
+  end)
+end
+for _, j in ipairs(df.global.world.jobs.list) do
+  add_job(j, "world", nil)
+end
+local total = u_cnt + b_cnt + w_cnt
+print(string.format("OK jobs=%d unit=%d building=%d world=%d", total, u_cnt, b_cnt, w_cnt))
+for _, l in ipairs(rows) do print("  " .. l) end
+'''.strip())
     lines = out.splitlines()
     head = lines[0] if lines else ""
-    total = int(head.split("=")[1]) if "=" in head else 0
-    return {"total_jobs": total, "sample": [l.strip() for l in lines[1:limit + 1]]}
+    m_tot = re.search(r"jobs=(\d+)", head)
+    m_u = re.search(r"unit=(\d+)", head)
+    m_b = re.search(r"building=(\d+)", head)
+    m_w = re.search(r"world=(\d+)", head)
+    if not m_tot:
+        raise LuaOpError(f"job_queue read failed (NO DATA): {out[:160]!r}")
+    return {
+        "total_jobs": int(m_tot.group(1)),
+        "unit_jobs": int(m_u.group(1)) if m_u else 0,
+        "building_jobs": int(m_b.group(1)) if m_b else 0,
+        "world_jobs": int(m_w.group(1)) if m_w else 0,
+        "source": "unit.job.current_job + building.jobs + world.jobs.list",
+        "sample": [l.strip() for l in lines[1:limit + 1]],
+    }
 
 
 async def unit_counts() -> dict:
@@ -1077,23 +1134,15 @@ async def place_building_plan(dec, name: str, x: int, y: int, elev: int,
     lua = """
 local pos = xyz2pos(__X__, __Y__, __Z__)
 local W, H = __W__, __H__
-local area = W * H
--- building_extents is a 256-BIT field indexed (x - x1) + 16*(y - y1). Measured
--- 2026-11-21: allocating W*H BYTES and setting the first W*H bits made the "3x4"
--- still a 12-tile strip in ONE row (tile (42,127) read back as null), and a legal
--- 3x3 farm plot was refused ("cannot place at this position") because the mask
--- claimed tiles the site does not have. 32 bytes = 256 bits, stride 16.
-local ext = df.reinterpret_cast(df.building_extents_type, df.new('uint8_t', 32))
-for i = 0, 31 do ext[i] = 0 end
-for dy = 0, H - 1 do
-  for dx = 0, W - 1 do ext[dy * 16 + dx] = 1 end
-end
 local before = {}
 for _,bb in ipairs(df.global.world.buildings.all) do before[bb.id] = true end
+-- Measured 2026-11-22 (tool_missing #54 + #57): passing fields.room = {x=0, y=0, ...}
+-- caused constructBuilding to fail with 'cannot place at this position' on 3x3 Farm Plots
+-- and 3x3 Workshops (Kitchen, Craftsdwarf). Workshops and Farm Plots use pos + width + height
+-- directly (constructBuilding calls getFiltersByType internally when no items/abstract are given).
 local bld, err = dfhack.buildings.constructBuilding{
     type = __TYPE__, subtype = __SUB__, custom = __CUS__,
     pos = pos, width = W, height = H,
-    fields = { room = {x = 0, y = 0, width = W, height = H, extents = ext} },
 }
 if not bld then print("ERR|constructBuilding refused: "..tostring(err)) return end
 local tiles = 0
@@ -1566,6 +1615,13 @@ async def configure_farmplot(building_id: int | None = None,
     if crop is not None:
         payload["crop"] = str(crop)
     return await call_module("configure_farmplot", payload)
+
+
+async def check_pasture_grass(elev: int, x0: int, y0: int, x1: int, y1: int) -> dict:
+    """Count grass/vegetation tiles in a candidate Pen/Pasture rectangle via `dfhack_mcp.lua`."""
+    return await call_module("check_pasture_grass", {
+        "elev": int(elev), "x0": int(x0), "y0": int(y0), "x1": int(x1), "y1": int(y1),
+    })
 
 
 async def observe_status_module() -> dict:

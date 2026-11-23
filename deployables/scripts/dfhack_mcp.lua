@@ -202,8 +202,8 @@ function OPS.building_status(args)
               worker_id = worker,
             }
             pcall(function()
-              for _, ji in ipairs(j.job_items.elements) do
-                local it_name = tostring(ji.item_type)
+              for _, ji in ipairs(j.job_items) do
+                local it_name = tostring(df.item_type[ji.item_type] or ji.item_type)
                 local qty = tonumber(ji.quantity) or 0
                 job_filters[#job_filters + 1] = {
                   item_type = it_name,
@@ -237,10 +237,82 @@ function OPS.building_status(args)
       end
     end
   end
+  -- Aggregate material demands from incomplete buildings + active/unvalidated manager orders
+  local demands = {}
+  for _, row in ipairs(rows) do
+    if not row.complete then
+      for _, f in ipairs(row.missing_item_filters or {}) do
+        demands[#demands + 1] = {
+          source = "building#" .. tostring(row.id) .. " (" .. tostring(row.name) .. ")",
+          item_type = f.item_type,
+          quantity = f.quantity_needed,
+          mat_type = f.mat_type,
+        }
+      end
+    end
+  end
+  pcall(function()
+    for _, mo in ipairs(df.global.world.manager_orders.all) do
+      local left = tonumber(mo.amount_left) or 0
+      if left > 0 then
+        local jname = tostring(df.job_type[mo.job_type] or mo.job_type)
+        local desc = jname
+        pcall(function() desc = dfhack.job.getManagerOrderName(mo) or jname end)
+        local validated = false
+        pcall(function() validated = (mo.status.validated == true) end)
+        demands[#demands + 1] = {
+          source = "manager_order#" .. tostring(mo.id),
+          job = jname,
+          description = desc,
+          amount_left = left,
+          validated = validated,
+          workshop_id = tonumber(mo.workshop_id) or -1,
+        }
+      end
+    end
+  end)
   return {
     count = #rows,
     only_incomplete = only_incomplete,
     buildings = rows,
+    material_demands = demands,
+  }
+end
+
+-- Helper: check how many tiles in a rectangle have grass/vegetation for grazing
+function OPS.check_pasture_grass(args)
+  local x0 = tonumber(args.x0); local y0 = tonumber(args.y0)
+  local x1 = tonumber(args.x1); local y1 = tonumber(args.y1)
+  local elev = tonumber(args.elev)
+  local z = elev + M.GAME_Z_OFFSET
+  local total, grass, bare_floor, hidden = 0, 0, 0, 0
+  for y = y0, y1 do
+    for x = x0, x1 do
+      total = total + 1
+      local tt = dfhack.maps.getTileType(x, y, z)
+      local fl = dfhack.maps.getTileFlags(x, y, z)
+      if fl and fl.hidden then
+        hidden = hidden + 1
+      elseif tt ~= nil then
+        local mname = ""
+        pcall(function()
+          local mat = df.tiletype.attrs[tt].material
+          mname = tostring(df.tiletype_material[mat] or "")
+        end)
+        if mname:find("GRASS") or mname == "PLANT" then
+          grass = grass + 1
+        else
+          bare_floor = bare_floor + 1
+        end
+      end
+    end
+  end
+  return {
+    elev = elev,
+    total_tiles = total,
+    grass_tiles = grass,
+    bare_or_non_grass_tiles = bare_floor,
+    hidden_tiles = hidden,
   }
 end
 

@@ -1551,8 +1551,7 @@ async def place_building(request: PlaceBuildingRequest):
                                       abstract=body.get("abstract"),
                                       items=body.get("items"),
                                       material=body.get("material"),
-                                      count=int(body.get("count", 3)),
-                                      nominal=bool(body.get("nominal", True)))
+                                      count=int(body.get("count", 3)))
     except LO.LuaOpError as e:
         return {"success": False, "error": str(e)}
     world.cache.reset()
@@ -1978,7 +1977,8 @@ def observe_simplify_survey(sv: dict) -> dict:
     g = lambda k: int(c.get(k, 0))
     return {
         "elev": sv.get("elev"), "box": sv.get("box"),
-        "to_dig": g("rock") + g("hidden"), "dug": g("floor") + g("stairs") + g("ramp"),
+        "to_dig": g("rock") + g("hidden"), "rock": g("rock"), "hidden": g("hidden"),
+        "dug": g("floor") + g("stairs") + g("ramp"),
         "pending": g("already_designated"), "water": g("water"), "open": g("open"),
         "building": g("building"), "other": g("other"),
         "total_tiles": sum(g(k) for k in ("rock", "hidden", "floor", "stairs", "ramp",
@@ -3111,6 +3111,20 @@ async def create_zone(request: CreateZoneRequest):
         gate_err = await _verify_footprint_ground(e, x0, y0, w, h, label="zone")
         if gate_err is not None:
             return gate_err
+        if kind_str in ("pen", "pasture"):
+            try:
+                gp = await LO.check_pasture_grass(e, x0, y0, x1, y1)
+                if int(gp.get("grass_tiles", 0)) == 0:
+                    return {"success": False,
+                            "error": f"pasture site x{x0}..{x1} y{y0}..{y1} @elev{e} has 0 grass tiles "
+                                     f"(bare_or_non_grass={gp.get('bare_or_non_grass_tiles')}); grazing animals "
+                                     f"starve on bare stone or dug floor",
+                            "hint": "place Pen/Pasture zones on surface grass tiles (tile_at material GRASS_*), "
+                                    "or pass check_site: false to override",
+                            "gate": "pasture requires grass_tiles > 0",
+                            "measured": gp}
+            except Exception:
+                pass
     try:
         dec = await world._dec(await world._gen())
         # Idempotency check (tool_missing.md #16): if an active zone already occupies
