@@ -1534,6 +1534,128 @@ function OPS.pile_arrays(args)
     local n = 0 for _,_ in pairs(reference) do n = n + 1 end return n end)() }
 end
 
+-- 13. find_soil: where the FARM can go, measured - the farm rung needs soil floors, and
+-- `/survey` reports tile CLASSES (floor/rock/ramp/...), never the soil property.
+-- Soil is a MATERIAL fact: DF's farm plot wants matinfo is_soil (MUDPYROCLASTIC/PYROPLASTIC).
+-- Blocks are read from df.global.world.map.all (my first probe iterated `df.global.world.map`
+-- and measured blocks=0 - that is the struct's method table, not the block list: tool_missing #28).
+function OPS.find_soil(args)
+  local e0 = tonumber(args and args.elev0) or 0
+  local e1 = tonumber(args and args.elev1) or e0
+  local step = math.max(4, tonumber(args and args.cell) or 16)
+  local zmin, zmax = e0 + M.GAME_Z_OFFSET, e1 + M.GAME_Z_OFFSET
+  local cells, total, mats = {}, 0, {}
+  -- The block accessor on this build is `map:find(x, y, z)` (measured: `world.T_map.all:
+  -- not found`), so the scan walks the block GRID over the requested z band only.
+  local map = df.global.world.map
+  local bx_max, by_max = 0, 0
+  pcall(function() bx_max = math.floor((map.x_dim or 0) / 16) - 1 end)
+  pcall(function() by_max = math.floor((map.y_dim or 0) / 16) - 1 end)
+  local blocks = 0
+  for bz = zmin, zmax do
+   for bx = 0, bx_max do
+    for by = 0, by_max do
+      local b = nil
+      pcall(function() b = map:find(bx * 16, by * 16, bz) end)
+      if b == nil then goto continue end
+      blocks = blocks + 1
+      local z = bz
+      local base_x, base_y = bx * 16, by * 16
+      for i = 0, 255 do
+        local mat = tonumber(b.matgrid[i]) or -1
+        if mat >= 0 then
+          local hid = false
+          pcall(function() hid = (b.hidden[i] == true) end)
+          if not hid then
+            local soil = false
+            local mname = "?"
+            pcall(function()
+              local mi = dfhack.matinfo.find(mat)
+              if mi and mi.flags then
+                soil = (mi.flags.MUDPYROCLASTIC == true) or (mi.flags.PYROPLASTIC == true)
+              end
+              if mi and mi.name then mname = tostring(mi.name) end
+            end)
+            if soil then
+              local x, y = base_x + (i % 16), base_y + (i // 16)
+              local elev = z - M.GAME_Z_OFFSET
+              mats[mname] = (mats[mname] or 0) + 1
+              total = total + 1
+              local key = elev .. ":" .. (x // step) .. ":" .. (y // step)
+              local c = cells[key]
+              if c == nil then
+                c = { elev = elev, x0 = (x // step) * step, y0 = (y // step) * step,
+                      x1 = (x // step) * step + step - 1, y1 = (y // step) * step + step - 1,
+                      soil_tiles = 0, sample = {x, y}, materials = {} }
+                cells[key] = c
+              end
+              c.soil_tiles = c.soil_tiles + 1
+              c.materials[mname] = (c.materials[mname] or 0) + 1
+            end
+          end
+        end
+      end
+      ::continue::
+    end
+   end
+  end
+  local list = {}
+  for _,c in pairs(cells) do
+    local mats = {}
+    for k,v in pairs(c.materials) do mats[#mats+1] = { material = k, tiles = v } end
+    table.sort(mats, function(a,b) return a.tiles > b.tiles end)
+    c.materials = mats
+    list[#list+1] = c
+  end
+  table.sort(list, function(a,b) return a.soil_tiles > b.soil_tiles end)
+  local out_mats = {}
+  for k,v in pairs(mats) do out_mats[#out_mats+1] = { material = k, tiles = v } end
+  table.sort(out_mats, function(a,b) return a.tiles > b.tiles end)
+  return { elev0 = e0, elev1 = e1, cell = step, blocks_scanned = blocks,
+           soil_tiles = total, clusters = list, materials = out_mats }
+end
+
+-- 14. unit_labors: the read-back for labor writes. `/set-unit-labors` validates names against
+-- the RPC labor list and reports `applied` - that is validation, not the game's state. Measured
+-- 2026-11-22: the player said "you only have one miner" while my write claimed applied=2; the
+-- game's own fields (`u.status.labors`, field names like MINE, not MINING - `labors.MINING`
+-- does not exist and a pcall probe reads it as a silent false) are the only authority.
+function OPS.unit_labors(args)
+  want = {}
+  local ids = args and args.unit_ids
+  if type(ids) == "table" then
+    for _,id in ipairs(ids) do want[tonumber(id)] = true end
+  end
+  local filter = args and args.labor and tostring(args.labor):upper() or nil
+  local units = {}
+  for _,u in ipairs(df.global.world.units.active) do
+    local cit, alive = false, false
+    pcall(function() cit = dfhack.units.isCitizen(u) end)
+    pcall(function() alive = dfhack.units.isAlive(u) end)
+    if cit and alive and (next(want) == nil or want[tonumber(u.id)] == true) then
+      local on = {}
+      pcall(function()
+        for k,v in pairs(u.status.labors) do
+          if v == true then
+            if filter == nil or tostring(k):upper() == filter then on[#on+1] = tostring(k) end
+          end
+        end
+      end)
+      table.sort(on)
+      local nm = "?"
+      pcall(function() nm = tostring(u.name.first_name) end)
+      units[#units+1] = { unit_id = tonumber(u.id), name = nm, labors_on = on,
+                          labor_count = #on, has_filter = (filter ~= nil and want[tonumber(u.id)] == true) }
+    end
+  end
+  table.sort(units, function(a,b) return a.unit_id < b.unit_id end)
+  local with = 0
+  if filter ~= nil then
+    for _,x in ipairs(units) do if #x.labor_count > 0 then with = with + 1 end end
+  end
+  return { filter = filter, citizens = #units, with_labor = with, units = units }
+end
+
 function M.dispatch(op, raw_args)
   local fn = OPS[tostring(op)]
   if not fn then

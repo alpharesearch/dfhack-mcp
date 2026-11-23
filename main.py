@@ -2383,6 +2383,42 @@ class PileArraysRequest(BaseModel):
     building_id: int | None = Field(None, description="Limit to one pile id")
 
 
+@app.get("/unit-labors", operation_id="unit_labors")
+async def unit_labors(unit_ids: str = Query("", description="comma-separated unit ids to restrict to (default: all citizens)"),
+                      labor: str = Query(None, description="count only this labor, e.g. MINE, CUTWOOD, BREWER")):
+    """Which labors the citizens ACTUALLY hold - the read-back labor writes need.
+
+    `MINE` is the field name on this build; `MINING` is not (`u.status.labors.MINING` does not
+    exist, and a pcall probe reads it as a silent false - my own probe did exactly that and
+    reported 0 miners). The plugin's `miners` metric is profession-based, so it can legitimately
+    disagree with the labor census: professions label the labor screen, labors are what dig.
+    """
+    ids = [int(x) for x in str(unit_ids).split(",") if x.strip().isdigit()]
+    try:
+        res = await LO.unit_labors(ids or None, labor)
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/find-soil", operation_id="find_soil")
+async def find_soil(elev0: int = Query(...), elev1: int = Query(...),
+                    cell: int = Query(16, ge=4, le=64)):
+    """Where the FARM can legally go: soil floors, measured by material, clustered.
+
+    The quickstart's farm rung is "3x3 plot in a 5x5 soil room", and no existing tool answers
+    where soil is: `/survey` counts tile CLASSES (floor/rock/ramp/open/hidden), and soil is a
+    MATERIAL property. This is the census that closes tool_missing #28 - it reads the map blocks
+    and reports soil clusters per `cell` with the material names, so a farm site is chosen from
+    coordinates, and a wrong soil predicate shows up as an empty answer with the materials it saw.
+    """
+    try:
+        res = await LO.find_soil(int(elev0), int(elev1), int(cell))
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/pile-arrays", operation_id="pile_arrays")
 async def pile_arrays(request: PileArraysRequest):
     """Pile health for the crash you get by clicking Custom: enabled category flags over EMPTY material arrays.
@@ -2841,7 +2877,19 @@ async def set_unit_labors(request: SetUnitLaborsRequest):
         return {"success": False, "error": str(e), "applied": 0,
                 "hint": "labor ids come from labor_list; unit ids from get_unit_list"}
     world._state.pop("units_gen", None)          # labors changed: drop the cached rollup
-    return {"applied": len(changes), "unknown": bad, "success": True}
+    # Read-back: `applied` validates NAMES against the RPC labor list; the game's own fields are
+    # the state. Measured 2026-11-22: a write reported applied=2, the player's labor screen showed
+    # one Miner (profession, not labor), and the game had MINE on for all seven citizens.
+    touched = sorted({int(c.unit_id) for c in changes})
+    verified, note = None, "applied counts validated labor names, not the game's labor state"
+    try:
+        vr = await LO.unit_labors(touched, None)
+        verified = [{"unit_id": u.get("unit_id"), "name": u.get("name"),
+                     "labors_on": u.get("labor_count")} for u in vr.get("units", [])]
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        verified, note = None, f"labors read-back failed: {e}"
+    return {"applied": len(changes), "unknown": bad, "success": True,
+            "read_back": verified, "note": note}
 
 @app.post("/work-order", operation_id="work_order")
 async def work_order(request: WorkOrderRequest):

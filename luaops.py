@@ -1535,6 +1535,32 @@ async def gather_and_items(action: str = "gather_plants",
     return await call_module("gather_and_items", payload)
 
 
+async def unit_labors(unit_ids: list[int] | None = None, labor: str | None = None) -> dict:
+    """Read the labors the GAME holds per citizen - the read-back for labor writes.
+
+    Field names are DFHack's (`MINE`, not `MINING`); `u.status.labors.MINING` does not exist on
+    this build and a `pcall` probe reads it as a silent false, which is how a labor census from
+    raw Lua can lie to you.
+    """
+    payload: dict = {}
+    if unit_ids:
+        payload["unit_ids"] = [int(i) for i in unit_ids]
+    if labor:
+        payload["labor"] = str(labor)
+    return await call_module("unit_labors", payload)
+
+
+async def find_soil(elev0: int, elev1: int, cell: int = 16) -> dict:
+    """Soil census by material (farm plots need soil floors; `/survey` reports classes only).
+
+    Reads `df.global.world.map.all` (NOT `df.global.world.map` - that is the struct's method
+    table and measured `blocks=0`), tests each block tile's material for the soil flags
+    (MUDPYROCLASTIC / PYROPLASTIC, what DF's farm-plot check uses), and clusters the hits per
+    `cell`, naming the materials so a wrong predicate is visible in the answer.
+    """
+    return await call_module("find_soil", {"elev0": int(elev0), "elev1": int(elev1), "cell": int(cell)})
+
+
 async def pile_arrays(action: str = "check",
                        building_id: int | None = None) -> dict:
     """Check/fix the per-category material arrays the game's Custom-settings UI walks.
