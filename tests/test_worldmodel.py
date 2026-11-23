@@ -373,7 +373,7 @@ def test_the_soil_census_is_a_python_tool_that_reports_what_it_scanned():
     because 0 from a scan of nothing is not a map fact."""
     main = pathlib.Path("main.py").read_text()
     i = main.index('@app.get("/find-soil"')
-    seg = main[i:main.index('@app.get("/unit-labors"', i)]
+    seg = main[i:main.index('@app.post("/pile-arrays"', i)]
     assert "world.cache.blocks(" in seg, "the RPC block cache, not a Lua map walk"
     assert "GetTiletypeList" in seg, "the game's own tiletype list defines soil"
     assert "blocks_scanned" in seg, "the census reports how much it actually scanned"
