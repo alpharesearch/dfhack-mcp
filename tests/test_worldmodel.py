@@ -395,6 +395,8 @@ def test_the_access_skill_is_generic_and_carries_the_proofs():
                    "transitions", "already_designated"):
         assert needed in skill, f"the skill names {needed}"
     assert "only holder of a load-bearing craft" in skill, "and the craft rule the player taught me"
+    assert "2x2" in skill and "3x3" in skill and "Do not sink a 1-wide shaft" in skill, \
+        "and the staircase width rule the player taught me"
 
 
 def test_the_building_census_exists_because_the_artery_had_no_coordinates():
