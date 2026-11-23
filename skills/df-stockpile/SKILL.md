@@ -209,3 +209,10 @@ Three lessons, each earned the hard way:
 3. **A size of 0 is not automatically a defect** (`wood.mats`). `/pile-arrays check` is therefore
    reference-anchored: a field is under-allocated only when the game's own pile has a non-zero size
    there.
+
+## §18 - verified: the player clicked Custom on the tool-made corpses+refuse pile and it did not crash
+
+Same pile, same screen, same operation that had crashed twice (with sizes 0, then with my 1-slot
+fallback). With the measured 1327/113 arrays allocated in the create call, the screen opens. The
+rule this leaves behind: **allocate to the game's own measured lengths, and verify by having the
+player open the screen that crashes** - a passing `check` is necessary, not sufficient.
