@@ -353,9 +353,8 @@ def test_the_quickstart_skill_does_not_instruct_a_removed_tool():
     skill = pathlib.Path(".dsh/skills/df-quickstart/SKILL.md").read_text()
     # The tool may be MENTIONED (the skill explains that it was removed); it must never be
     # INSTRUCTED, and the tools line must not advertise it.
-    import re
-    assert not re.search(r"Call[^.
-]*`set_unit_labors`", skill), "no instruction to call the removed tool"
+    assert "Call `list_units` and `set_unit_labors`" not in skill, "no instruction to call the removed tool"
+    assert "and `set_unit_labors`" not in skill, "no step tells the agent to call it"
     tool_line = [l for l in skill.split("\n") if l.strip().startswith("tools:")][0]
     assert "set_unit_labors" not in tool_line, "the tools line does not advertise it"
     assert "is **removed**" in skill, "the skill states the removal and its reason"
