@@ -53,3 +53,5 @@ MCP bundles are configuration-only and supply **tools, resources and literal ser
 instructions** - they cannot supply skills. Skills come from skill providers registered on
 `ctx.skills`; the registry merges every provider's catalog. So this library is the right
 place for play knowledge, and the MCP server stays the instrument panel.
+
+`df-access` - the access-first build order (staircase, connection tunnel, room), work-detail staffing, and the reads that prove a dig is real. Generic: no coordinates, any map.

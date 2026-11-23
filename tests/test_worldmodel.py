@@ -382,6 +382,21 @@ def test_reachability_is_measured_over_a_band_that_covers_the_target():
     assert "reported the forest unreachable" in log, "and the artifact is recorded where the next reader looks"
 
 
+def test_the_access_skill_is_generic_and_carries_the_proofs():
+    """The player demonstrated the staircase-connection-room order live and asked for it as a skill
+    that works on ANY map: no hard-coded coordinates, and every claim paired with the read that
+    proves it (dug movement, transitions, labor census, live pile accepts, self-checked seed)."""
+    skill = pathlib.Path("skills/df-access/SKILL.md").read_text()
+    assert "name: df-access" in skill and "whenToUse:" in skill, "frontmatter so the skill loads as a skill"
+    import re
+    assert not re.search(r"\bx\s?=\s?\d{2,}\b", skill), "no hard-coded coordinates in a generic skill"
+    for needed in ("DOWN_STAIR_DIG", "UP_DOWN_STAIR_DIG", "UP_STAIR_DIG", "middle-first",
+                   "work_details", "unit_labors", "only-selected", "sorted", "setAutomaticProfessions",
+                   "transitions", "already_designated"):
+        assert needed in skill, f"the skill names {needed}"
+    assert "only holder of a load-bearing craft" in skill, "and the craft rule the player taught me"
+
+
 def test_the_building_census_exists_because_the_artery_had_no_coordinates():
     """The game said "An artery has been opened by the attack!" and the server could not say WHERE:
     `/building-status` needs an id you already hold, `/list-buildings` and `/buildings` returned 404,
