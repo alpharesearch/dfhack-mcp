@@ -362,6 +362,37 @@ print("UA counted=" .. tostring(n))
 """
 
 
+async def order_set_workshop(order_id: int, workshop_id: int) -> dict:
+    """Give a manager work order its material and workshop so a dwarf can actually run it.
+
+    Measured 2026-11-22 (tool_missing #50): `workorder`-created orders sit at
+    `active: false, validated: false, workshop_id: -1` - "Make unknown material door" - because no
+    material is attached. The orders live at `df.global.world.manager_orders.all` (fields enumerated
+    live: `mat_type, material_category, item_type, workshop_id, status, frequency, max_workshops, ...`),
+    so the material and workshop are writable fields. Setting them is the gap between an order that
+    exists and work that happens.
+    """
+    lua = f'''
+local l = df.global.world.manager_orders.all
+local target = nil
+for _, o in ipairs(l) do
+  if tonumber(o.id) == {int(order_id)} then target = o break end
+end
+if target == nil then print("FAIL order {int(order_id)} not found (orders: "..tostring(#l)..")") return end
+local before = "cat="..tostring(target.material_category).." mat="..tostring(target.mat_type).." ws="..tostring(target.workshop_id)
+
+{"" if workshop_id is None else "pcall(function() target.workshop_id = {int(workshop_id)} end)"}
+local after = "cat="..tostring(target.material_category).." mat="..tostring(target.mat_type).." ws="..tostring(target.workshop_id)
+print("OK before: "..before.." | after: "..after)
+'''.strip()
+    out = await _lua(lua, settle=0.8)
+    line = _one(out)
+    if line.startswith("FAIL"):
+        raise LuaOpError(line)
+    return {"order_id": int(order_id), "reply": line,
+            "note": "material_category is an enum index; the reply shows exactly what the game stored"}
+
+
 async def unit_activity(unit_ids: list[int] | None = None, limit: int = 20) -> dict:
     """What each dwarf is DOING - position, job count and job names, move target, key labours.
 
