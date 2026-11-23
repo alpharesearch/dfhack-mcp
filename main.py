@@ -2465,14 +2465,26 @@ async def list_buildings(elev0: int = Query(...), elev1: int = Query(...),
     (the layer builder uses exactly these), so the census is a block walk, not new plumbing.
     """
     from worldmodel import GAME_Z_OFFSET
-    gen = await world._gen()
-    dec = await world._dec(gen)
+    # Guard like the other census tools (measured 2026-11-22: the first call landed while the
+    # game was re-handshaking after coming back online - GetMapInfo raised CR_FAILURE and the
+    # endpoint answered HTTP 500. A failed read must answer success:false with the error text.)
+    try:
+        gen = await world._gen()
+        dec = await world._dec(gen)
+    except (DFHackError, DFHackTransportError, Exception) as e:
+        return {"success": False, "error": f"map read failed: {e}", "blocks_scanned": 0,
+                "hint": "the game answers CR_FAILURE while it is re-handshaking after a reload; retry once it is steady"}
     levels = range(int(elev0), int(elev0) + min(int(max_levels), 12))
     found: dict[tuple, dict] = {}
     blocks_scanned = 0
     for e in levels:
         z = e + GAME_Z_OFFSET
-        blocks = await world.cache.blocks(z, z + 1, gen)      # max_z is EXCLUSIVE (measured)
+        try:
+            blocks = await world.cache.blocks(z, z + 1, gen)  # max_z is EXCLUSIVE (measured)
+        except (DFHackError, DFHackTransportError) as e:
+            return {"success": False, "error": f"block read failed at elev {e}: {e}",
+                    "elev0": int(elev0), "blocks_scanned": blocks_scanned,
+                    "hint": "partial scan - the census reports what it read, never a fake empty fort"}
         for b in blocks:
             if int(b.map_z) != z:
                 continue
