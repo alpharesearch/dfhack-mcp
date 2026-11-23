@@ -1450,3 +1450,37 @@ async def gather_and_items(action: str = "gather_plants",
         payload["item_filter"] = str(item_filter)
     return await call_module("gather_and_items", payload)
 
+
+async def trade_depot(action: str = "status",
+                      building_id: int | None = None,
+                      item_ids: list[int] | None = None,
+                      item_filter: str | None = None,
+                      min_value: int = 0,
+                      max_items: int = 25,
+                      trader_requested: bool | None = None,
+                      anyone_can_trade: bool | None = None,
+                      side: str = "fortress",
+                      selected: bool = True) -> dict:
+    """Inspect Trade Depot status, list tradeable goods/bins, mark/unmark goods for hauling
+    to the depot (`dfhack.items.markForTrade`), summon the Broker, and inspect/select items
+    on the barter screen via `dfhack_mcp.lua`."""
+    payload: dict = {
+        "action": str(action),
+        "min_value": int(min_value),
+        "max_items": int(max_items),
+        "side": str(side),
+        "selected": bool(selected),
+    }
+    if building_id is not None:
+        payload["building_id"] = int(building_id)
+    if item_ids is not None:
+        payload["item_ids"] = [int(i) for i in item_ids]
+    if item_filter is not None:
+        payload["item_filter"] = str(item_filter)
+    if trader_requested is not None:
+        payload["trader_requested"] = bool(trader_requested)
+    if anyone_can_trade is not None:
+        payload["anyone_can_trade"] = bool(anyone_can_trade)
+    return await call_module("trade_depot", payload)
+
+

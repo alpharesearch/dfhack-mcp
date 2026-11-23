@@ -279,6 +279,7 @@ def test_post_endpoints_use_typed_pydantic_models_and_fog_dig_helpers():
         "ConfigureStockpileRequest", "CreateZoneRequest", "SetUnitLaborsRequest",
         "WorkOrderRequest", "ConfigureFarmplotRequest", "AssignZoneOwnerRequest",
         "AssignPastureRequest", "ManageNoblesRequest", "GatherAndItemsRequest",
+        "TradeDepotRequest",
     ):
         assert f"class {model_name}(BaseModel):" in main_src, f"missing Pydantic schema {model_name}"
 
@@ -308,6 +309,7 @@ def test_server_side_lua_module_bridge_and_json_dispatch():
                      "function OPS.assign_zone_owner(", "function OPS.assign_pasture(",
                      "function OPS.manage_nobles(", "function OPS.manage_work_orders(",
                      "function OPS.alerts_and_wellbeing(", "function OPS.gather_and_items(",
+                     "function OPS.trade_depot(",
                      "MCP_JSON|"):
         assert required in lua_src, f"dfhack_mcp.lua missing {required}"
 
@@ -337,6 +339,8 @@ def test_server_side_lua_module_bridge_and_json_dispatch():
             return 'MCP_JSON|{"ok":true,"op":"alerts_and_wellbeing","result":{"alerts_count":1,"alerts":[{"kind":"unpastured_grazers","severity":"warning"}],"wellbeing":{"citizens":7,"thirsty":0,"hungry":0}}}'
         if '"gather_and_items"' in expr:
             return 'MCP_JSON|{"ok":true,"op":"gather_and_items","result":{"action":"protect_seeds","ban_seeds_output":"banned","ban_brew_output":"banned"}}'
+        if '"trade_depot"' in expr:
+            return 'MCP_JSON|{"ok":true,"op":"trade_depot","result":{"action":"status","building_id":1,"complete":true,"trader_requested":false,"goods_at_depot_count":0,"pending_haul_count":0,"tradeable_candidates_total":12}}'
         raise AssertionError(f"unexpected lua call: {expr[:120]}")
 
     real_lua = LO._lua
@@ -362,6 +366,8 @@ def test_server_side_lua_module_bridge_and_json_dispatch():
         assert al["alerts_count"] == 1 and al["wellbeing"]["citizens"] == 7
         gi = asyncio.run(LO.gather_and_items(action="protect_seeds"))
         assert gi["action"] == "protect_seeds"
+        td = asyncio.run(LO.trade_depot(action="status"))
+        assert td["building_id"] == 1 and td["complete"] is True
         try:
             asyncio.run(LO.configure_farmplot(building_id=19, crop="NO_SUCH_PLANT"))
             raise AssertionError("expected LuaOpError on unknown plant")

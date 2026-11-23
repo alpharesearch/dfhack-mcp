@@ -99,7 +99,7 @@ Action tools ride the same idea: designation (`send_dig_command` with `box`, `bo
 `middle_first`, and multi-z `stair_shaft` helpers), quickfort blueprints
 (`apply_blueprint`), buildings & zones (`place_building`, `create_stockpile`,
 `configure_stockpile`, `configure_farmplot`, `create_zone`, `assign_zone_owner`,
-`assign_pasture`, `remove_building`, `remove_zone` — all protected by pre-flight footprint
+`assign_pasture`, `trade_depot`, `remove_building`, `remove_zone` — all protected by pre-flight footprint
 ground checks and duplicate-footprint idempotency), nobles (`manage_nobles` with
 `list` / `assign` / `auto_assign` + bookkeeper precision), surface gathering & item flags
 (`gather_and_items` for `gather_plants`, `dump`/`undump`/`forbid`/`reclaim`, and

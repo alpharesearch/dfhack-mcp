@@ -1106,6 +1106,324 @@ function OPS.gather_and_items(args)
   end
 end
 
+-- 11. trade_depot: inspect depot, list tradeable goods, mark/unmark goods for hauling to depot,
+-- request Broker, and inspect/select items on the barter screen when open.
+function OPS.trade_depot(args)
+  local action = (args and args.action and tostring(args.action):lower()) or "status"
+  local bid = args and tonumber(args.building_id) or nil
+  local depot = nil
+  for _, td in ipairs(df.global.world.buildings.other.TRADE_DEPOT) do
+    if bid == nil or td.id == bid then
+      depot = td
+      break
+    end
+  end
+  if depot == nil then
+    error("no Trade Depot found" .. (bid and (" with building_id " .. tostring(bid)) or "; place one first with place_building(building='TradeDepot', w=5, h=5)"))
+  end
+
+  local perm_items = {}
+  local depot_trade_goods = {}
+  pcall(function()
+    for _, ci in ipairs(depot.contained_items) do
+      if ci.item ~= nil then
+        local iid = tonumber(ci.item.id)
+        local mode = tonumber(ci.use_mode) or 0
+        if mode == 2 then
+          perm_items[iid] = true
+        else
+          local val = 0
+          pcall(function() val = tonumber(dfhack.items.getValue(ci.item)) or 0 end)
+          local desc = ""
+          pcall(function() desc = tostring(dfhack.items.getDescription(ci.item, 0) or "") end)
+          depot_trade_goods[#depot_trade_goods + 1] = {
+            item_id = iid,
+            type = tostring(df.item_type[ci.item:getType()] or ci.item:getType()),
+            description = desc,
+            value = val,
+          }
+        end
+      end
+    end
+  end)
+
+  local function is_pending_depot_haul(it)
+    local pending, job_obj = false, nil
+    pcall(function()
+      if it.flags.in_job then
+        local sref = dfhack.items.getSpecificRef(it, df.specific_ref_type.JOB)
+        if sref and sref.data and sref.data.job and sref.data.job.job_type == df.job_type.BringItemToDepot then
+          pending = true
+          job_obj = sref.data.job
+        end
+      end
+    end)
+    return pending, job_obj
+  end
+
+  local function is_candidate_trade_good(it)
+    if perm_items[tonumber(it.id)] then return false end
+    if it.flags.in_building then return false end
+    if it.flags.in_inventory then return false end
+    local ok_tr, can_tr = pcall(function() return dfhack.items.canTradeWithContents(it) end)
+    if not (ok_tr and can_tr) then return false end
+    return true
+  end
+
+  local want_ids = {}
+  local has_explicit_ids = false
+  if args and type(args.item_ids) == "table" and #args.item_ids > 0 then
+    has_explicit_ids = true
+    for _, id in ipairs(args.item_ids) do
+      if tonumber(id) then want_ids[tonumber(id)] = true end
+    end
+  end
+  local filter = args and args.item_filter and tostring(args.item_filter):lower() or nil
+  local min_value = (args and args.min_value and tonumber(args.min_value)) or 0
+  local max_items = (args and args.max_items and tonumber(args.max_items)) or 25
+
+  local marked_now = {}
+  local unmarked_now = {}
+
+  if action == "request_broker" then
+    local req_val = true
+    if args and args.trader_requested ~= nil then req_val = (args.trader_requested == true) end
+    depot.trade_flags.trader_requested = req_val
+    if args and args.anyone_can_trade ~= nil then
+      depot.trade_flags.anyone_can_trade = (args.anyone_can_trade == true)
+    end
+  elseif action == "mark_goods" then
+    for _, it in ipairs(df.global.world.items.other.IN_PLAY) do
+      if #marked_now >= max_items then break end
+      local iid = tonumber(it.id)
+      local pend, _ = is_pending_depot_haul(it)
+      if (not pend) and is_candidate_trade_good(it) then
+        local desc = ""
+        pcall(function() desc = tostring(dfhack.items.getDescription(it, 0) or "") end)
+        local itype = tostring(df.item_type[it:getType()] or it:getType())
+        local val = 0
+        pcall(function() val = tonumber(dfhack.items.getValue(it)) or 0 end)
+        local match = false
+        if has_explicit_ids then
+          match = (want_ids[iid] == true)
+        elseif val >= min_value then
+          if filter == nil then
+            match = true
+          else
+            match = (desc:lower():find(filter, 1, true) ~= nil) or (itype:lower():find(filter, 1, true) ~= nil)
+          end
+        end
+        if match then
+          local ok_m, res_m = pcall(function() return dfhack.items.markForTrade(it, depot) end)
+          if ok_m and res_m ~= false then
+            marked_now[#marked_now + 1] = {
+              item_id = iid,
+              type = itype,
+              description = desc,
+              value = val,
+            }
+          end
+        end
+      end
+    end
+  elseif action == "unmark_goods" then
+    for _, it in ipairs(df.global.world.items.other.IN_PLAY) do
+      local iid = tonumber(it.id)
+      local desc = ""
+      pcall(function() desc = tostring(dfhack.items.getDescription(it, 0) or "") end)
+      local itype = tostring(df.item_type[it:getType()] or it:getType())
+      local match = true
+      if has_explicit_ids then
+        match = (want_ids[iid] == true)
+      elseif filter ~= nil then
+        match = (desc:lower():find(filter, 1, true) ~= nil) or (itype:lower():find(filter, 1, true) ~= nil)
+      end
+      if match then
+        local pend, job_obj = is_pending_depot_haul(it)
+        if pend and job_obj ~= nil then
+          local ok_rj = pcall(function() dfhack.job.removeJob(job_obj) end)
+          if ok_rj then
+            unmarked_now[#unmarked_now + 1] = { item_id = iid, description = desc, removed_from = "haul_queue" }
+          end
+        elseif (not perm_items[iid]) and it.flags.in_building then
+          local holder = nil
+          pcall(function() holder = dfhack.items.getHolderBuilding(it) end)
+          if holder == depot then
+            it.flags.in_building = false
+            unmarked_now[#unmarked_now + 1] = { item_id = iid, description = desc, removed_from = "depot" }
+          end
+        end
+      end
+    end
+  elseif action == "barter_status" or action == "barter_select" then
+    local tr = df.global.game.main_interface.trade
+    local is_open = (tr ~= nil and tr.open == true)
+    if not is_open then
+      return {
+        action = action,
+        building_id = tonumber(depot.id),
+        trade_screen_open = false,
+        note = "The barter screen (df.global.game.main_interface.trade) is not currently open. A merchant caravan must be at the Trade Depot and the Broker must open the Trade screen first.",
+      }
+    end
+    local side_idx = (args and args.side == "merchant") and 0 or 1
+    local select_val = true
+    if args and args.selected ~= nil then select_val = (args.selected == true) end
+    local toggled = {}
+    if action == "barter_select" then
+      local goods = tr.good[side_idx]
+      local flags = tr.goodflag[side_idx]
+      for i = 0, #goods - 1 do
+        local it = goods[i]
+        local gf = flags[i]
+        local iid = tonumber(it.id)
+        local desc = ""
+        pcall(function() desc = tostring(dfhack.items.getDescription(it, 0) or "") end)
+        local match = false
+        if has_explicit_ids then
+          match = (want_ids[iid] == true)
+        elseif filter ~= nil then
+          match = (desc:lower():find(filter, 1, true) ~= nil)
+        end
+        if match then
+          gf.selected = select_val
+          toggled[#toggled + 1] = { item_id = iid, description = desc, selected = select_val }
+        end
+      end
+    end
+    local function summarize_side(s_idx)
+      local list = {}
+      local total_selected_val = 0
+      pcall(function()
+        local goods = tr.good[s_idx]
+        local flags = tr.goodflag[s_idx]
+        for i = 0, #goods - 1 do
+          local it = goods[i]
+          local gf = flags[i]
+          local val = 0
+          pcall(function() val = tonumber(dfhack.items.getValue(it)) or 0 end)
+          local desc = ""
+          pcall(function() desc = tostring(dfhack.items.getDescription(it, 0) or "") end)
+          if gf.selected then total_selected_val = total_selected_val + val end
+          if #list < 40 or gf.selected then
+            list[#list + 1] = {
+              index = i,
+              item_id = tonumber(it.id),
+              description = desc,
+              value = val,
+              selected = (gf.selected == true),
+              contained = (gf.contained == true),
+            }
+          end
+        end
+      end)
+      return { items = list, selected_value = total_selected_val }
+    end
+    return {
+      action = action,
+      building_id = tonumber(depot.id),
+      trade_screen_open = true,
+      still_unloading = (tonumber(tr.stillunloading) or 0) ~= 0,
+      have_talker = (tonumber(tr.havetalker) or 0) ~= 0,
+      toggled = toggled,
+      merchant_side = summarize_side(0),
+      fortress_side = summarize_side(1),
+    }
+  elseif action ~= "status" then
+    error("unknown trade_depot action '" .. tostring(action) .. "' (expected status, request_broker, mark_goods, unmark_goods, barter_status, or barter_select)")
+  end
+
+  -- Collect pending BringItemToDepot jobs and top tradeable candidate items
+  local pending_haul = {}
+  local candidates = {}
+  for _, it in ipairs(df.global.world.items.other.IN_PLAY) do
+    local pend, _ = is_pending_depot_haul(it)
+    if pend then
+      local val = 0
+      pcall(function() val = tonumber(dfhack.items.getValue(it)) or 0 end)
+      local desc = ""
+      pcall(function() desc = tostring(dfhack.items.getDescription(it, 0) or "") end)
+      pending_haul[#pending_haul + 1] = {
+        item_id = tonumber(it.id),
+        type = tostring(df.item_type[it:getType()] or it:getType()),
+        description = desc,
+        value = val,
+      }
+    elseif is_candidate_trade_good(it) then
+      local desc = ""
+      pcall(function() desc = tostring(dfhack.items.getDescription(it, 0) or "") end)
+      local itype = tostring(df.item_type[it:getType()] or it:getType())
+      local val = 0
+      pcall(function() val = tonumber(dfhack.items.getValue(it)) or 0 end)
+      if val >= min_value and (filter == nil or desc:lower():find(filter, 1, true) ~= nil or itype:lower():find(filter, 1, true) ~= nil) then
+        candidates[#candidates + 1] = {
+          item_id = tonumber(it.id),
+          type = itype,
+          description = desc,
+          value = val,
+          is_bin = df.item_binst:is_instance(it),
+        }
+      end
+    end
+  end
+  table.sort(candidates, function(a, b)
+    if a.value == b.value then return a.item_id < b.item_id end
+    return a.value > b.value
+  end)
+  local top_candidates = {}
+  for i = 1, math.min(#candidates, max_items) do
+    top_candidates[i] = candidates[i]
+  end
+
+  local caravans = {}
+  pcall(function()
+    for idx, c in ipairs(df.global.plotinfo.caravans) do
+      local tstate = tonumber(c.trade_state) or 0
+      local time_rem = tonumber(c.time_remaining) or 0
+      if tstate > 0 or time_rem > 0 then
+        caravans[#caravans + 1] = {
+          index = idx,
+          trade_state = tstate,
+          trade_state_name = tostring(df.caravan_state.T_trade_state[tstate] or tstate),
+          time_remaining = time_rem,
+        }
+      end
+    end
+  end)
+
+  local stage, max_stage = 0, 0
+  pcall(function() stage = depot:getBuildStage() end)
+  pcall(function() max_stage = depot:getMaxBuildStage() end)
+
+  return {
+    action = action,
+    building_id = tonumber(depot.id),
+    x0 = tonumber(depot.x1),
+    x1 = tonumber(depot.x2),
+    y0 = tonumber(depot.y1),
+    y1 = tonumber(depot.y2),
+    elev = tonumber(depot.z) - M.GAME_Z_OFFSET,
+    build_stage = stage,
+    max_build_stage = max_stage,
+    complete = (max_stage == 0 or stage >= max_stage),
+    accessible = (depot.accessible == true),
+    trader_requested = (depot.trade_flags.trader_requested == true),
+    anyone_can_trade = (depot.trade_flags.anyone_can_trade == true),
+    caravans_present = #caravans,
+    caravans = caravans,
+    marked_now_count = #marked_now,
+    marked_now = marked_now,
+    unmarked_now_count = #unmarked_now,
+    unmarked_now = unmarked_now,
+    goods_at_depot_count = #depot_trade_goods,
+    goods_at_depot = depot_trade_goods,
+    pending_haul_count = #pending_haul,
+    pending_haul = pending_haul,
+    tradeable_candidates_total = #candidates,
+    tradeable_candidates = top_candidates,
+  }
+end
+
 -- ---------------------------------------------------------------------------
 -- Dispatcher: prints a single MCP_JSON|{...} line
 -- ---------------------------------------------------------------------------

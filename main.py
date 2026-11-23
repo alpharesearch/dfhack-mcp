@@ -411,6 +411,20 @@ class GatherAndItemsRequest(BaseModel):
     ban_brew: bool = Field(True, description="For action='protect_seeds': also ban cooking brewable plants in addition to seeds (default True)")
 
 
+class TradeDepotRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    action: str = Field("status", description="One of 'status' (inspect depot, caravans, goods at depot, pending haul queue, and top tradeable fortress items/bins), 'request_broker' (summon/dismiss Broker at depot), 'mark_goods' (queue items/bins to be hauled to depot via dfhack.items.markForTrade), 'unmark_goods' (cancel pending haul jobs or unload goods from depot), 'barter_status' (inspect open barter screen), or 'barter_select' (select/deselect items on open barter screen)")
+    building_id: int | None = Field(None, description="Trade Depot building ID (omit to target the first Trade Depot)")
+    item_ids: list[int] | None = Field(None, description="Optional explicit list of item/bin IDs to mark, unmark, or select in barter")
+    item_filter: str | None = Field(None, description="Optional item description or type substring filter (e.g. 'bin', 'mug', 'craft', 'amulet', 'crown')")
+    min_value: int = Field(0, ge=0, description="Minimum item/bin value filter when listing or marking trade goods")
+    max_items: int = Field(25, ge=1, le=200, description="Maximum number of items to list or mark in one call")
+    trader_requested: bool | None = Field(None, description="For action='request_broker': True to summon Broker to depot, False to dismiss")
+    anyone_can_trade: bool | None = Field(None, description="For action='request_broker': True to allow any dwarf to trade at the depot, False for Broker only")
+    side: str = Field("fortress", description="For action='barter_select': 'fortress' (your depot goods) or 'merchant' (caravan goods)")
+    selected: bool = Field(True, description="For action='barter_select': True to select matching items for trade, False to deselect")
+
+
 class LaborChange(BaseModel):
     model_config = ConfigDict(extra="allow")
     unit_id: int = Field(..., description="Unit ID of the citizen")
@@ -2975,6 +2989,33 @@ async def gather_and_items(request: GatherAndItemsRequest):
             elev=body.get("elev"),
             item_filter=body.get("item_filter"),
             ban_brew=bool(body.get("ban_brew", True)),
+        )
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/trade-depot", operation_id="trade_depot")
+async def trade_depot(request: TradeDepotRequest):
+    """Manage the Trade Depot, caravan goods hauling, Broker attendance, and barter selection:
+    - `action='status'` (default): inspect Trade Depot state (`accessible`, `trader_requested`, `anyone_can_trade`), active caravans, goods already unloaded at the depot, pending `BringItemToDepot` haul jobs, and top tradeable fortress items/bins by value.
+    - `action='request_broker'`: summon (`trader_requested=True`) or dismiss the Broker at the Trade Depot, and optionally toggle `anyone_can_trade`.
+    - `action='mark_goods'`: mark specific `item_ids` or items matching `item_filter` / `min_value` (up to `max_items`) for hauling to the Trade Depot via `dfhack.items.markForTrade`. Works even before merchants arrive.
+    - `action='unmark_goods'`: cancel pending depot haul jobs (`dfhack.job.removeJob`) or unload trade goods from the depot.
+    - `action='barter_status' | 'barter_select'`: inspect or toggle `trade.goodflag[side][idx].selected` when the barter screen (`df.global.game.main_interface.trade`) is open."""
+    body = await _as_dict(request)
+    try:
+        res = await LO.trade_depot(
+            action=str(body.get("action", "status")),
+            building_id=body.get("building_id"),
+            item_ids=body.get("item_ids"),
+            item_filter=body.get("item_filter"),
+            min_value=int(body.get("min_value", 0)),
+            max_items=int(body.get("max_items", 25)),
+            trader_requested=body.get("trader_requested"),
+            anyone_can_trade=body.get("anyone_can_trade"),
+            side=str(body.get("side", "fortress")),
+            selected=bool(body.get("selected", True)),
         )
         return {"success": True, **res}
     except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
