@@ -216,3 +216,21 @@ surface tile. I read that as "the game will not work it" - and the game built bo
   wells and room tops get dug). Stair designations under an open tile are workable.
 * `pending_dig` read **while the game is paused** proves nothing. A stalled face is proven by
   `dug` not moving **across running reads** on a named box - never by one paused sample.
+
+## §20 - "how many miners do I have" has three answers, and only one digs
+
+Measured 2026-11-22 with the player's Labor screen open:
+
+| layer | tool | answer |
+|---|---|---|
+| The **profession roster** (the tick marks on the Miners page) | `GET /unit-professions` | 1 Miner (then 2 after `action=set`) |
+| The **labor flags** per unit | `GET /unit-labors?labor=MINE` | 4 (then 5) |
+| The **plugin's `miners` metric** | `df_status` | profession-based |
+
+Rules:
+1. A profession write does **not** grant labors (the new Miner came back `MINE: false`), and a
+   labor write does not change the roster. Two writes, two read-backs.
+2. `dfhack.units.setProfession` and a profession RPC do not exist on this build; the write is
+   `u.profession = pid`, and the pid is taken from a dwarf already in that profession.
+3. `/set-unit-labors` answers `applied: N`, which validates **names**, not the game's state -
+   read `/unit-labors` after it.

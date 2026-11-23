@@ -1659,6 +1659,99 @@ function OPS.unit_labors(args)
   return { filter = filter, citizens = #units, with_labor = with, units = units }
 end
 
+-- 15. unit_profession: WHO IS A MINER, in the game's own terms.
+-- Measured 2026-11-22 from the player's Labor screen: the Miners page ticks ONE dwarf (Aban,
+-- "Proficient Miner") while my labor census reported 2 then 4 (`u.status.labors.MINE`). On this
+-- build labors are driven by PROFESSION assignment (DF 50 work details): a labor write lands,
+-- the census reads it, and the player's screen still shows the profession's roster. So asking
+-- "how many miners do I have" has two answers on two layers, and the profession layer is the one
+-- the game digs with. `dfhack.units.setProfession` is the game's own call.
+function OPS.unit_profession(args)
+  local action = (args and args.action and tostring(args.action):lower()) or "list"
+  -- Measured 2026-11-22: `fortress_entity.professions` does not exist
+  -- ("Cannot read field historical_entity.professions: not found"). The profession table is the
+  -- RACE raws' list, and the name helper is dfhack.units.getProfessionName.
+  -- `world.raws.dwarves` is not a field on this build either (measured: "Cannot read field
+  -- world.T_raws.dwarves: not found"). The idiom that works is dfhack.units.getProfessionName,
+  -- and for a profession NAME -> ID lookup the most honest source is the fort itself: take the
+  -- id from a dwarf who already carries that profession (Aban shows as "Miner" in the player's
+  -- Labor screen, so the id exists in the game's data - no raws guessing).
+  local function prof_name(u)
+    local n = "?"
+    pcall(function() n = tostring(dfhack.units.getProfessionName(u)) end)
+    if n == "?" or n == "" then
+      pcall(function()
+        local pid = tonumber(u.profession)
+        if pid ~= nil and pid >= 0 and races and races.profession[pid] ~= nil then
+          n = tostring(races.profession[pid].code)
+        end
+      end)
+    end
+    return n
+  end
+  local function prof_id_by_name(want)
+    local w = tostring(want):upper():gsub(" ", "")
+    for _,u in ipairs(df.global.world.units.active) do
+      local pn = ""
+      pcall(function() pn = tostring(dfhack.units.getProfessionName(u)) end)
+      if pn ~= "" and pn:upper():gsub(" ", "") == w then
+        local pid = tonumber(u.profession)
+        if pid ~= nil then return pid end
+      end
+    end
+    return nil
+  end
+  if action == "list" then
+    local out = {}
+    for _,u in ipairs(df.global.world.units.active) do
+      local cit, alive = false, false
+      pcall(function() cit = dfhack.units.isCitizen(u) end)
+      pcall(function() alive = dfhack.units.isAlive(u) end)
+      if cit and alive then
+        local nm = "?"
+        pcall(function() nm = tostring(u.name.first_name).." "..tostring(u.name.last_name) end)
+        out[#out+1] = { unit_id = tonumber(u.id), name = nm, profession = prof_name(u),
+                        has_mine_labor = (function() local r=false; pcall(function() r=(u.status.labors.MINE==true) end); return r end)() }
+      end
+    end
+    table.sort(out, function(a,b) return a.unit_id < b.unit_id end)
+    local names, seen = {}, {}
+    for _,u in ipairs(df.global.world.units.active) do
+      local pn = ""
+      pcall(function() pn = tostring(dfhack.units.getProfessionName(u)) end)
+      local pid = tonumber(u.profession)
+      if pn ~= "" and pid ~= nil and not seen[pid] then
+        seen[pid] = true
+        names[#names+1] = { id = pid, name = pn }
+      end
+    end
+    table.sort(names, function(a,b) return tostring(a.name) < tostring(b.name) end)
+    return { action = "list", citizens = out, professions = names }
+  end
+  if action == "set" then
+    local uid = tonumber(args and args.unit_id)
+    local u = (uid ~= nil) and df.unit.find(uid) or nil
+    if u == nil then error("unit_id required and must name a living unit") end
+    local pname = args and args.profession and tostring(args.profession) or nil
+    if pname == nil then error("profession required (e.g. 'Miner'); action='list' shows the names") end
+    local pid = prof_id_by_name(pname)
+    if pid == nil then
+      local avail = {}
+      for _,x in ipairs(names) do avail[#avail+1] = tostring(x.name) end
+      error("profession '"..pname.."' not found for the fortress entity; available: "..table.concat(avail, ", "))
+    end
+    -- `dfhack.units.setProfession` is NOT on this build (measured: "attempt to call a nil value
+    -- (field 'setProfession')"), and the RPC surface has no profession method (grep: no
+    -- 'profession' in dfhack.py). The profession is a plain int field, and the id is taken from a
+    -- unit that already carries the profession - so the write and the id are both measured data.
+    local okp, errp = pcall(function() u.profession = pid end)
+    if not okp then error("writing u.profession failed: "..tostring(errp)) end
+    return { action = "set", unit_id = tonumber(u.id), profession = pname, profession_id = pid,
+             read_back = prof_name(u) }
+  end
+  error("unknown unit_profession action '"..tostring(action).."' (expected list or set)")
+end
+
 function M.dispatch(op, raw_args)
   local fn = OPS[tostring(op)]
   if not fn then

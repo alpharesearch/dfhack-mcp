@@ -1535,6 +1535,22 @@ async def gather_and_items(action: str = "gather_plants",
     return await call_module("gather_and_items", payload)
 
 
+async def unit_profession(action: str = "list", unit_id: int | None = None,
+                          profession: str | None = None) -> dict:
+    """Who is a miner in the game's own terms - the profession layer the Labor screen shows.
+
+    Measured 2026-11-22: the player's Miners page ticked one dwarf while my `u.status.labors`
+    census said 4. On this build labors are driven by PROFESSION assignment, so the profession is
+    the layer to set when the question is "how many miners do I have".
+    """
+    payload: dict = {"action": str(action)}
+    if unit_id is not None:
+        payload["unit_id"] = int(unit_id)
+    if profession:
+        payload["profession"] = str(profession)
+    return await call_module("unit_profession", payload)
+
+
 async def unit_labors(unit_ids: list[int] | None = None, labor: str | None = None) -> dict:
     """Read the labors the GAME holds per citizen - the read-back for labor writes.
 

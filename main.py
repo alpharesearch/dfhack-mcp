@@ -2383,6 +2383,25 @@ class PileArraysRequest(BaseModel):
     building_id: int | None = Field(None, description="Limit to one pile id")
 
 
+@app.get("/unit-professions", operation_id="unit_professions")
+async def unit_professions(action: str = Query("list", description="'list' shows each citizen's profession and the fortress's profession names; 'set' assigns one"),
+                           unit_id: int = Query(None, description="set: the citizen to reassign"),
+                           profession: str = Query(None, description="set: the profession name, e.g. Miner (case-insensitive; 'list' shows what exists)")):
+    """The profession layer - what the Labor screen's tick marks mean on this build.
+
+    Measured 2026-11-22: the player's Miners page showed ONE tick (Aban, Proficient Miner) while
+    `/unit-labors` reported 4 citizens with `MINE`. DF 50 drives labors from profession
+    assignment, so a labor write and a profession roster are different facts, and the roster is
+    what the game digs with. Use this to make dwarves Miners, then `/unit-labors` to read the
+    flags back.
+    """
+    try:
+        res = await LO.unit_profession(action=action, unit_id=unit_id, profession=profession)
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/unit-labors", operation_id="unit_labors")
 async def unit_labors(unit_ids: str = Query("", description="comma-separated unit ids to restrict to (default: all citizens)"),
                       labor: str = Query(None, description="count only this labor, e.g. MINE, CUTWOOD, BREWER")):
