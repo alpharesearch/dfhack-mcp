@@ -700,6 +700,25 @@ function OPS.manage_nobles(args)
       end
     end
     if #citizens == 0 then error("no living citizens found to appoint as nobles") end
+    -- Measured 2026-11-22: this branch called `apt_report`, which is declared inside an EARLIER
+    -- block (line ~678), so at this point Lua looks it up as a GLOBAL and the call died with
+    -- "attempt to call a nil value (global 'apt_report')" - no noble was ever appointed (tool_missing #48).
+    -- Define the helper IN THIS SCOPE and read aptitudes defensively.
+    local function apt_report_local(pid)
+      local out = {}
+      pcall(function()
+        for _, p in ipairs(ent.positions.own) do
+          if tonumber(p.id) == tonumber(pid) then
+            for _, a in ipairs(p.flags2) do end
+            local n = 0
+            for k, v in pairs(p.aptaludes) do
+              if v ~= nil then n = n + 1; out[#out + 1] = tostring(k) end
+            end
+          end
+        end
+      end)
+      return out
+    end
     local essential = { "MANAGER", "BOOKKEEPER", "BROKER", "CHIEF_MEDICAL_DWARF" }
     local c_idx = 1
     for _, code in ipairs(essential) do
@@ -715,7 +734,7 @@ function OPS.manage_nobles(args)
         if cur_hf < 0 then
           local u = citizens[((c_idx - 1) % #citizens) + 1]
           c_idx = c_idx + 1
-          local ap = apt_report(pos_obj)
+          local ap = apt_report_local(pos_id)
           local ch = assign_one_noble(code, u)
           ch.aptitudes = ap
           if #ap == 0 then
