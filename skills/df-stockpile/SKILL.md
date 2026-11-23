@@ -172,3 +172,20 @@ Rules that follow:
 3. `/pile-arrays` is the tool: `action=check` lists `category.field` arrays of size 0 per pile,
    `action=fix` fills them to a reference pile's measured sizes. **Run check before you tell a
    player to open Custom on an agent-made pile.**
+
+## §15 - corpses/refuse are the player's click, not the agent's flag (measured twice)
+
+Controlled test, one save, three piles, the player's own clicks: **general (12 categories) and
+wood opened; `corpses` + `refuse` crashed the game** (`render_things` -> `overlay.plug.so`,
+SIGSEGV, no Lua) - the same class as the M8 fort's crash on its outdoor refuse pile.
+
+Why the 1-slot allocation did not help: those categories' arrays are indexed by **race** and
+**item type**, and on a UI-made pile they measure **0** - the game allocates them *when its
+screen opens that page*. Writing the flag programmatically leaves the page walking an array the
+game never filled. So:
+- `configure_stockpile` / `create-stockpile` **refuse** `corpses` and `refuse` by default; the
+  answer says why and points at the in-game path (`p -> pile -> Custom`).
+- The unlock condition is measurement, not courage: `/pile-arrays` must report non-zero reference
+  sizes from a pile the game's UI built, and the caller must pass `allow_crash_categories=true`.
+- A refuse pile's *categories* are therefore a player action. Placement, size, containers and
+  everything else stay the tool's.

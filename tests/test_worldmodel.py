@@ -344,6 +344,21 @@ def test_pile_categories_are_the_flags_the_game_exposes_not_a_wiki_list():
     assert "plants" not in names, "this build has no plants flag - plump helmets are FOOD"
 
 
+def test_corpses_and_refuse_flags_are_refused_without_an_opt_in():
+    """The player's click test, one save, three piles: general (12 categories) and wood opened
+    the Custom screen; `corpses` + `refuse` crashed the game (SIGSEGV, render_things ->
+    overlay.plug.so, no Lua) - twice, on two different saves. Those arrays are indexed by race
+    and item type and measure 0 even on a UI-made pile, because the game allocates them when ITS
+    screen opens the page; a programmatic flag (size 0, or my 1-slot fallback) leaves the screen
+    walking an array that was never filled. The tool refuses them by default."""
+    lo = pathlib.Path("luaops.py").read_text()
+    i = lo.index("async def configure_stockpile(")
+    body = lo[i:lo.index("async def ", i + 10)]
+    assert 'CRASH_CATEGORIES = ("corpses", "refuse")' in body, "the class is named in code"
+    assert "allow_crash_categories" in body, "there is an explicit opt-in, default False"
+    assert "raise LuaOpError" in body, "the refusal is an error, not a silent drop"
+
+
 def test_pile_settings_arrays_are_allocated_with_real_lua_and_never_skipped():
     """The player's crash of 2026-11-22 20:02:29 (`crash_2026-11-22-20-02-29.txt`: SIGSEGV at
     0x5, `render_things` -> `overlay.plug.so`, no Lua) is a category flag ON over an

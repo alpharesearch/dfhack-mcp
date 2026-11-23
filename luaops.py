@@ -397,7 +397,8 @@ async def configure_stockpile(dec, building_id: int, allow: list[str] | None = N
                               deny: list[str] | None = None, all_categories: bool = False,
                               max_wheelbarrows: int | None = None,
                               max_barrels: int | None = None,
-                              max_bins: int | None = None) -> dict:
+                              max_bins: int | None = None,
+                              allow_crash_categories: bool = False) -> dict:
     """Set a stockpile's accepted categories by writing the game's own flags.
 
     Measured on this build (53.17-r1): building_stockpilest exposes `settings.flags`
@@ -412,6 +413,25 @@ async def configure_stockpile(dec, building_id: int, allow: list[str] | None = N
             raise LuaOpError("unknown category '%s'; the game's names are: %s"
                              % (c, ", ".join(CATEGORIES)))
     wanted = CATEGORIES if all_categories else cats
+    # MEASURED TWICE, SAME CLASS: enabling `corpses`/`refuse` through flags is a crash.
+    # 2026-11-22 20:02 (the M8 fort's outdoor refuse pile) and 2026-11-22 late (this save:
+    # piles 1 general and 2 wood survived the Custom screen, pile 3 corpses+refuse crashed it).
+    # Signature: SIGSEGV (SEGV_MAPERR), stack `render_things` -> `overlay.plug.so`, no Lua.
+    # Those categories' arrays are indexed by race / item-type, and their sizes are 0 on the
+    # reference pile - the UI allocates them when ITS screen opens the page. A programmatic
+    # flag (size 0, or 1 from the fallback) leaves the screen walking an array the game never
+    # filled. So they are refused here; the player's own screen is the safe path, and a measured
+    # reference size is the only thing that unlocks the write.
+    CRASH_CATEGORIES = ("corpses", "refuse")
+    hit = [c for c in wanted if c in CRASH_CATEGORIES]
+    if hit and not allow_crash_categories:
+        raise LuaOpError(
+            "categories %s are refused: opening Custom on a pile with these flags set "
+            "programmatically crashed this fort twice (crash_2026-11-22-20-02-29.txt and its "
+            "repeat on pile 3). Set them in-game (p -> pile -> Custom -> corpses/refuse), where "
+            "the game allocates the arrays its screen indexes, or pass "
+            "allow_crash_categories=true once /pile-arrays reports measured non-zero reference "
+            "sizes for them." % ", ".join(hit))
     lines = []
     for c in CATEGORIES:
         on = (c in wanted and c not in denied)

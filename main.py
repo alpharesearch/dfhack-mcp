@@ -2569,7 +2569,8 @@ async def configure_stockpile(request: ConfigureStockpileRequest, raw_request: R
             dec, bid, allow=body.get("allow"), deny=body.get("deny"),
             all_categories=bool(body.get("all_categories", False)),
             max_wheelbarrows=body.get("max_wheelbarrows"),
-            max_barrels=body.get("max_barrels"), max_bins=body.get("max_bins"))
+            max_barrels=body.get("max_barrels"), max_bins=body.get("max_bins"),
+            allow_crash_categories=bool(body.get("allow_crash_categories", False)))
     except LO.LuaOpError as e:
         return {"success": False, "error": str(e)}
     # VERDICT BY READING THE GAME: the write's own reply is not evidence.
