@@ -316,6 +316,7 @@ class PlaceBuildingRequest(BaseModel):
     items: list[int] | None = Field(None, description="Specific item IDs to attach for furniture/doors")
     material: str | None = Field(None, description="Material description substring to attach closest in-play items (e.g. 'log', 'boulder', 'block')")
     count: int = Field(3, ge=1, le=20, description="Number of matching material items to attach when material is set")
+    nominal: bool = Field(True, description="Use the canonical footprint (measured: a 1x1 request with nominal=true SNAPS to 3x3 for workshops). Set FALSE to get the exact w x h footprint - farm plots do not snap, so a 3x3 plot needs nominal=false (tool_missing #57)")
 
 
 class RemoveBuildingRequest(BaseModel):
@@ -1506,7 +1507,10 @@ async def place_building(request: PlaceBuildingRequest):
         # ANY multi-tile request goes through the game's own setSize path. Not just
         # piles: a 3x2 Farm Plot came back 1x1 the same way (measured 2026-11-21, and
         # the ladder rung still read satisfied - a 1-tile farm quietly starves a fort).
-        if _w > 1 or _h > 1:
+        # 2026-11-22 (tool_missing #57): the caller may ask for the EXACT footprint with nominal=false.
+        # Farm plots do not snap to a canonical size (measured: my nominal 1x1 plot reads rect 86,108-86,108),
+        # and the plan route refused 3x3 plots - so an exact-footprint request goes straight to constructBuilding.
+        if (_w > 1 or _h > 1) and bool(body.get("nominal", True)):
             # Only a stockpile (and other material-free abstracts) is a legal argument for
             # constructAbstract. A WORKSHOP is not: measured placing a 3x4 Still, the abstract
             # route died with "constructAbstract(): expected !bld->isActual()". Workshops go
@@ -1547,7 +1551,8 @@ async def place_building(request: PlaceBuildingRequest):
                                       abstract=body.get("abstract"),
                                       items=body.get("items"),
                                       material=body.get("material"),
-                                      count=int(body.get("count", 3)))
+                                      count=int(body.get("count", 3)),
+                                      nominal=bool(body.get("nominal", True)))
     except LO.LuaOpError as e:
         return {"success": False, "error": str(e)}
     world.cache.reset()

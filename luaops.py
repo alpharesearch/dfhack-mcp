@@ -141,8 +141,18 @@ async def place_building(dec, name: str, x: int, y: int, elev: int,
                          w: int | None = None, h: int | None = None,
                          complete: bool = True, abstract: bool | None = None,
                          items: list[int] | None = None, material: str | None = None,
-                         count: int = 3) -> dict:
-    """Create a building at an exact tile through dfhack.buildings, then verify it."""
+                         count: int = 3, nominal: bool = True) -> dict:
+    """Create a building at an exact tile through dfhack.buildings, then verify it.
+
+    `nominal` matters and is measured (2026-11-22, the game's own footprints):
+    workshops built with `nominal=true, w=1, h=1` come out at their CANONICAL size -
+    `Mechanic's Workshop rect 81,117-83,119` is 3x3, as are the Wood Furnace, Smelter,
+    Carpenter's and Stoneworker's shops - so `nominal` is NOT a size request, it is
+    "use the canonical footprint". **Farm plots do not snap**: with `nominal=true` the
+    plot I asked for reads `rect 86,108-86,108` (ONE tile, tool_missing #57, and a
+    1-tile farm is why `raw_food` sat at 0 with 19 cooks). A real plot footprint needs
+    `nominal=false` plus `w`/`h`.
+    """
     bt, sub, cus, resolved = resolve_building(dec, name)
     z = int(elev) + GAME_Z_OFFSET
     dims = ""
@@ -208,7 +218,7 @@ local b = nil
 -- back as a bare "FAIL construct: nil" and I had no explanation (tool_missing #54). Capture it.
 local ok, res, reason = pcall(function()
   local r, why = dfhack.buildings.constructBuilding{{type={bt}, subtype={sub}, custom={cus},
-    x={int(x)}, y={int(y)}, z={z}, {dims}{extra}nominal=true}}
+    x={int(x)}, y={int(y)}, z={z}, {dims}{extra}nominal={str(bool(nominal)).lower()}}}
   return r, why
 end)
 if not (ok and res) then print("FAIL construct: "..tostring(res).." reason="..tostring(reason)) return end
