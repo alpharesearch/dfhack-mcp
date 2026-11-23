@@ -265,7 +265,7 @@ appointment the menu accepts can be one the depot refuses. Rules:
 | Tick/untick a dwarf | `GET /work-details` `action=assign&detail=…&unit_id=…&mode=add\|remove` | `assigned_after` (the list re-read) |
 | What labors does a detail grant? | same, `allowed_labors` | after `action=set-labor`, `allowed_labors_after` |
 | Who really has the labor flag? | `GET /unit-labors?labor=MINE` | per-citizen `labors_on` lists |
-| Set a labor flag | `POST /set-unit-labors` | `read_back` + `governing_details` + `durability` (not-in-detail = the game can reset it) |
+| ~~Set a labor flag~~ | **removed** (`/set-unit-labors`, 2026-11-22: it wrote a layer the game recomputes) | the durable route is `GET /work-details action=assign` |
 | Who is labelled Miner/Planter/Smith? | `GET /unit-professions` (`action=set` needs a name the fort has, or `profession_id`) | `read_back` profession + `read_back_id` |
 | Which categories can a pile open in Custom without crashing? | `GET /pile-arrays` `action=check` | per-pile empty arrays; `action=fix` sizes them to a UI pile's measured lengths |
 
@@ -274,7 +274,7 @@ appointment the menu accepts can be one the depot refuses. Rules:
 `gui/manipulator.lua`, `gui/settings-manager.lua`) after my probes of `world.*`, the fortress
 entity, the raws and the RPC all failed (tool_missing #36).
 
-## §19 - labors belong to work details; `/set-unit-labors` alone is not a labor plan
+## §19 - labors belong to work details (the labor-flag write tool was removed over this)
 
 Measured 2026-11-22 from the player's Labor screen and the live structures:
 
@@ -288,7 +288,8 @@ Measured 2026-11-22 from the player's Labor screen and the live structures:
   pair. So a labor write is not a labor plan.
 - Tools: `GET /work-details` (list / assign / set-labor, each answered by a read from the game),
   `GET /unit-labors` (the effective flags), `GET /unit-professions` (the profession label layer).
-  `/set-unit-labors` now reports `governing_details` and `durability`; if a unit is not in a detail
-  that grants the labor, the game can reset the flag.
+  The labor-flag write tool was **removed over this** (2026-11-22, the player's call): while it existed
+  it reported `governing_details` and `durability`, and the honest verdict was that a write to a
+  recomputed layer is not a staffing tool. Staff with `/work-details`; read with `/unit-labors`.
 - Built-in details cannot be set to "Everybody does this" (`cannot_be_everybody`) - with 7 dwarves
   that mode is a starvation trap anyway: all-miner means nobody hauls, cooks, farms, or cuts wood.

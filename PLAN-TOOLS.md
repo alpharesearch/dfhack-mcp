@@ -74,7 +74,7 @@ drags) - which the APIs above make unnecessary for placement.
 | `run_command` | **allowlist** of command names; **deny `lua`, `script`, `luap`** so the raw door is not reachable from the tool list (it is reachable today: `{"command":"lua"}`). Deny destructive (`die`, `teleport`, `exterminate`, `strip*`, `remove-*`, `force*`, `resurrect*`, `importlegends`, `export*`, `modtools/*`) |
 | `place_building` | add `owner` (via `setOwner`) + `items` accept item *ids* (resolved with `dfhack.items.findItem`); expose `abstract` for material-free buildings |
 | `work_order` | extend to `action: create \| list \| cancel` (read orders via `dfhack.job.getManagerOrderName`, cancel via `__reduce_amount`) |
-| `set_unit_labors` | keep; add `profession` convenience (set a labor for all citizens of a profession) |
+| ~~`set_unit_labors`~~ | **REMOVED 2026-11-22** (player: "the /set-unit-labors tool is not needed"). It wrote a layer the game recomputes from work details; staffing moved to `/work-details`. |
 | `pass_keyboard_event` | keep, documented as hotkeys-only (arrow keys do not move the cursor: 8 event variants tested) |
 | `copy_screen` | add `max_chars` (screen text is the menu-reading channel and can be noisy) |
 | `list_units` | trim to id/name/profession/species/age/squad - it is the id source for labors |
@@ -385,7 +385,7 @@ Test asked: 3-wide tunnel west ~15 into the mountain, 6x6 chamber, place a trade
 - Designations sent as `[x, y, elev+128]` **land at x,y** - no transposition. The old swap
   in `send_dig_command` sent an 87-tile tunnel to mirrored coordinates, where unexplored
   tiles rejected it silently. Fixed (default no-swap, `swap:true` opt-in).
-- With 4 dwarves on `MINE` (set via `set_unit_labors`, i.e. the `y` menu) and the game
+- With 4 dwarves on `MINE` (measured via `/unit-labors`; the `set_unit_labors` endpoint is removed 2026-11-22) and the game
   unpaused, a 6-tile wall designation at x84-89,y160,elev39 was **fully dug in ~30 s**:
   6 -> 5 -> 3 -> 0, read straight from `world_objects` dig clusters.
 - My first site was wrong: I read `.` (grass floor) and ` ` (open) as "the mountain".
@@ -613,7 +613,7 @@ The player asked to recreate their built structure south of the wagon. Recipe th
    tunnel DEFAULT_DIG (32), room DEFAULT_DIG (16), stairwell UP_DOWN_STAIR_DIG **on every z
    it crosses** - 4 tiles at elev 39 and the same 4 at elev 38 (52 tiles total, all accepted).
 4. **Labor before time**: the labor pool drifts as migrants arrive (miners fell to 2 of 14
-   dwarves), so `set_unit_labors` MINE must be re-checked before each dig phase, not once.
+   dwarves), so the MINE census (`/unit-labors?labor=MINE`) must be re-checked before each dig phase, not once.
 
 Tool this suggests for the plan: `mirror_structure?from_box&to_elev&to_xy` - read a dug
 footprint (tunnel rows + room + stair columns) and emit the designation list for a target
@@ -699,7 +699,7 @@ Correct rule now in `dig_adit.py`, per column, before designating:
 
 ## Verdicts on the P0/P1 items this session actually closed
 
-- **Labor menu / work details (P0, "mouse-only")**: **built**, and the plan's premise was wrong -
+- **Labor menu / work details (P0, "mouse-only")**: **built**, the plan's premise was wrong -
   it is not mouse-only. `df.global.plotinfo.labor_info.work_details` is the menu's own data
   (`name`, `icon`, `flags`, `allowed_labors`, `assigned_units`), found in the game's shipped Lua.
   `GET /work-details` lists, ticks (`mode=add/remove`) and grants labors per detail.
@@ -707,8 +707,9 @@ Correct rule now in `dig_adit.py`, per column, before designating:
   `.remove` is nil, so add = `resize(#list+1)` + index assign, remove = `erase(index)`.
   **Open half (tool_missing #37):** writing the membership does not make the game rebuild
   `unit.status.labors` - the census stayed 2 of 14 after the tick. The durable recipe is
-  detail membership **+** `/set-unit-labors`, verified by `/unit-labors`; a detail write alone
-  must never be reported as a labor change.
+  that endpoint is now **removed**, so: assign the tick with `/work-details`, then let the game recompute
+  on its own path and **measure** with `/unit-labors`; a detail write alone must never be reported as
+  a labor change, and a labor flag written without the detail is not durable.
 - **Professions**: built (`/unit-professions`), read-only for names the fort no longer has
   (tool_missing #32 - the profession table is unreachable). Cost recorded: `/unit-professions set`
   made the fort's only Metalcrafter a Miner. **Rule: check the roster for uniqueness before

@@ -344,25 +344,6 @@ def test_pile_categories_are_the_flags_the_game_exposes_not_a_wiki_list():
     assert "plants" not in names, "this build has no plants flag - plump helmets are FOOD"
 
 
-def test_labor_writes_carry_a_read_back_and_the_census_tool_exists():
-    """`/set-unit-labors` answers `applied: N`, which validates NAMES against the RPC labor list -
-    not the game's labor state. Measured 2026-11-22 after the player said 'you only have one
-    miner': the write said applied=2, the plugin's profession-based metric said 1, and the game's
-    own `u.status.labors` (field name `MINE`; `MINING` does not exist and my pcall probe read it
-    as a silent false) said MINE on for all seven citizens. Three numbers, three meanings - so the
-    write must carry the game's answer, and there must be a census tool."""
-    main = pathlib.Path("main.py").read_text()
-    i = main.index('@app.post("/set-unit-labors"')
-    seg = main[i:main.index("@app.", i + 30)]
-    assert "read_back" in seg and "LO.unit_labors(" in seg, "the labor write answers with the game's state"
-    assert '@app.get("/unit-labors"' in main, "the census endpoint exists"
-    lo = pathlib.Path("luaops.py").read_text()
-    assert "async def unit_labors(" in lo, "the bridge exists"
-    mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
-    assert "function OPS.unit_labors" in mod, "the module op exists"
-    assert "pairs(u.status.labors)" in mod, "it reads the game's own labor fields"
-
-
 def test_the_soil_census_is_a_python_tool_that_reports_what_it_scanned():
     """The farm rung ("3x3 plot in a 5x5 soil room") had no tool. My first census was a Lua module
     op, and the Lua route to the tile grids is CLOSED on this build - measured: `world.T_map.all:
@@ -381,25 +362,6 @@ def test_the_soil_census_is_a_python_tool_that_reports_what_it_scanned():
     mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
     assert "function OPS.find_soil" not in mod, "the Lua census is gone - it could only answer 0"
     assert "blocks_scanned: 0" in mod, "and the reason is recorded where the next reader will look"
-
-
-def test_labor_writes_carry_a_read_back_and_the_census_tool_exists():
-    """`/set-unit-labors` answers `applied: N`, which validates NAMES against the RPC labor list -
-    not the game's labor state. Measured 2026-11-22 after the player said 'you only have one
-    miner': the write said applied=2, the plugin's profession-based metric said 1, and the game's
-    own `u.status.labors` (field name `MINE`; `MINING` does not exist and my pcall probe read it
-    as a silent false) said MINE on for all seven citizens. Three numbers, three meanings - so the
-    write must carry the game's answer, and there must be a census tool."""
-    main = pathlib.Path("main.py").read_text()
-    i = main.index('@app.post("/set-unit-labors"')
-    seg = main[i:main.index("@app.", i + 30)]
-    assert "read_back" in seg and "LO.unit_labors(" in seg, "the labor write answers with the game's state"
-    assert '@app.get("/unit-labors"' in main, "the census endpoint exists"
-    lo = pathlib.Path("luaops.py").read_text()
-    assert "async def unit_labors(" in lo, "the bridge exists"
-    mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
-    assert "function OPS.unit_labors" in mod, "the module op exists"
-    assert "pairs(u.status.labors)" in mod, "it reads the game's own labor fields"
 
 
 def test_the_crash_categories_carry_the_measured_reference_sizes():
@@ -1025,49 +987,42 @@ def test_the_soil_census_reports_dig_to_soil_ground_not_only_existing_soil():
     assert "potential_soil_clusters" in skill, "and it names the field to use"
 
 
-def test_the_labor_write_endpoint_does_not_claim_to_be_the_labor_menu():
-    """The endpoint's own description is part of the tool. Its docstring used to say 'This is how
-    the fort gets miners ... the `miners` count ... is read from the same labors' - the claim the
-    player's screenshot disproved (applied: 2 vs one tick) and the metric that misled me. The
-    docstring must state the layer it writes, that the detail owns the flags, and where the tick
-    lives."""
+def test_the_labor_write_tool_is_gone_and_the_detail_tools_remain():
+    """The player's judgement, 2026-11-22: "I think the /set-unit-labors tool is not needed, I don't
+    think dwarfs need to change profession like that." A write to a layer the game recomputes is not
+    a tool the fort needs, and a profession write costs a craft (the fort's only Metalcrafter). The
+    labor menu is `/work-details`; the census is `/unit-labors`; the profession write stays only as a
+    gated capability."""
     main = pathlib.Path("main.py").read_text()
-    i = main.index('@app.post("/set-unit-labors"')
-    seg = main[i:main.index("@app.", i + 30)]
-    doc = seg.split('"""')[1]
-    assert "EFFECTIVE labor flags" in doc and "NOT how a fort gets miners" in doc, "the docstring names its own layer"
-    assert "applied` validates NAMES" in doc, "it says what its success field means"
-    assert "governing_details" in doc and "durability" in doc, "and what to read instead"
-    assert "/work-details" in doc, "it points at the tick"
-    assert "This is how the fort gets miners" not in doc, "the lie is gone"
+    assert '@app.post("/set-unit-labors"' not in main, "the derived-layer write is removed"
+    assert "REMOVED 2026-11-22 (the player's call)" in main, "and the reason is recorded where the code was"
+    assert '@app.get("/work-details"' in main, "the tick tool stays"
+    assert '@app.get("/unit-labors"' in main, "the census stays (read-only)"
+    k = main.index('@app.get("/unit-professions"')
+    seg = main[k:main.index("@app.", k + 30)]
+    assert "acknowledge_risk" in seg and "only" in seg.lower(), "the profession write is gated and says why"
+    assert "work-details action=assign" in seg, "and it points at the staffing tool"
 
 
-def test_the_labor_menu_is_driven_at_the_work_detail_layer_and_labor_writes_say_so():
-    """`/set-unit-labors` wrote `unit.status.labors` and reported `applied: N` while the player's
-    Labor screen showed one miner: the game recomputes those flags from the WORK DETAILS, measured
-    as a census of 5 dropping to the 2 ticked dwarves after a tick. A tool whose write the game
-    overwrites must say so. The authority is `df.global.plotinfo.labor_info.work_details[i]` with
-    `assigned_units` (unit ids = the tick column), `allowed_labors`, `flags`
-    (`cannot_be_everybody`/`no_modify` on built-ins) - the route found in the game's own scripts
-    (autofish.lua, gui/manipulator.lua, gui/settings-manager.lua)."""
+def test_the_labor_menu_is_driven_at_the_work_detail_layer():
+    """The route to the Labor menu was in the game's own scripts (autofish.lua, gui/manipulator.lua,
+    gui/settings-manager.lua): `df.global.plotinfo.labor_info.work_details`, entries with `name`,
+    `flags` (`cannot_be_everybody`/`no_modify`), `allowed_labors` and `assigned_units` - the tick
+    column, a vector of unit ids. Mutations measured: `insert(value)` is rejected (needs
+    `(index, value)`), `remove` is nil, so add = `resize(#list+1)` + index assign, remove =
+    `erase(index)`. The write answers with the list as the game now holds it."""
     mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
     i = mod.index("function OPS.work_details")
     seg = mod[i:mod.index("function M.dispatch")]
     assert "df.global.plotinfo.labor_info" in seg and "li.work_details" in seg, \
         "the real container (found in the game's own scripts), not a guess at world.*"
     assert "assigned_units" in seg and "allowed_labors" in seg, "it reads the tick list and the granted labors"
-    assert "list:resize(" in seg and "list:erase(" in seg, "assign uses the measured vector API: resize+assign, erase"
-    assert "remove" not in seg.split("list:")[2] or "erase" in seg, "list:remove is nil on vector<int32_t> - never used"
-    assert "read_back" not in seg or "assigned_after" in seg, "assign answers with the list as the game now holds it"
+    assert "list:resize(" in seg and "list:erase(" in seg, "assign uses the measured vector API"
+    assert "assigned_after" in seg, "assign answers with the list as the game now holds it"
     lo = pathlib.Path("luaops.py").read_text()
     assert "async def work_details(" in lo, "the bridge exists"
     main = pathlib.Path("main.py").read_text()
     assert '@app.get("/work-details"' in main, "the endpoint exists"
-    k = main.index('@app.post("/set-unit-labors"')
-    seg2 = main[k:main.index("@app.", k + 30)]
-    assert "governing_details" in seg2 and "durability" in seg2, "the labor write names the layer that owns the flags"
-    assert "not-in-detail" in seg2, "and it says when the write is not durable"
-    # stale bridges must not survive: a dead Lua-backed census and a doubled def
     assert "async def find_soil(" not in lo, "the dead Lua census bridge is gone"
     names = [l for l in lo.split("\n") if l.startswith("async def unit_labors(")]
     assert len(names) == 1, "no duplicate bridge definitions"

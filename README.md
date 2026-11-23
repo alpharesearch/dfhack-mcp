@@ -259,11 +259,13 @@ this section. Endpoint list, with the measurement each one exists because of:
 
 Changed behaviour in existing tools:
 
-- **`POST /set-unit-labors` is honest now.** `applied: N` validates *names*, not the game's state.
-  It returns `read_back` (the units' labor counts from the game), `governing_details` (which work
-  details contain each unit) and `durability: "not-in-detail: the game can reset these flags"`.
-  Proof it needed: a write said `applied: 2`, the player's screen showed one tick, and a census of
-  5 dropped to 2 the moment a tick was added - the detail owns the flags.
+- **`POST /set-unit-labors` is REMOVED (the player's call).** It wrote `unit.status.labors`, a layer
+  the game recomputes from the work details - measured: a census of 5 `MINE` holders fell to the 2
+  ticked dwarves the moment a tick was added - so its `applied: N` described validated *names*,
+  never the fort. Honest answers were one fix; the other fix is not shipping the tool. Staffing is
+  `GET /work-details action=assign`; the census is `GET /unit-labors` (read-only, which is right for
+  a derived layer). The `/unit-professions` write stays only behind `acknowledge_risk=true`, because
+  it removes a craft from a dwarf (it took this fort's only Metalcrafter).
 - **`GET /dig-reachable` and `/reach-map` were rebuilt at the root.** `fort_band()` scored unit
   density over *all* units, so ~90 deep wildlife units (RPC z 11-26) out-voted the fort's 17
   citizens (z 167): band `(4,15)` = elevations **-125..-114**, an empty walk graph, and every

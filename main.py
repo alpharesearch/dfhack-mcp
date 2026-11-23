@@ -438,11 +438,6 @@ class LaborChange(BaseModel):
     value: bool = Field(..., description="True to enable the labor, False to disable")
 
 
-class SetUnitLaborsRequest(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    changes: list[LaborChange] = Field(..., description="List of {unit_id, labor, value} changes to apply")
-
-
 class WorkOrderRequest(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
     action: str | None = Field(None, description="One of 'create' (default when job or json is given), 'list' (default when job is omitted: inspect active manager orders & manager status), or 'cancel' (remove matching order_id or job)")
@@ -2387,7 +2382,8 @@ class PileArraysRequest(BaseModel):
 async def unit_professions(action: str = Query("list", description="'list' shows each citizen's profession and the fortress's profession names; 'set' assigns one"),
                            unit_id: int = Query(None, description="set: the citizen to reassign"),
                            profession: str = Query(None, description="set: the profession name, e.g. Miner (case-insensitive; 'list' shows what exists)"),
-                           profession_id: int = Query(None, description="set: the numeric profession id (from action=list). Use this to restore a profession NO citizen currently carries - the name route can only see professions a living unit holds, because the profession table is unreachable from Lua on this build")):
+                           profession_id: int = Query(None, description="set: the numeric profession id (from action=list). Use this to restore a profession NO citizen currently carries - the name route can only see professions a living unit holds, because the profession table is unreachable from Lua on this build"),
+                           acknowledge_risk: bool = Query(False, description="set: REQUIRED. A profession write takes a craft away from a dwarf; the game has no undo for it")):
     """The profession layer - what the Labor screen's tick marks mean on this build.
 
     Measured 2026-11-22: the player's Miners page showed ONE tick (Aban, Proficient Miner) while
@@ -2396,6 +2392,14 @@ async def unit_professions(action: str = Query("list", description="'list' shows
     what the game digs with. Use this to make dwarves Miners, then `/unit-labors` to read the
     flags back.
     """
+    if str(action).strip().lower() == "set":
+        if not acknowledge_risk:
+            return {"success": False,
+                    "error": ("a profession write removes a craft from a dwarf. Measured cost: `set 6491 "
+                              "Miner` took the fort's ONLY Metalcrafter (tool_missing #32, df-dig §21). "
+                              "Staffing is a work-detail job - use GET /work-details action=assign. "
+                              "Check /unit-professions for uniqueness first, then pass acknowledge_risk=true"),
+                    "uniqueness_check": ("run action=list; do not convert a craft with exactly one holder")}
     try:
         res = await LO.unit_profession(action=action, unit_id=unit_id, profession=profession,
                                        profession_id=profession_id)
@@ -2416,7 +2420,7 @@ async def work_details(action: str = Query("list", description="'list' (the whol
     Measured 2026-11-22: the details live at `df.global.plotinfo.labor_info.work_details`, each
     with `name`, `allowed_labors`, `flags` and **`assigned_units` (a vector of unit ids - the tick
     column itself)**. The built-in details carry `cannot_be_everybody`/`no_modify`. This is the
-    authority over `/set-unit-labors`: that tool writes `unit.status.labors`, the EFFECTIVE flags,
+    authority over the REMOVED `/set-unit-labors` (2026-11-22): that tool wrote `unit.status.labors`, the EFFECTIVE flags,
     and the game recomputes them from the details - a census of 5 fell to the 2 ticked dwarves the
     instant a tick was added. So: change the detail here, then read `/unit-labors` to see the
     flags land.
@@ -3008,81 +3012,17 @@ async def labor_list():
     labors = dec.flags.get("unit_labor", {})
     return {"count": len(labors), "labors": sorted(labors.values())}
 
-@app.post("/set-unit-labors", operation_id="set_unit_labors")
-async def set_unit_labors(request: SetUnitLaborsRequest):
-    """Set the EFFECTIVE labor flags on units (`unit.status.labors`) - NOT the Labor menu, and NOT how a fort gets miners.
+# REMOVED 2026-11-22 (the player's call): `/set-unit-labors`.
+# It wrote `unit.status.labors` - a layer the game RECOMPUTES from the work details (measured: a
+# census of 5 MINE-holders fell to the 2 ticked dwarves the moment a tick was added), so its
+# `applied: N` described validated names, never the fort. "We can not have a tool that is wrong"
+# has two answers: make it honest, or take it away. This one is taken away.
+# The real levers stay: `GET /work-details` (assign = the green tick; set-labor = what a detail
+# grants), `GET /unit-labors` (the census - read-only, and read-only is right for a derived layer),
+# `GET /unit-professions` (the roster; its `set` is gated behind acknowledge_risk).
+# RPC `SetUnitLabors` is still imported: the plugin's labor census and labor_list use the decoders,
+# and the method itself remains available to anyone who reads the game's data and knows the layer.
 
-    changes: [{unit_id, labor, value}], labor a name from /labor-list (MINE, MASON, ...) or an id.
-    Measured 2026-11-22, the reason this docstring is not the one it was: a write answered
-    `applied: 2`, the player's Labor screen showed ONE tick, and after a tick was added a census of
-    5 `MINE` holders fell to exactly the 2 ticked dwarves. The game recomputes these flags from the
-    WORK DETAILS, so this endpoint changes a derived value - on its own it is not durable.
-
-    Read the answer, not just `applied`:
-      - `applied` validates NAMES against the RPC labor list. It says nothing about the game's state.
-      - `read_back` is the touched units' labor lists, read from the game after the write.
-      - `governing_details` lists which work details contain each touched unit; `durability` is
-        `detail-assigned` only when every touched unit is inside a detail, and
-        `not-in-detail: the game can reset these flags` otherwise.
-      - `unknown` lists labor names this build does not have (`MINING` is not one; it is `MINE`).
-
-    To make a dwarf a miner in the sense the game uses, tick the detail:
-    `GET /work-details action=assign detail=Miners unit_id=... mode=add`, then verify with
-    `GET /unit-labors?labor=MINE`. Use this endpoint to fix a flag a detail should already grant,
-    not to staff the fort."""
-    body = await _as_dict(request)
-    dec = await world._dec(await world._gen())
-    by_name = {v: k for k, v in dec.flags.get("unit_labor", {}).items()}
-    changes, bad = [], []
-    for ch in body["changes"]:
-        lab = ch["labor"]
-        lid = int(lab) if isinstance(lab, int) or (isinstance(lab, str) and lab.isdigit()) \
-             else by_name.get(str(lab).upper())
-        if lid is None:
-            bad.append(lab)
-            continue
-        changes.append(UnitLaborState(unit_id=int(ch["unit_id"]), labor=lid,
-                                      value=bool(ch["value"])))
-    if not changes:
-        return {"error": "no valid labors", "unknown": bad,
-                "hint": "see labor_list for the exact names"}
-    try:
-        await SetUnitLabors(input=SetUnitLaborsIn(change=changes))
-    except (DFHackError, DFHackTransportError) as e:
-        return {"success": False, "error": str(e), "applied": 0,
-                "hint": "labor ids come from labor_list; unit ids from get_unit_list"}
-    world._state.pop("units_gen", None)          # labors changed: drop the cached rollup
-    # Read-back: `applied` validates NAMES against the RPC labor list; the game's own fields are
-    # the state. Measured 2026-11-22: a write reported applied=2, the player's labor screen showed
-    # one Miner (profession, not labor), and the game had MINE on for all seven citizens.
-    touched = sorted({int(c.unit_id) for c in changes})
-    verified, note = None, "applied counts validated labor names, not the game's labor state"
-    try:
-        vr = await LO.unit_labors(touched, None)
-        verified = [{"unit_id": u.get("unit_id"), "name": u.get("name"),
-                     "labors_on": u.get("labor_count")} for u in vr.get("units", [])]
-    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
-        verified, note = None, f"labors read-back failed: {e}"
-    # Which work details contain the units we touched - the layer that OWNS these flags.
-    governing = None
-    try:
-        wd = await LO.work_details(action="list")
-        by_unit: dict[int, list[str]] = {}
-        for d in wd.get("details", []):
-            for u in d.get("assigned_units", []):
-                by_unit.setdefault(int(u.get("unit_id")), []).append(str(d.get("name")))
-        governing = {int(t): by_unit.get(int(t), []) for t in touched}
-    except (LO.LuaOpError, DFHackError, DFHackTransportError):
-        governing = None
-    return {"applied": len(changes), "unknown": bad, "success": True,
-            "read_back": verified,
-            "governing_details": governing,
-            "note": (note + " | the game recomputes unit.status.labors from the work details "
-                     "(measured: a census of 5 dropped to the 2 ticked dwarves after a tick), so a "
-                     "labor write is NOT durable for a unit outside the detail - use /work-details "
-                     "action=assign to tick them in"),
-            "durability": ("detail-assigned" if governing and all(governing.get(t) for t in touched)
-                           else "not-in-detail: the game can reset these flags")}
 
 @app.post("/work-order", operation_id="work_order")
 async def work_order(request: WorkOrderRequest):

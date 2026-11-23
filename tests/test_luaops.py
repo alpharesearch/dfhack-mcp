@@ -276,8 +276,7 @@ def test_post_endpoints_use_typed_pydantic_models_and_fog_dig_helpers():
         "ApplyBlueprintRequest", "SetPauseStateRequest", "CutTreesRequest",
         "DigBox", "StairShaftSpec", "SendDigCommandRequest",
         "PlaceBuildingRequest", "RemoveBuildingRequest", "CreateStockpileRequest",
-        "ConfigureStockpileRequest", "CreateZoneRequest", "SetUnitLaborsRequest",
-        "WorkOrderRequest", "ConfigureFarmplotRequest", "AssignZoneOwnerRequest",
+        "ConfigureStockpileRequest", "CreateZoneRequest", "WorkOrderRequest", "ConfigureFarmplotRequest", "AssignZoneOwnerRequest",
         "AssignPastureRequest", "ManageNoblesRequest", "GatherAndItemsRequest",
         "TradeDepotRequest",
     ):

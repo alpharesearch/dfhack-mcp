@@ -4,7 +4,7 @@ description: Dig tunnels, rooms and stair shafts in Dwarf Fortress with real lab
 whenToUse: Use when planning or executing any mining - entrance tunnels, rooms, stairwells, farm/industry halls - and whenever a dig "completed" but nothing appears, a designation vanished, or a plan sits in unexplored rock.
 metadata:
   source: measured on DF 53.17-r1 (STEAM) with the dfhack-mcp layer, during play tests on region1
-  tools: send_dig_command, set_unit_labors, overburden, depth_profile, column, cross_section, hazards, probe_plan, tunnel_sites, warnings, tile_at, world_map, world_objects, dig_run.py, watch_dig.py, sink_shaft.py, dig_adit.py
+  tools: send_dig_command, work_details, unit_labors, overburden, depth_profile, column, cross_section, hazards, probe_plan, tunnel_sites, warnings, tile_at, world_map, world_objects, dig_run.py, watch_dig.py, sink_shaft.py, dig_adit.py
 ---
 
 # Digging: tunnels, rooms, shafts
@@ -69,7 +69,7 @@ Related: count plans **in rooms, not tiles**, and subtract the existing dug foot
 2026-11-21: a stair sent at z166 reads as Elevation 37, at z167 as Elevation 38.)
 
 ## 3. Labour before time (no dig-now, no blueprints for play)
-`set_unit_labors` with **`MINE`** (not `MINING`; the enum has `MINE`, `CUTWOOD`,
+`/work-details action=assign detail=Miners unit_id=... mode=add` grants **`MINE`** through the detail (not `MINING`; the enum has `MINE`, `CUTWOOD`,
 `BUILD_CONSTRUCTION`, `MASON`, `CARPENTER`). The pool drifts as migrants arrive - re-check
 `miners` in `fort-progress` before every dig phase, not once. Unpause the game; dig takes
 time, and time is the point.
@@ -228,12 +228,14 @@ Measured 2026-11-22 with the player's Labor screen open:
 | The **plugin's `miners` metric** | `df_status` | profession-based |
 
 Rules:
-1. A profession write does **not** grant labors (the new Miner came back `MINE: false`), and a
-   labor write does not change the roster. Two writes, two read-backs.
+1. A profession write does **not** grant labors (the new Miner came back `MINE: false`), and detail
+   membership does not by itself rebuild the flags - the game recomputes them on its own path. Read
+   `/unit-labors` after every staffing change, and expect the census to be the authority.
 2. `dfhack.units.setProfession` and a profession RPC do not exist on this build; the write is
    `u.profession = pid`, and the pid is taken from a dwarf already in that profession.
-3. `/set-unit-labors` answers `applied: N`, which validates **names**, not the game's state -
-   read `/unit-labors` after it.
+3. The labor-flag write (`/set-unit-labors`) is **removed**: `applied: N` validated names, not the
+   game's state, and the game recomputes the flags from the details. Staff with `/work-details`,
+   verify with `/unit-labors`.
 
 ## §21 - never take the only holder of a craft (I did, and it cost the fort its smith)
 

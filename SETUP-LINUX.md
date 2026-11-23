@@ -457,7 +457,7 @@ player-shaped. This map is measured on the live 53.17-r1 build, not copied from 
 
 | Player action | Drivable? | How, and the measured catch |
 |---|---|---|
-| Labor menu (`y`) | **YES** | RPC `SetUnitLabors`. Field is `change` (not `changes`). Verified: assigning `MINE` to dwarf 6489 moved the layer's report `miners 2 → 3` |
+| Labor menu (`y`) | **YES - via work details, not labor flags** | The menu's data is `df.global.plotinfo.labor_info.work_details` (`name`, `flags`, `allowed_labors`, `assigned_units` = the tick column), exposed as `GET /work-details`. RPC `SetUnitLabors` writes `unit.status.labors`, which the game **recomputes from the details** (measured: a census of 5 fell to the 2 ticked dwarves after a tick), so its endpoint was REMOVED 2026-11-22; `GET /unit-labors` is the read-only census |
 | Labor *names* | **YES** | `ListEnums.unit_labor` items are `{value, name, bit_size}` — `e.id` does not exist. Mining is **`MINE`**, not `MINING` (matching the wrong string made the ladder cry "miners 0" on a fort that had 2) |
 | Manager workorders (`j-m-q`) | **YES** | `workorder` accepts **JSON only** on this build; the docs' positional `workorder CollectRock 10` is fed to a JSON parser and fails. Game validates the name: `MakeBarrel` → "Queuing MakeBarrel x5"; `MakeChair` → "Invalid job type for manager order: MakeChair" |
 | Dig designations (`m`/`d`) | **YES** | RPC `SendDigCommand` (x/y transposed; z-dependent acceptance) |
@@ -472,7 +472,7 @@ player-shaped. This map is measured on the live 53.17-r1 build, not copied from 
 | `units`, `noble`, `military` | **NO** | "not a recognized command" in this build |
 
 **Practical shape of a play loop:** read with `look` / `fort_progress`; act with
-`set_unit_labors`, `work_order`, `send_dig_command`, `run_command` (`dig-now`,
+`work_details`, `unit_labors`, `work_order`, `send_dig_command`, `run_command` (`dig-now`,
 `build-now`, `quickfort`); verify with `world_delta`. The gaps (zones, stockpiles,
 placement drags) are mouse-only, so the honest contract with a human player is:
 **the agent designs and states exact coordinates; the human drags the rectangle.**
