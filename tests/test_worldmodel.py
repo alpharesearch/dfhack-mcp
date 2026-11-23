@@ -344,6 +344,27 @@ def test_pile_categories_are_the_flags_the_game_exposes_not_a_wiki_list():
     assert "plants" not in names, "this build has no plants flag - plump helmets are FOOD"
 
 
+def test_pile_settings_arrays_are_allocated_with_real_lua_and_never_skipped():
+    """The player's crash of 2026-11-22 20:02:29 (`crash_2026-11-22-20-02-29.txt`: SIGSEGV at
+    0x5, `render_things` -> `overlay.plug.so`, no Lua) is a category flag ON over an
+    unallocated material array - the Custom screen dereferences nil. Two of my own defects
+    made that state reachable and are pinned here: `_array_alloc_lua` joined its lines with
+    the LITERAL two-character `\n` (so the allocation reached Lua as text: 'unexpected symbol
+    near' and no arrays allocated, ever), and it skipped `n <= 0` sizes - which is every
+    corpses/refuse field, i.e. exactly the refuse pile the player clicked."""
+    lo = pathlib.Path("luaops.py").read_text()
+    i = lo.index("def _array_alloc_lua(")
+    body = lo[i:lo.index("def ", i + 10)]
+    assert 'return chr(10).join(lines)' in body, "real newlines only - a literal backslash-n is a syntax error in the game"
+    assert "if n <= 0:" in body and "n = 1" in body, "a measured size of 0 still allocates a slot"
+    # the tool that measures/repairs pile arrays (no raw Lua needed)
+    assert "async def pile_arrays(" in lo, "the check/fix op is a tool, not a probe"
+    main = pathlib.Path("main.py").read_text()
+    assert '@app.post("/pile-arrays"' in main, "the endpoint exists"
+    mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
+    assert "function OPS.pile_arrays" in mod, "the module side exists"
+
+
 def test_configure_stockpile_refuses_a_body_that_says_nothing_and_verifies_the_write():
     """2026-11-22, measured: I called /configure-stockpile with {"categories": [...]} - the real
     keys are allow/deny - and because the request model is `extra="allow"`, the key was accepted,

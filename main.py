@@ -2377,6 +2377,33 @@ async def hazards(x0: int = Query(...), y0: int = Query(...),
         b.spend(len(l) + 1)
     return WM.finish(lines, b)
 
+class PileArraysRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    action: str = Field("check", description="'check' lists piles whose enabled categories have empty material arrays; 'fix' allocates them to a reference pile's measured sizes")
+    building_id: int | None = Field(None, description="Limit to one pile id")
+
+
+@app.post("/pile-arrays", operation_id="pile_arrays")
+async def pile_arrays(request: PileArraysRequest):
+    """Pile health for the crash you get by clicking Custom: enabled category flags over EMPTY material arrays.
+
+    Measured 2026-11-22: `crash_2026-11-22-20-02-29.txt` - SIGSEGV at address 0x5, stack
+    `render_things` -> `overlay.plug.so`, "no Lua involvement" - the player clicked Custom on an
+    outdoor pile this tool created. The game's UI allocates the per-category arrays when *it*
+    switches a category on; a tool-made pile has the flags without them. Run action='check' before
+    opening Custom on any agent-made pile, and action='fix' to allocate them from a UI pile's
+    measured sizes.
+    """
+    body = await _as_dict(request)
+    try:
+        await world._gen()
+        res = await LO.pile_arrays(action=str(body.get("action", "check")),
+                                   building_id=body.get("building_id"))
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/magma-depth", operation_id="magma_depth")
 async def magma_depth(x: int = Query(...), y: int = Query(...),
                       elev: int = Query(..., description="dig elevation"),
@@ -2503,7 +2530,7 @@ async def list_stockpiles():
 
 
 @app.post("/configure-stockpile", operation_id="configure_stockpile")
-async def configure_stockpile(request: ConfigureStockpileRequest):
+async def configure_stockpile(request: ConfigureStockpileRequest, raw_request: Request):
     """Set a stockpile's accepted categories, container limits and wheelbarrows.
 
     Body: {"building_id": 12, "allow": ["wood"], "deny": ["stone"], "all_categories": false,
@@ -2514,18 +2541,27 @@ async def configure_stockpile(request: ConfigureStockpileRequest):
     quickstart). A wood pile near the entrance is allow=["wood"].
     """
     body = await _as_dict(request)
-    # The request model is extra="allow", so a wrong key is NOT an error: sending
-    # {"categories": [...]} (my own call, 2026-11-22) silently became allow=None/deny=None,
-    # which means TAKE NOTHING - the write landed and pile 3 was emptied, answered
-    # "success". Refuse a body that does not say what the pile should accept.
-    if not any(k in body for k in ("allow", "deny", "all_categories")):
+    # The gate reads the RAW body, not the validated model: `_as_dict` uses
+    # exclude_none=True, so absent allow/deny disappear from `body` entirely and a check on
+    # `body` passes while the call still means TAKE NOTHING (measured twice on 2026-11-22 -
+    # my own {"building_id":3} probe emptied pile 3 the second time).
+    try:
+        raw_body = await raw_request.json()
+    except Exception:
+        raw_body = {}
+    if isinstance(raw_body, dict) and not any(k in raw_body for k in ("allow", "deny", "all_categories")):
         return {"success": False,
                 "error": "say what to accept: allow=[...], deny=[...] (with all_categories=true), "
                          "or all_categories=true. An empty request means TAKE NOTHING and is not "
                          "sent.",
+                "received_keys": sorted(raw_body.keys()) if isinstance(raw_body, dict) else [],
                 "known_keys": ["allow", "deny", "all_categories", "max_wheelbarrows",
                                "max_barrels", "max_bins", "building_id"],
                 "categories": LO.CATEGORIES}
+    # The request model is extra="allow", so a wrong key is NOT an error: sending
+    # {"categories": [...]} (my own call, 2026-11-22) silently became allow=None/deny=None,
+    # which means TAKE NOTHING - the write landed and pile 3 was emptied, answered
+    # "success". Refuse a body that does not say what the pile should accept.
     try:
         dec = await world._dec(await world._gen())
         bid = int(body["building_id"])

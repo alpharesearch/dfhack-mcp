@@ -155,3 +155,20 @@ The in-game panel numbers piles 1, 2, 3... in the order you made them; the tools
 food stock pile #3 next to the still" - my reads listed ids 1/4/21/22/23, and id 3 does not
 exist). When you and an agent talk about a pile, quote the **extent and elevation**
 ("37..39,120..124 @40") - that is unambiguous, the numbers are not.
+
+## §14 - Custom on an agent-made pile can crash the game (measured)
+
+`crash_2026-11-22-20-02-29.txt`: SIGSEGV at address 0x5, `render_things` -> `overlay.plug.so`,
+"no Lua involvement detected". The player clicked **Custom** on an outdoor pile the tool created.
+The game's settings screen walks each enabled category's material arrays; **the UI allocates
+those arrays only when it switches a category on**, so a pile whose flags were written
+programmatically has flags with nothing behind them, and the screen dereferences nil.
+
+Rules that follow:
+1. Flag writes and array allocation are ONE operation - a category flag without its arrays is a
+   loaded gun aimed at the next player who opens Custom.
+2. Sizes come from a pile the game built (measure at runtime), never from a wiki table. A
+   measured size of 0 means "allocate one slot", not "skip it".
+3. `/pile-arrays` is the tool: `action=check` lists `category.field` arrays of size 0 per pile,
+   `action=fix` fills them to a reference pile's measured sizes. **Run check before you tell a
+   player to open Custom on an agent-made pile.**

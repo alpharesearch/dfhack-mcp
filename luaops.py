@@ -1187,16 +1187,27 @@ SETTINGS_ARRAYS = {
 
 
 def _array_alloc_lua(category: str, sizes: dict) -> str:
-    """Lua that resizes and fills one category's UI-walked arrays (allow everything)."""
+    """Lua that resizes and fills one category's UI-walked arrays (allow everything).
+
+    JOIN WITH REAL NEWLINES. This function joined with the literal two-character `\\n`, so
+    every chunk it built reached Lua as one line of backslashes - the allocation NEVER ran,
+    and the repair tool answered `CR_FAILURE: unexpected symbol near '\\'`. The consequence is
+    the crash we measured on 2026-11-22: `crash_2026-11-22-20-02-29.txt`, SIGSEGV at 0x5 in
+    `render_things` via `overlay.plug.so`, "no Lua involvement" - the player clicked Custom on
+    a tool-made pile whose category flags were ON over unallocated material arrays.
+    """
     lines = []
     for field, n in sizes.items():
         if n <= 0:
-            continue
+            # Zero in SETTINGS_ARRAYS means "the reference pile's array is empty", NOT "no
+            # array is needed": the UI still walks the field. Allocate one slot so the
+            # pointer is never nil.
+            n = 1
         lines.append(f"  if s.{field} ~= nil and #s.{field} < {n} then")
         lines.append(f"    s.{field}:resize({n})")
         lines.append(f"    for i = 0, {n - 1} do pcall(function() s.{field}[i] = 1 end) end")
         lines.append("  end")
-    return "\\n".join(lines)
+    return chr(10).join(lines)
 
 
 def _json_balanced(raw: str) -> bool:
@@ -1495,6 +1506,22 @@ async def gather_and_items(action: str = "gather_plants",
     if item_filter is not None:
         payload["item_filter"] = str(item_filter)
     return await call_module("gather_and_items", payload)
+
+
+async def pile_arrays(action: str = "check",
+                       building_id: int | None = None) -> dict:
+    """Check/fix the per-category material arrays the game's Custom-settings UI walks.
+
+    The player's crash of 2026-11-22 20:02:29 (`crash_2026-11-22-20-02-29.txt`, SIGSEGV at 0x5,
+    `render_things` -> `overlay.plug.so`, no Lua) is a tool-made pile whose category flags are ON
+    over unallocated arrays: the settings screen dereferences nil. `action='check'` lists the empty
+    fields per pile; `action='fix'` resizes them to a reference pile's measured sizes (a pile the
+    game's UI built), never to invented numbers.
+    """
+    payload = {"action": str(action)}
+    if building_id is not None:
+        payload["building_id"] = int(building_id)
+    return await call_module("pile_arrays", payload)
 
 
 async def trade_depot(action: str = "status",

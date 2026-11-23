@@ -1465,6 +1465,70 @@ end
 -- Dispatcher: prints a single MCP_JSON|{...} line
 -- ---------------------------------------------------------------------------
 
+-- 12. pile_arrays: the crash the player hits by CLICKING Custom on a tool-made pile
+-- crash_2026-11-22-20-02-29.txt: SIGSEGV at 0x5, render_things -> overlay.plug.so, no Lua
+-- involvement. Cause: category flags ON over per-category material arrays that the UI allocates
+-- when *it* switches a category on. A tool-made pile has flags without arrays, and the settings
+-- screen walks a nil pointer. This op measures (action="check") and allocates (action="fix").
+function OPS.pile_arrays(args)
+  local action = (args and args.action and tostring(args.action):lower()) or "check"
+  local only_id = args and tonumber(args.building_id) or nil
+  -- The reference sizes come from a pile the GAME built (the UI allocates real arrays), so
+  -- nothing here is a guess from the wiki.
+  local reference = {}
+  for _,sp in ipairs(df.global.world.buildings.other.STOCKPILE) do
+    for _,c in ipairs({"ammo","animals","armor","bars_blocks","cloth","coins","corpses",
+                       "finished_goods","food","furniture","gems","leather","refuse","sheet",
+                       "stone","weapons","wood"}) do
+      local ok = pcall(function()
+        for k,v in pairs(sp.settings[c]) do
+          if type(v) == "table" then
+            local n = 0
+            pcall(function() n = #v end)
+            if n > (reference[c] and reference[c][k] or 0) then
+              reference[c] = reference[c] or {}
+              reference[c][k] = n
+            end
+          end
+        end
+      end)
+    end
+  end
+  local report = {}
+  for _,sp in ipairs(df.global.world.buildings.other.STOCKPILE) do
+    if only_id == nil or sp.id == only_id then
+      local entry = { building_id = tonumber(sp.id), empty_fields = {}, fixed = {} }
+      for _,c in ipairs({"ammo","animals","armor","bars_blocks","cloth","coins","corpses",
+                         "finished_goods","food","furniture","gems","leather","refuse","sheet",
+                         "stone","weapons","wood"}) do
+        local on = false
+        pcall(function() on = (sp.settings.flags[c] == true) end)
+        if on then
+          pcall(function()
+            for k,v in pairs(sp.settings[c]) do
+              if type(v) == "table" and tostring(v):find("vector<char>") then
+                local want = (reference[c] and reference[c][k]) or 1
+                if want < 1 then want = 1 end
+                if #v < 1 then
+                  entry.empty_fields[#entry.empty_fields+1] = c.."."..k
+                  if action == "fix" then
+                    v:resize(want)
+                    for i = 0, want - 1 do pcall(function() v[i] = 1 end) end
+                    entry.fixed[#entry.fixed+1] = c.."."..k.."->"..tostring(want)
+                  end
+                end
+              end
+            end
+          end)
+        end
+      end
+      report[#report+1] = entry
+    end
+  end
+  return { action = action, piles = report, reference_categories = (function()
+    local n = 0 for _,_ in pairs(reference) do n = n + 1 end return n end)() }
+end
+
 function M.dispatch(op, raw_args)
   local fn = OPS[tostring(op)]
   if not fn then
