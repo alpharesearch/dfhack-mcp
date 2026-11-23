@@ -2409,25 +2409,28 @@ async def unit_professions(action: str = Query("list", description="'list' shows
 
 
 @app.get("/work-details", operation_id="work_details")
-async def work_details(action: str = Query("list", description="'list' (the whole Labor menu), 'assign' (tick/untick a dwarf on a detail), 'set-labor' (change what labors a detail grants)"),
-                       detail: str = Query(None, description="assign/set-labor: the detail index (from list) or its name, e.g. Miners"),
-                       unit_id: int = Query(None, description="assign: the citizen to tick/untick (unit id from /unit-professions)"),
-                       mode: str = Query(None, description="assign: 'add' (tick) or 'remove' (untick)"),
-                       labor: str = Query(None, description="set-labor: a labor name from /labor-list, e.g. MINE"),
+async def work_details(action: str = Query("list", description="'list' (the whole Labor menu), 'assign' (tick/untick a dwarf on a detail), 'set-mode' (switch between 'everybody', 'nobody', or 'selected'), 'set-labor' (change what labors a detail grants), 'create' (create a custom work detail), or 'delete' (remove a custom work detail)"),
+                       detail: str = Query(None, description="assign/set-mode/set-labor/create/delete: the detail index (from list), detail name (e.g. Miners, Miner, Planters), or labor name (e.g. MINE, CUTWOOD)"),
+                       unit_id: int = Query(None, description="assign/create: the citizen to tick/untick (unit id from /unit-professions)"),
+                       mode: str = Query(None, description="assign: 'add' (tick) or 'remove' (untick); set-mode/create: 'everybody' (1), 'nobody' (2), or 'selected' (3)"),
+                       labor: str = Query(None, description="set-labor/create: labor name(s) from /labor-list, e.g. MINE, CARPENTER, MASON, BREWER"),
                        value: bool = Query(None, description="set-labor: true to grant, false to revoke (default true)")):
     """THE LABOR MENU, at the layer the game actually uses - the green tick marks.
 
     Measured 2026-11-22: the details live at `df.global.plotinfo.labor_info.work_details`, each
-    with `name`, `allowed_labors`, `flags` and **`assigned_units` (a vector of unit ids - the tick
-    column itself)**. The built-in details carry `cannot_be_everybody`/`no_modify`. This is the
-    authority over the REMOVED `/set-unit-labors` (2026-11-22): that tool wrote `unit.status.labors`, the EFFECTIVE flags,
-    and the game recomputes them from the details - a census of 5 fell to the 2 ticked dwarves the
-    instant a tick was added. So: change the detail here, then read `/unit-labors` to see the
-    flags land.
+    with `name`, `allowed_labors`, `flags` (`mode` = 1 `EverybodyDoesThis`, 2 `NobodyDoesThis`,
+    3 `OnlySelectedDoesThis`) and **`assigned_units` (a sorted vector of unit ids - the tick
+    column itself)**. After every mutation (`assign`, `set-mode`, `set-labor`, `create`, `delete`),
+    this tool sorts `assigned_units`, switches `flags.mode` to `OnlySelectedDoesThis` (`3`) when
+    adding a unit, and runs **`dfhack.units.setAutomaticProfessions(u)`** across all citizens so
+    `unit.status.labors` updates immediately (even while paused) and reports `effective_holders`
+    and `unit_labors_after`.
     """
     try:
         res = await LO.work_details(action=action, detail=detail, unit_id=unit_id,
                                     mode=mode, labor=labor, value=value)
+        if str(action).strip().lower() != "list":
+            world._state.pop("units_gen", None)
         return {"success": True, **res}
     except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
         return {"success": False, "error": str(e)}

@@ -1570,7 +1570,7 @@ function OPS.unit_labors(args)
       local nm = "?"
       pcall(function() nm = tostring(u.name.first_name) end)
       units[#units+1] = { unit_id = tonumber(u.id), name = nm, labors_on = on,
-                          labor_count = #on, has_filter = (filter ~= nil and want[tonumber(u.id)] == true) }
+                          labor_count = #on, has_filter = (filter ~= nil and #on > 0) }
     end
   end
   table.sort(units, function(a,b) return a.unit_id < b.unit_id end)
@@ -1705,6 +1705,53 @@ function OPS.work_details(args)
   local li = df.global.plotinfo.labor_info
   local wd = li.work_details
 
+  local MODE_NAMES = {
+    [0] = "Default",
+    [1] = "EverybodyDoesThis",
+    [2] = "NobodyDoesThis",
+    [3] = "OnlySelectedDoesThis",
+  }
+
+  local function parse_detail_mode(m)
+    if m == nil then return nil end
+    local n = tonumber(m)
+    if n == 1 or n == 2 or n == 3 then return n end
+    local s = tostring(m):lower():gsub("[_%-%s]", "")
+    if s == "everybody" or s == "everybodydoesthis" or s == "all" then return 1 end
+    if s == "nobody" or s == "nobodydoesthis" or s == "none" then return 2 end
+    if s == "selected" or s == "onlyselected" or s == "onlyselecteddoesthis" then return 3 end
+    return nil
+  end
+
+  local function sort_unit_vec(list)
+    local n = #list
+    if n <= 1 then return end
+    local tmp = {}
+    for i = 0, n - 1 do tmp[#tmp + 1] = tonumber(list[i]) end
+    table.sort(tmp)
+    -- Deduplicate while writing back
+    local out = {}
+    for _, v in ipairs(tmp) do
+      if #out == 0 or out[#out] ~= v then out[#out + 1] = v end
+    end
+    if #out ~= n then list:resize(#out) end
+    for i = 1, #out do list[i - 1] = out[i] end
+  end
+
+  local function recompute_all_citizens()
+    local updated = 0
+    for _, cu in ipairs(df.global.world.units.active) do
+      local cit, alive = false, false
+      pcall(function() cit = dfhack.units.isCitizen(cu) end)
+      pcall(function() alive = dfhack.units.isAlive(cu) end)
+      if cit and alive then
+        local ok = pcall(function() dfhack.units.setAutomaticProfessions(cu) end)
+        if ok then updated = updated + 1 end
+      end
+    end
+    return updated
+  end
+
   local function unit_name(uid)
     local u = df.unit.find(uid)
     if u == nil then return nil end
@@ -1712,34 +1759,90 @@ function OPS.work_details(args)
     pcall(function() nm = tostring(u.name.first_name) end)
     return nm
   end
+
   local function detail_pair(sel)
     if sel == nil then return nil, nil end
     local n = tonumber(sel)
-    if n ~= nil and wd[n] ~= nil then return wd[n], tonumber(n) end
-    local want = tostring(sel):lower()
+    if n ~= nil and n >= 0 and n < #wd and wd[n] ~= nil then return wd[n], tonumber(n) end
+    local want = tostring(sel):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    local want_upper = want:upper()
+    -- 1. Exact case-insensitive name match
     for i = 0, #wd - 1 do
       local nm = ""
       pcall(function() nm = tostring(wd[i].name):lower() end)
       if nm == want then return wd[i], i end
     end
+    -- 2. Singular/plural or substring match on detail name (e.g. "miner" -> "Miners")
+    local want_stem = want:gsub("s$", "")
+    for i = 0, #wd - 1 do
+      local nm = ""
+      pcall(function() nm = tostring(wd[i].name):lower() end)
+      local nm_stem = nm:gsub("s$", "")
+      if nm_stem == want_stem or nm:find(want, 1, true) ~= nil then
+        return wd[i], i
+      end
+    end
+    -- 3. Match by granted labor name (e.g. "MINE" -> Miners, "CUTWOOD" -> Woodcutters)
+    for i = 0, #wd - 1 do
+      local has_lab = false
+      pcall(function() has_lab = (wd[i].allowed_labors[want_upper] == true) end)
+      if has_lab then return wd[i], i end
+    end
     return nil, nil
   end
+
   local function read_detail(d)
     local nm, icon = "?", nil
     pcall(function() nm = tostring(d.name) end)
     pcall(function() icon = tonumber(d.icon) end)
     local flags, labors, units = {}, {}, {}
-    pcall(function() for k,v in pairs(d.flags) do if v == true then flags[#flags+1] = tostring(k) end end end)
-    pcall(function() for k,v in pairs(d.allowed_labors) do if v == true then labors[#labors+1] = tostring(k) end end end)
+    local mode_id = nil
+    pcall(function() mode_id = tonumber(d.flags.mode) end)
+    pcall(function()
+      for k, v in pairs(d.flags) do
+        if v == true then flags[#flags + 1] = tostring(k) end
+      end
+    end)
+    pcall(function()
+      for k, v in pairs(d.allowed_labors) do
+        if v == true then labors[#labors + 1] = tostring(k) end
+      end
+    end)
     table.sort(flags); table.sort(labors)
     pcall(function()
       for i = 0, #d.assigned_units - 1 do
         local uid = tonumber(d.assigned_units[i])
-        if uid ~= nil then units[#units+1] = { unit_id = uid, name = unit_name(uid) } end
+        if uid ~= nil then units[#units + 1] = { unit_id = uid, name = unit_name(uid) } end
       end
     end)
-    return { name = nm, icon = icon, flags = flags, allowed_labors = labors,
-             assigned_units = units, assigned_count = #units }
+    -- Also measure which living citizens currently hold ALL/ANY of this detail's allowed_labors in u.status.labors
+    local effective = {}
+    if #labors > 0 then
+      local first_lab = labors[1]
+      for _, cu in ipairs(df.global.world.units.active) do
+        local cit, alive, has = false, false, false
+        pcall(function() cit = dfhack.units.isCitizen(cu) end)
+        pcall(function() alive = dfhack.units.isAlive(cu) end)
+        if cit and alive then
+          pcall(function() has = (cu.status.labors[first_lab] == true) end)
+          if has then
+            effective[#effective + 1] = { unit_id = tonumber(cu.id), name = unit_name(tonumber(cu.id)) }
+          end
+        end
+      end
+    end
+    return {
+      name = nm,
+      icon = icon,
+      detail_mode_id = mode_id,
+      detail_mode = MODE_NAMES[mode_id] or tostring(mode_id),
+      flags = flags,
+      allowed_labors = labors,
+      assigned_units = units,
+      assigned_count = #units,
+      effective_holders = effective,
+      effective_count = #effective,
+    }
   end
 
   if action == "list" then
@@ -1747,7 +1850,7 @@ function OPS.work_details(args)
     for i = 0, #wd - 1 do
       local r = read_detail(wd[i])
       r.index = i
-      rows[#rows+1] = r
+      rows[#rows + 1] = r
     end
     return { action = "list", details = rows, count = #rows }
   end
@@ -1756,15 +1859,19 @@ function OPS.work_details(args)
     local d, idx = detail_pair(args.detail)
     if d == nil then
       local names = {}
-      for i = 0, #wd - 1 do names[#names+1] = tostring(wd[i].name) end
-      error("detail not found; pass `detail` as an index or a name. Available: "..table.concat(names, ", "))
+      for i = 0, #wd - 1 do names[#names + 1] = tostring(wd[i].name) end
+      error("detail not found; pass `detail` as an index, detail name, or labor name. Available: " .. table.concat(names, ", "))
     end
     local uid = tonumber(args.unit_id)
     if uid == nil then error("unit_id required") end
     local u = df.unit.find(uid)
-    if u == nil then error("unit_id "..tostring(uid).." does not name a unit in this fort") end
+    if u == nil then error("unit_id " .. tostring(uid) .. " does not name a unit in this fort") end
     local mode = (args.mode and tostring(args.mode):lower()) or "add"
+    if mode == "tick" or mode == "true" or mode == "1" then mode = "add" end
+    if mode == "untick" or mode == "false" or mode == "0" then mode = "remove" end
+
     local list = d.assigned_units
+    pcall(function() sort_unit_vec(list) end)
     local pos = nil
     for i = 0, #list - 1 do
       if tonumber(list[i]) == uid then pos = i end
@@ -1773,29 +1880,91 @@ function OPS.work_details(args)
     if mode == "add" and pos == nil then
       -- Measured 2026-11-22: `list:insert(uid)` FAILS with "Cannot call field
       -- vector<int32_t>.insert(): wrong argument count" - insert needs (index, value). The route
-      -- that works is resize-then-assign, and it put unit 6493 in the Miners detail (size 2 -> 3).
+      -- that works is resize-then-assign, followed by sorting `assigned_units` in ascending order
+      -- (because gui/manipulator.lua and DF use binary search on `assigned_units`) and calling
+      -- `dfhack.units.setAutomaticProfessions(u)` so DF recomputes `u.status.labors` immediately.
       local n = #list
-      local okc, errc = pcall(function() list:resize(n + 1); list[n] = uid end)
-      if not okc then error("growing assigned_units failed: "..tostring(errc)) end
+      local okc, errc = pcall(function() list:resize(n + 1); list[n] = uid; sort_unit_vec(list) end)
+      if not okc then error("growing assigned_units failed: " .. tostring(errc)) end
       local present = false
       for i = 0, #list - 1 do if tonumber(list[i]) == uid then present = true end end
-      if not present then error("the write reported success but unit "..tostring(uid).." is not in assigned_units") end
+      if not present then error("the write reported success but unit " .. tostring(uid) .. " is not in assigned_units") end
       changed = "added"
     elseif mode == "remove" and pos ~= nil then
       -- `remove` is nil on this vector type; the game's own scripts use `erase(index)`.
-      local okc, errc = pcall(function() list:erase(pos) end)
-      if not okc then error("erase from assigned_units failed: "..tostring(errc)) end
+      local okc, errc = pcall(function() list:erase(pos); sort_unit_vec(list) end)
+      if not okc then error("erase from assigned_units failed: " .. tostring(errc)) end
       changed = "removed"
     elseif mode == "add" and pos ~= nil then
       changed = "already-assigned"
     elseif mode == "remove" and pos == nil then
       changed = "not-assigned"
+    else
+      error("unknown assign mode '" .. tostring(mode) .. "' (expected add or remove)")
     end
+
+    -- When assigning a unit to a work detail that was in EverybodyDoesThis (1) or NobodyDoesThis (2),
+    -- switch the detail mode to OnlySelectedDoesThis (3) (matching the in-game Labor UI when a tick is clicked)
+    local prev_mode_id = tonumber(d.flags.mode)
+    if mode == "add" and prev_mode_id ~= 3 then
+      pcall(function() d.flags.mode = 3 end)
+    end
+
+    -- Trigger DF's work-detail -> unit.status.labors recomputation across citizens
+    local recomputed = recompute_all_citizens()
+
     local r = read_detail(d)
-    return { action = "assign", index = idx, detail = r.name, unit_id = uid, unit = unit_name(uid),
-             change = changed, flags = r.flags, assigned_after = r.assigned_units,
-             assigned_count_after = r.assigned_count,
-             note = "assigned_units IS the tick column; the game recomputes unit.status.labors from the details, so read /unit-labors after this to see the flags land" }
+    local unit_has_labors = {}
+    for _, lab in ipairs(r.allowed_labors) do
+      local has = false
+      pcall(function() has = (u.status.labors[lab] == true) end)
+      unit_has_labors[lab] = has
+    end
+    return {
+      action = "assign",
+      index = idx,
+      detail = r.name,
+      detail_mode_before = MODE_NAMES[prev_mode_id] or tostring(prev_mode_id),
+      detail_mode_after = r.detail_mode,
+      unit_id = uid,
+      unit = unit_name(uid),
+      change = changed,
+      flags = r.flags,
+      assigned_after = r.assigned_units,
+      assigned_count_after = r.assigned_count,
+      effective_holders = r.effective_holders,
+      effective_count = r.effective_count,
+      unit_labors_after = unit_has_labors,
+      citizens_recomputed = recomputed,
+      note = "assigned_units sorted and dfhack.units.setAutomaticProfessions run; unit_labors_after and effective_holders reflect live unit.status.labors",
+    }
+  end
+
+  if action == "set-mode" then
+    local d, idx = detail_pair(args.detail)
+    if d == nil then error("detail not found (index or name)") end
+    local target_mode = parse_detail_mode(args.mode)
+    if target_mode == nil then
+      error("mode required for action='set-mode': pass 'everybody' (1), 'nobody' (2), or 'selected' (3)")
+    end
+    if target_mode == 1 and d.flags.cannot_be_everybody == true then
+      error("detail '" .. tostring(d.name) .. "' has cannot_be_everybody=true and cannot be set to EverybodyDoesThis")
+    end
+    local prev_mode_id = tonumber(d.flags.mode)
+    d.flags.mode = target_mode
+    local recomputed = recompute_all_citizens()
+    local r = read_detail(d)
+    return {
+      action = "set-mode",
+      index = idx,
+      detail = r.name,
+      detail_mode_before = MODE_NAMES[prev_mode_id] or tostring(prev_mode_id),
+      detail_mode_after = r.detail_mode,
+      assigned_after = r.assigned_units,
+      effective_holders = r.effective_holders,
+      effective_count = r.effective_count,
+      citizens_recomputed = recomputed,
+    }
   end
 
   if action == "set-labor" then
@@ -1805,13 +1974,85 @@ function OPS.work_details(args)
     if lab == nil then error("labor required (the RPC labor_list name, e.g. MINE, CUTWOOD)") end
     local val = (args.value == nil) and true or (args.value == true or args.value == "true")
     local okc, errc = pcall(function() d.allowed_labors[lab] = val end)
-    if not okc then error("writing allowed_labors."..lab.." failed: "..tostring(errc)) end
+    if not okc then error("writing allowed_labors." .. lab .. " failed: " .. tostring(errc)) end
+    local recomputed = recompute_all_citizens()
     local r = read_detail(d)
-    return { action = "set-labor", index = idx, detail = r.name, labor = lab, value = val,
-             allowed_labors_after = r.allowed_labors, flags = r.flags }
+    return {
+      action = "set-labor",
+      index = idx,
+      detail = r.name,
+      labor = lab,
+      value = val,
+      allowed_labors_after = r.allowed_labors,
+      flags = r.flags,
+      effective_holders = r.effective_holders,
+      effective_count = r.effective_count,
+      citizens_recomputed = recomputed,
+    }
   end
 
-  error("unknown work_details action '"..tostring(action).."' (expected list, assign, set-labor)")
+  if action == "create" then
+    local dname = args and args.detail and tostring(args.detail) or nil
+    if not dname or dname == "" then error("detail (name) is required for action='create'") end
+    local existing, ex_idx = detail_pair(dname)
+    if existing ~= nil and tostring(existing.name):lower() == dname:lower() then
+      local r = read_detail(existing)
+      r.index = ex_idx
+      return { action = "create", already_exists = true, detail = r }
+    end
+    local new_wd = df.work_detail:new()
+    new_wd.name = dname
+    new_wd.flags.mode = parse_detail_mode(args.mode) or 3
+    if args.labor then
+      for tok in tostring(args.labor):upper():gmatch("[A-Z0-9_]+") do
+        local ok_l, err_l = pcall(function() new_wd.allowed_labors[tok] = true end)
+        if not ok_l then
+          new_wd:delete()
+          error("unknown labor '" .. tostring(tok) .. "': " .. tostring(err_l))
+        end
+      end
+    end
+    if args.unit_id ~= nil then
+      local uid = tonumber(args.unit_id)
+      if uid and df.unit.find(uid) ~= nil then
+        new_wd.assigned_units:resize(1)
+        new_wd.assigned_units[0] = uid
+      end
+    end
+    local new_idx = #wd
+    wd:resize(new_idx + 1)
+    wd[new_idx] = new_wd
+    local recomputed = recompute_all_citizens()
+    local r = read_detail(new_wd)
+    r.index = new_idx
+    return {
+      action = "create",
+      index = new_idx,
+      detail = r,
+      citizens_recomputed = recomputed,
+    }
+  end
+
+  if action == "delete" then
+    local d, idx = detail_pair(args.detail)
+    if d == nil then error("detail not found (index or name)") end
+    if d.flags.no_modify == true then
+      error("built-in work detail '" .. tostring(d.name) .. "' has no_modify=true and cannot be deleted")
+    end
+    local dname = tostring(d.name)
+    wd:erase(idx)
+    pcall(function() d:delete() end)
+    local recomputed = recompute_all_citizens()
+    return {
+      action = "delete",
+      deleted_index = idx,
+      deleted_name = dname,
+      count_after = #wd,
+      citizens_recomputed = recomputed,
+    }
+  end
+
+  error("unknown work_details action '" .. tostring(action) .. "' (expected list, assign, set-mode, set-labor, create, or delete)")
 end
 
 -- 17. buildings_live: EVERY building the game holds, from `df.global.world.buildings`.
