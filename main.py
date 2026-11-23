@@ -3157,6 +3157,21 @@ async def labor_list():
 # and the method itself remains available to anyone who reads the game's data and knows the layer.
 
 
+@app.get("/work-order-link", operation_id="work_order_link")
+async def work_order_link(order_id: int = Query(...), workshop_id: int = Query(...)):
+    """Attach a workshop to a manager work order so the game can run it.
+
+    Why: `workorder`-created orders sit at `active: false, validated: false, workshop_id: -1`
+    (tool_missing #50). Orders live at `df.global.world.manager_orders.all`; `workshop_id` is a real
+    writable field, verified by reading the order back after the write.
+    """
+    try:
+        res = await LO.order_set_workshop(order_id=order_id, workshop_id=workshop_id)
+        return {"success": True, **res}
+    except LO.LuaOpError as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/work-order", operation_id="work_order")
 async def work_order(request: WorkOrderRequest):
     """THE MANAGER'S WORK-ORDER SCREEN (`j-m-q`), driven.

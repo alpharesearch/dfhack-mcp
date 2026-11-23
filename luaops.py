@@ -383,7 +383,11 @@ local before = "cat="..tostring(target.material_category).." mat="..tostring(tar
 
 {"" if workshop_id is None else "pcall(function() target.workshop_id = {int(workshop_id)} end)"}
 local after = "cat="..tostring(target.material_category).." mat="..tostring(target.mat_type).." ws="..tostring(target.workshop_id)
-print("OK before: "..before.." | after: "..after)
+if before == after then
+  print("FAIL write did not change the order (before == after: "..before..") - the assignment was refused; workshop_id/material cannot be set by simple field write on this build")
+else
+  print("OK before: "..before.." | after: "..after)
+end
 '''.strip()
     out = await _lua(lua, settle=0.8)
     line = _one(out)
