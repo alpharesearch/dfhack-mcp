@@ -1240,8 +1240,16 @@ async def repair_stockpile_settings(dec, building_id: int) -> dict:
     for cat, sizes in SETTINGS_ARRAYS.items():
         block = _array_alloc_lua(cat, sizes)
         if block:
-            per_cat.append(f'local s = sp.settings.{cat}\\nif s ~= nil then\\n{block}\\nend')
-    body = "\\n".join(per_cat)
+            # Real newlines, not the literal two-character sequence \n: emitted as escaped
+            # text it reached Lua as `local s = sp.settings.amo\nif ...`, and the game answered
+            # "unexpected symbol near '\'" (CR_FAILURE, measured 2026-11-22 on /repair-stockpile-settings).
+            per_cat.append(chr(10).join([
+                "local s = sp.settings.%s" % cat,
+                "if s ~= nil then",
+                block,
+                "end",
+            ]))
+    body = chr(10).join(per_cat)
     expr = f"""
 local sp = nil
 for _,x in ipairs(df.global.world.buildings.other.STOCKPILE) do if x.id == {int(building_id)} then sp = x end end

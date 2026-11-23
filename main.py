@@ -905,9 +905,18 @@ async def get_pause_state():
 async def set_pause_state(request: SetPauseStateRequest):
     """Pause (true) or unpause (false) the game. Parameters: paused[bool]"""
     body = await _as_dict(request)
-    await SetPauseState(input = SingleBool(Value = bool(body["paused"])))
+    want = bool(body["paused"])
+    await SetPauseState(input = SingleBool(Value = want))
     state = await GetPauseState()
-    return {"paused": state.Value}
+    out = {"paused": state.Value, "requested": want}
+    if state.Value != want:
+        # Measured 2026-11-22: an unpause request answered paused=true twice in a row while the
+        # player sat in the Nobles screen. The game holds its own pause in UI screens; the write
+        # is issued, the state is the game's. Say so, so "paused: true" is never read as the
+        # tool refusing to cooperate.
+        out["note"] = ("the game kept its own pause state; a UI screen (menus, popups) holds the "
+                       "pause and the player resumes it - do not re-issue this write as a fix")
+    return out
 
 @app.post("/cut-trees", operation_id="cut_trees")
 async def cut_trees(request: CutTreesRequest):
@@ -2505,15 +2514,40 @@ async def configure_stockpile(request: ConfigureStockpileRequest):
     quickstart). A wood pile near the entrance is allow=["wood"].
     """
     body = await _as_dict(request)
+    # The request model is extra="allow", so a wrong key is NOT an error: sending
+    # {"categories": [...]} (my own call, 2026-11-22) silently became allow=None/deny=None,
+    # which means TAKE NOTHING - the write landed and pile 3 was emptied, answered
+    # "success". Refuse a body that does not say what the pile should accept.
+    if not any(k in body for k in ("allow", "deny", "all_categories")):
+        return {"success": False,
+                "error": "say what to accept: allow=[...], deny=[...] (with all_categories=true), "
+                         "or all_categories=true. An empty request means TAKE NOTHING and is not "
+                         "sent.",
+                "known_keys": ["allow", "deny", "all_categories", "max_wheelbarrows",
+                               "max_barrels", "max_bins", "building_id"],
+                "categories": LO.CATEGORIES}
     try:
         dec = await world._dec(await world._gen())
-        return await LO.configure_stockpile(
-            dec, int(body["building_id"]), allow=body.get("allow"), deny=body.get("deny"),
+        bid = int(body["building_id"])
+        res = await LO.configure_stockpile(
+            dec, bid, allow=body.get("allow"), deny=body.get("deny"),
             all_categories=bool(body.get("all_categories", False)),
             max_wheelbarrows=body.get("max_wheelbarrows"),
             max_barrels=body.get("max_barrels"), max_bins=body.get("max_bins"))
     except LO.LuaOpError as e:
         return {"success": False, "error": str(e)}
+    # VERDICT BY READING THE GAME: the write's own reply is not evidence.
+    write_note = None
+    try:
+        row = next((r for r in await LO.list_stockpiles(dec) if int(r["id"]) == bid), None)
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        row, write_note = None, str(e)
+    if row is None:
+        return {"success": False, "verdict": "UNVERIFIED", "building_id": bid,
+                "error": "the pile reads produced NO DATA: the configuration is not proven",
+                "write_reply": write_note}
+    return {"success": True, "verdict": "configured (verified against the live pile read)",
+            "building_id": bid, "accepts": row.get("accepts"), "write_reply": write_note}
 
 
 @app.get("/survey", operation_id="survey")

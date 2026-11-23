@@ -344,6 +344,29 @@ def test_pile_categories_are_the_flags_the_game_exposes_not_a_wiki_list():
     assert "plants" not in names, "this build has no plants flag - plump helmets are FOOD"
 
 
+def test_configure_stockpile_refuses_a_body_that_says_nothing_and_verifies_the_write():
+    """2026-11-22, measured: I called /configure-stockpile with {"categories": [...]} - the real
+    keys are allow/deny - and because the request model is `extra="allow"`, the key was accepted,
+    `allow=None, deny=None, all_categories=False` means TAKE NOTHING, and the pile's flags all
+    went false. The tool answered `{"success": true, "verdict": null, "accepts": null}` while the
+    live pile read said `accepts: []`. A write that empties a fortress pile must not be able to
+    arrive as an omitted parameter, and success must be measured by reading the game."""
+    main = pathlib.Path("main.py").read_text()
+    i = main.index('@app.post("/configure-stockpile"')
+    seg = main[i:main.index("@app.", i + 30)]
+    assert 'not any(k in body for k in ("allow", "deny", "all_categories"))' in seg, \
+        "an empty/unknown body is refused, not translated into take-nothing"
+    assert '"verdict": "UNVERIFIED"' in seg and "list_stockpiles" in seg, \
+        "the answer is the read-back verdict against the live pile read"
+    # the repair tool's Lua must not contain the literal two-character sequence backslash-n
+    lo = pathlib.Path("luaops.py").read_text()
+    i = lo.index("async def repair_stockpile_settings")
+    body = lo[i:lo.index("async def ", i + 10)]
+    assert "sp.settings.%s\\nif" not in body, \
+        "literal \\n reached Lua as a backslash: 'unexpected symbol near \\'' (CR_FAILURE, measured)"
+    assert "chr(10).join" in body, "real newlines join the chunk"
+
+
 def test_zone_removal_is_opt_in_and_proven_by_the_zone_list():
     """The gate my remove_zone docstring promised did not exist in the endpoint: a bare POST
     {"building_id": N} reached a chunk that mutates `assigned_units` and every unit's
