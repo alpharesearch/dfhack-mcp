@@ -390,8 +390,8 @@ def test_configure_stockpile_refuses_a_body_that_says_nothing_and_verifies_the_w
     main = pathlib.Path("main.py").read_text()
     i = main.index('@app.post("/configure-stockpile"')
     seg = main[i:main.index("@app.", i + 30)]
-    assert 'not any(k in body for k in ("allow", "deny", "all_categories"))' in seg, \
-        "an empty/unknown body is refused, not translated into take-nothing"
+    assert 'not any(k in raw_body for k in ("allow", "deny", "all_categories"))' in seg, \
+        "an empty/unknown body is refused against the RAW request, not translated into take-nothing"
     assert '"verdict": "UNVERIFIED"' in seg and "list_stockpiles" in seg, \
         "the answer is the read-back verdict against the live pile read"
     # the repair tool's Lua must not contain the literal two-character sequence backslash-n
