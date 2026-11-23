@@ -1008,6 +1008,26 @@ def test_transition_store_records_wall_to_floor_and_stair_transitions():
             pass
 
 
+def test_the_reachability_graph_is_anchored_on_civilians_not_wildlife_density():
+    """`/dig-reachable` said walkable fort floors were unreachable: `fort_band()` scored unit
+    density over ALL units, so ~90 wildlife units at RPC z 11-26 beat the fort's 17 citizens at
+    z 167, the band landed at (4,15) = elevations -125..-114, `_stack` returned nothing, and every
+    connectivity answer was a false negative. Two of my past reports ('the designation was cancelled
+    silently', 'the soil patch is unreachable') were artifacts of this. The graph must be anchored
+    on civilian dwarves, and an empty graph must be labelled NO DATA - never 'unreachable'."""
+    w = pathlib.Path("worldmodel.py").read_text()
+    i = w.index("async def fort_band")
+    seg = w[i:w.index("async def ", i + 30)]
+    assert 'not u.get("hostile")' in seg and 'not u.get("caged")' in seg, "the band ignores wildlife and caged units"
+    assert '"dwarf" in str(u.get("race"' in seg, "the fort is where civilian dwarves stand"
+    assert "focus[z] * 6" in seg, "the player's view outweighs raw unit counts"
+    j = w.index("async def reach_map")
+    seg2 = w[j:w.index("async def ", j + 30)]
+    assert "band_source" in seg2 and "GetViewInfo" in seg2, "an empty band retries around the view and says which band it used"
+    assert '"tiles": len(comp)' in seg2, "the answer reports how much graph it actually built"
+    assert "NO DATA, not 'unreachable'" in seg2, "an empty graph is labelled as a read failure"
+
+
 def test_site_gate_and_idempotency_on_place_building_create_zone_and_stockpile():
     """Sections 5.1 & 5.2: shared footprint ground check, duplicate zone/stockpile
     idempotency gate, enriched building_status diagnostics, and /transitions endpoint."""
