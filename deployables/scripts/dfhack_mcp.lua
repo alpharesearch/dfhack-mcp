@@ -1690,6 +1690,122 @@ function OPS.unit_profession(args)
   error("unknown unit_profession action '"..tostring(action).."' (expected list or set)")
 end
 
+-- 16. work_details: THE LABOR MENU ITSELF - the green tick marks.
+-- Found in the game's own scripts (autofish.lua, gui/manipulator.lua, gui/settings-manager.lua):
+--   df.global.plotinfo.labor_info.work_details  ->  one entry per detail
+--   entry fields (measured live): name, icon, flags, allowed_labors, assigned_units
+--   assigned_units is a vector of UNIT IDS - that list IS the tick column, and Miners answered
+--   2 entries the moment the player ticked two dwarves. Built-in details carry flags
+--   `cannot_be_everybody` and `no_modify`, which is why the mode buttons behave per-detail.
+-- This replaces the story my `/set-unit-labors` used to tell: it writes `unit.status.labors`,
+-- the EFFECTIVE flags, and the detail recomputes them (measured: a census of 5 dropped to the 2
+-- ticked units right after a tick).
+function OPS.work_details(args)
+  local action = (args and args.action and tostring(args.action):lower()) or "list"
+  local li = df.global.plotinfo.labor_info
+  local wd = li.work_details
+
+  local function unit_name(uid)
+    local u = df.unit.find(uid)
+    if u == nil then return nil end
+    local nm = "?"
+    pcall(function() nm = tostring(u.name.first_name) end)
+    return nm
+  end
+  local function detail_pair(sel)
+    if sel == nil then return nil, nil end
+    local n = tonumber(sel)
+    if n ~= nil and wd[n] ~= nil then return wd[n], tonumber(n) end
+    local want = tostring(sel):lower()
+    for i = 0, #wd - 1 do
+      local nm = ""
+      pcall(function() nm = tostring(wd[i].name):lower() end)
+      if nm == want then return wd[i], i end
+    end
+    return nil, nil
+  end
+  local function read_detail(d)
+    local nm, icon = "?", nil
+    pcall(function() nm = tostring(d.name) end)
+    pcall(function() icon = tonumber(d.icon) end)
+    local flags, labors, units = {}, {}, {}
+    pcall(function() for k,v in pairs(d.flags) do if v == true then flags[#flags+1] = tostring(k) end end end)
+    pcall(function() for k,v in pairs(d.allowed_labors) do if v == true then labors[#labors+1] = tostring(k) end end end)
+    table.sort(flags); table.sort(labors)
+    pcall(function()
+      for i = 0, #d.assigned_units - 1 do
+        local uid = tonumber(d.assigned_units[i])
+        if uid ~= nil then units[#units+1] = { unit_id = uid, name = unit_name(uid) } end
+      end
+    end)
+    return { name = nm, icon = icon, flags = flags, allowed_labors = labors,
+             assigned_units = units, assigned_count = #units }
+  end
+
+  if action == "list" then
+    local rows = {}
+    for i = 0, #wd - 1 do
+      local r = read_detail(wd[i])
+      r.index = i
+      rows[#rows+1] = r
+    end
+    return { action = "list", details = rows, count = #rows }
+  end
+
+  if action == "assign" then
+    local d, idx = detail_pair(args.detail)
+    if d == nil then
+      local names = {}
+      for i = 0, #wd - 1 do names[#names+1] = tostring(wd[i].name) end
+      error("detail not found; pass `detail` as an index or a name. Available: "..table.concat(names, ", "))
+    end
+    local uid = tonumber(args.unit_id)
+    if uid == nil then error("unit_id required") end
+    local u = df.unit.find(uid)
+    if u == nil then error("unit_id "..tostring(uid).." does not name a unit in this fort") end
+    local mode = (args.mode and tostring(args.mode):lower()) or "add"
+    local list = d.assigned_units
+    local pos = nil
+    for i = 0, #list - 1 do
+      if tonumber(list[i]) == uid then pos = i end
+    end
+    local changed = "none"
+    if mode == "add" and pos == nil then
+      local okc, errc = pcall(function() list:insert(uid) end)
+      if not okc then error("insert into assigned_units failed: "..tostring(errc)) end
+      changed = "added"
+    elseif mode == "remove" and pos ~= nil then
+      local okc, errc = pcall(function() list:remove(pos) end)
+      if not okc then error("remove from assigned_units failed: "..tostring(errc)) end
+      changed = "removed"
+    elseif mode == "add" and pos ~= nil then
+      changed = "already-assigned"
+    elseif mode == "remove" and pos == nil then
+      changed = "not-assigned"
+    end
+    local r = read_detail(d)
+    return { action = "assign", index = idx, detail = r.name, unit_id = uid, unit = unit_name(uid),
+             change = changed, flags = r.flags, assigned_after = r.assigned_units,
+             assigned_count_after = r.assigned_count,
+             note = "assigned_units IS the tick column; the game recomputes unit.status.labors from the details, so read /unit-labors after this to see the flags land" }
+  end
+
+  if action == "set-labor" then
+    local d, idx = detail_pair(args.detail)
+    if d == nil then error("detail not found (index or name)") end
+    local lab = args.labor and tostring(args.labor):upper() or nil
+    if lab == nil then error("labor required (the RPC labor_list name, e.g. MINE, CUTWOOD)") end
+    local val = (args.value == nil) and true or (args.value == true or args.value == "true")
+    local okc, errc = pcall(function() d.allowed_labors[lab] = val end)
+    if not okc then error("writing allowed_labors."..lab.." failed: "..tostring(errc)) end
+    local r = read_detail(d)
+    return { action = "set-labor", index = idx, detail = r.name, labor = lab, value = val,
+             allowed_labors_after = r.allowed_labors, flags = r.flags }
+  end
+
+  error("unknown work_details action '"..tostring(action).."' (expected list, assign, set-labor)")
+end
+
 function M.dispatch(op, raw_args)
   local fn = OPS[tostring(op)]
   if not fn then

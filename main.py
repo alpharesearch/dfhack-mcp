@@ -2404,6 +2404,31 @@ async def unit_professions(action: str = Query("list", description="'list' shows
         return {"success": False, "error": str(e)}
 
 
+@app.get("/work-details", operation_id="work_details")
+async def work_details(action: str = Query("list", description="'list' (the whole Labor menu), 'assign' (tick/untick a dwarf on a detail), 'set-labor' (change what labors a detail grants)"),
+                       detail: str = Query(None, description="assign/set-labor: the detail index (from list) or its name, e.g. Miners"),
+                       unit_id: int = Query(None, description="assign: the citizen to tick/untick (unit id from /unit-professions)"),
+                       mode: str = Query(None, description="assign: 'add' (tick) or 'remove' (untick)"),
+                       labor: str = Query(None, description="set-labor: a labor name from /labor-list, e.g. MINE"),
+                       value: bool = Query(None, description="set-labor: true to grant, false to revoke (default true)")):
+    """THE LABOR MENU, at the layer the game actually uses - the green tick marks.
+
+    Measured 2026-11-22: the details live at `df.global.plotinfo.labor_info.work_details`, each
+    with `name`, `allowed_labors`, `flags` and **`assigned_units` (a vector of unit ids - the tick
+    column itself)**. The built-in details carry `cannot_be_everybody`/`no_modify`. This is the
+    authority over `/set-unit-labors`: that tool writes `unit.status.labors`, the EFFECTIVE flags,
+    and the game recomputes them from the details - a census of 5 fell to the 2 ticked dwarves the
+    instant a tick was added. So: change the detail here, then read `/unit-labors` to see the
+    flags land.
+    """
+    try:
+        res = await LO.work_details(action=action, detail=detail, unit_id=unit_id,
+                                    mode=mode, labor=labor, value=value)
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/unit-labors", operation_id="unit_labors")
 async def unit_labors(unit_ids: str = Query("", description="comma-separated unit ids to restrict to (default: all citizens)"),
                       labor: str = Query(None, description="count only this labor, e.g. MINE, CUTWOOD, BREWER")):
@@ -3019,8 +3044,26 @@ async def set_unit_labors(request: SetUnitLaborsRequest):
                      "labors_on": u.get("labor_count")} for u in vr.get("units", [])]
     except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
         verified, note = None, f"labors read-back failed: {e}"
+    # Which work details contain the units we touched - the layer that OWNS these flags.
+    governing = None
+    try:
+        wd = await LO.work_details(action="list")
+        by_unit: dict[int, list[str]] = {}
+        for d in wd.get("details", []):
+            for u in d.get("assigned_units", []):
+                by_unit.setdefault(int(u.get("unit_id")), []).append(str(d.get("name")))
+        governing = {int(t): by_unit.get(int(t), []) for t in touched}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError):
+        governing = None
     return {"applied": len(changes), "unknown": bad, "success": True,
-            "read_back": verified, "note": note}
+            "read_back": verified,
+            "governing_details": governing,
+            "note": (note + " | the game recomputes unit.status.labors from the work details "
+                     "(measured: a census of 5 dropped to the 2 ticked dwarves after a tick), so a "
+                     "labor write is NOT durable for a unit outside the detail - use /work-details "
+                     "action=assign to tick them in"),
+            "durability": ("detail-assigned" if governing and all(governing.get(t) for t in touched)
+                           else "not-in-detail: the game can reset these flags")}
 
 @app.post("/work-order", operation_id="work_order")
 async def work_order(request: WorkOrderRequest):

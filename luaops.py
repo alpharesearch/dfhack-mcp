@@ -1554,12 +1554,38 @@ async def unit_profession(action: str = "list", unit_id: int | None = None,
     return await call_module("unit_profession", payload)
 
 
+async def work_details(action: str = "list", detail: str | int | None = None,
+                       unit_id: int | None = None, mode: str | None = None,
+                       labor: str | None = None, value: bool | None = None) -> dict:
+    """The Labor menu's work details - `assigned_units` IS the green tick column.
+
+    Route (found in the game's own scripts - autofish.lua, gui/manipulator.lua,
+    gui/settings-manager.lua - and measured live):
+    `df.global.plotinfo.labor_info.work_details[i] = { name, icon, flags, allowed_labors,
+    assigned_units }`, where `assigned_units` is a vector of UNIT IDS. Built-in details carry
+    `cannot_be_everybody` / `no_modify`. This is the layer that OWNS `unit.status.labors`: the game
+    recomputes those flags from the details, which is exactly why my labor writes kept lying.
+    """
+    payload: dict = {"action": str(action)}
+    if detail is not None:
+        payload["detail"] = detail
+    if unit_id is not None:
+        payload["unit_id"] = int(unit_id)
+    if mode:
+        payload["mode"] = str(mode)
+    if labor:
+        payload["labor"] = str(labor)
+    if value is not None:
+        payload["value"] = bool(value)
+    return await call_module("work_details", payload)
+
+
 async def unit_labors(unit_ids: list[int] | None = None, labor: str | None = None) -> dict:
     """Read the labors the GAME holds per citizen - the read-back for labor writes.
 
     Field names are DFHack's (`MINE`, not `MINING`); `u.status.labors.MINING` does not exist on
-    this build and a `pcall` probe reads it as a silent false, which is how a labor census from
-    raw Lua can lie to you.
+    this build and a `pcall` probe reads it as a silent false, which is how a raw-Lua labor census
+    can lie to you.
     """
     payload: dict = {}
     if unit_ids:
@@ -1567,32 +1593,6 @@ async def unit_labors(unit_ids: list[int] | None = None, labor: str | None = Non
     if labor:
         payload["labor"] = str(labor)
     return await call_module("unit_labors", payload)
-
-
-async def unit_labors(unit_ids: list[int] | None = None, labor: str | None = None) -> dict:
-    """Read the labors the GAME holds per citizen - the read-back for labor writes.
-
-    Field names are DFHack's (`MINE`, not `MINING`); `u.status.labors.MINING` does not exist on
-    this build and a `pcall` probe reads it as a silent false, which is how a labor census from
-    raw Lua can lie to you.
-    """
-    payload: dict = {}
-    if unit_ids:
-        payload["unit_ids"] = [int(i) for i in unit_ids]
-    if labor:
-        payload["labor"] = str(labor)
-    return await call_module("unit_labors", payload)
-
-
-async def find_soil(elev0: int, elev1: int, cell: int = 16) -> dict:
-    """Soil census by material (farm plots need soil floors; `/survey` reports classes only).
-
-    Reads `df.global.world.map.all` (NOT `df.global.world.map` - that is the struct's method
-    table and measured `blocks=0`), tests each block tile's material for the soil flags
-    (MUDPYROCLASTIC / PYROPLASTIC, what DF's farm-plot check uses), and clusters the hits per
-    `cell`, naming the materials so a wrong predicate is visible in the answer.
-    """
-    return await call_module("find_soil", {"elev0": int(elev0), "elev1": int(elev1), "cell": int(cell)})
 
 
 async def pile_arrays(action: str = "check",

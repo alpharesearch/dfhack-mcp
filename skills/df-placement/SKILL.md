@@ -256,3 +256,22 @@ appointment the menu accepts can be one the depot refuses. Rules:
    (surface -> depot, 3 wide) is part of the *trade* prerequisite, not just the depot rung.
 3. Appointments by index are a UI-visible lie. If a tool cannot verify eligibility, it must say
    so on the result (the module now stamps `legibility: UNVERIFIED`).
+
+## §19 - labors belong to work details; `/set-unit-labors` alone is not a labor plan
+
+Measured 2026-11-22 from the player's Labor screen and the live structures:
+
+- The detail list is **`df.global.plotinfo.labor_info.work_details`** (found in the game's own
+  `autofish.lua` / `gui/manipulator.lua` / `gui/settings-manager.lua`; my probes of `world.*`,
+  `fortress_entity`, and the RPC found nothing). Per detail: `name`, `icon`, `flags`
+  (`cannot_be_everybody`, `no_modify` on built-ins), `allowed_labors`, **`assigned_units` = unit ids
+  = the green tick column**.
+- The game **recomputes `unit.status.labors` from the details**. Proof: my labor census said 5 of 7
+  had `MINE`; the player ticked a second dwarf and the census became **2** - exactly the assigned
+  pair. So a labor write is not a labor plan.
+- Tools: `GET /work-details` (list / assign / set-labor, each answered by a read from the game),
+  `GET /unit-labors` (the effective flags), `GET /unit-professions` (the profession label layer).
+  `/set-unit-labors` now reports `governing_details` and `durability`; if a unit is not in a detail
+  that grants the labor, the game can reset the flag.
+- Built-in details cannot be set to "Everybody does this" (`cannot_be_everybody`) - with 7 dwarves
+  that mode is a starvation trap anyway: all-miner means nobody hauls, cooks, farms, or cuts wood.

@@ -1025,6 +1025,36 @@ def test_the_soil_census_reports_dig_to_soil_ground_not_only_existing_soil():
     assert "potential_soil_clusters" in skill, "and it names the field to use"
 
 
+def test_the_labor_menu_is_driven_at_the_work_detail_layer_and_labor_writes_say_so():
+    """`/set-unit-labors` wrote `unit.status.labors` and reported `applied: N` while the player's
+    Labor screen showed one miner: the game recomputes those flags from the WORK DETAILS, measured
+    as a census of 5 dropping to the 2 ticked dwarves after a tick. A tool whose write the game
+    overwrites must say so. The authority is `df.global.plotinfo.labor_info.work_details[i]` with
+    `assigned_units` (unit ids = the tick column), `allowed_labors`, `flags`
+    (`cannot_be_everybody`/`no_modify` on built-ins) - the route found in the game's own scripts
+    (autofish.lua, gui/manipulator.lua, gui/settings-manager.lua)."""
+    mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
+    i = mod.index("function OPS.work_details")
+    seg = mod[i:mod.index("function M.dispatch")]
+    assert "df.global.plotinfo.labor_info" in seg and "li.work_details" in seg, \
+        "the real container (found in the game's own scripts), not a guess at world.*"
+    assert "assigned_units" in seg and "allowed_labors" in seg, "it reads the tick list and the granted labors"
+    assert "list:insert(" in seg and "list:remove(" in seg, "assign ticks and unticks, it does not only describe"
+    assert "read_back" not in seg or "assigned_after" in seg, "assign answers with the list as the game now holds it"
+    lo = pathlib.Path("luaops.py").read_text()
+    assert "async def work_details(" in lo, "the bridge exists"
+    main = pathlib.Path("main.py").read_text()
+    assert '@app.get("/work-details"' in main, "the endpoint exists"
+    k = main.index('@app.post("/set-unit-labors"')
+    seg2 = main[k:main.index("@app.", k + 30)]
+    assert "governing_details" in seg2 and "durability" in seg2, "the labor write names the layer that owns the flags"
+    assert "not-in-detail" in seg2, "and it says when the write is not durable"
+    # stale bridges must not survive: a dead Lua-backed census and a doubled def
+    assert "async def find_soil(" not in lo, "the dead Lua census bridge is gone"
+    names = [l for l in lo.split("\n") if l.startswith("async def unit_labors(")]
+    assert len(names) == 1, "no duplicate bridge definitions"
+
+
 def test_the_reachability_graph_is_anchored_on_civilians_not_wildlife_density():
     """`/dig-reachable` said walkable fort floors were unreachable: `fort_band()` scored unit
     density over ALL units, so ~90 wildlife units at RPC z 11-26 beat the fort's 17 citizens at
