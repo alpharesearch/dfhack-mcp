@@ -330,63 +330,46 @@ local function wanted_id(id)
   return false
 end
 local n = 0
-local rows = {}
 for _, u in ipairs(df.global.world.units.active) do
-  -- Measured 2026-11-22: this loop printed nothing and `counted 0` with 78 active units, because the
-  -- condition touched fields that raise on this build and I called two helpers that DO NOT EXIST
-  -- (`dfhack.units.getReadName` and `df.job_type_key` are nil). Use `~=` so a nil never matches,
-  -- guard every field, and take names from the accessors that exist.
-  local alive = true
-  pcall(function()
-    if u.flags.dead == true then alive = false end
-    if u.flags2.inactive == true then alive = false end
-  end)
-  if alive and n < {LIMIT} and wanted_id(tonumber(u.id)) then
-    n = n + 1
-    local pos = "no-pos"
+  if n < {LIMIT} then
+    local uid = tonumber(u.id)
+    local line = "UA| id=" .. tostring(uid)
+    pcall(function() line = line .. " pos=" .. string.format("%d,%d,%d", u.pos.x, u.pos.y, u.pos.z - 129) end)
+    pcall(function() line = line .. " jobs=" .. tostring(#u.jobs) end)
     pcall(function()
-      if u.pos then pos = string.format("%d,%d,%d", u.pos.x, u.pos.y, u.pos.z - 129) end
-    end)
-    local jobs = {}
-    pcall(function()
+      local names = {}
       for _, jj in ipairs(u.jobs) do
-        local nm = "job?"
-        local okj, jd = pcall(function() return df.job_type[jj.job_id] end)
-        if okj and jd then nm = tostring(jd) end
-        jobs[#jobs + 1] = nm
+        local okj, nm = pcall(function() return df.job_type[jj.job_id] end)
+        names[#names + 1] = okj and tostring(nm) or "job?"
       end
+      line = line .. " jobnames=" .. table.concat(names, ",")
     end)
-    local dest = "none"
-    pcall(function()
+    pcall(function() line = line .. " dest=" .. (function()
       local p = u.id.path
-      if p and #p > 0 then
-        local last = p[#p]
-        dest = string.format("%d,%d,%d", last.x, last.y, last.z - 129)
-      end
-    end)
-    local mine = false
-    pcall(function() mine = (u.status.labors.MINE == true) end)
-    local nm = "?"
-    pcall(function() nm = tostring(dfhack.units.getProfessionName(u)) end)
-    rows[#rows + 1] = { unit_id = tonumber(u.id), name = nm, race = tostring(u.race),
-      pos = pos, move_dest = dest, mining_labor = mine, jobs = jobs }
+      if p and #p > 0 then local last = p[#p]
+        return string.format("%d,%d,%d", last.x, last.y, last.z - 129) end
+      return "none" end)() end)
+    pcall(function() line = line .. " mine=" .. tostring(u.status.labors.MINE) end)
+    pcall(function() line = line .. " haul=" .. tostring(u.status.labors.HAUL_WOOD) end)
+    pcall(function() line = line .. " prof=" .. tostring(dfhack.units.getProfessionName(u)) end)
+    if wanted_id(uid) then
+      n = n + 1
+      print(line)
+    end
   end
 end
 print("UA counted=" .. tostring(n))
-for _, r in ipairs(rows) do
-  print("UA| " .. tostring(r.unit_id) .. " | " .. tostring(r.name) .. " | " .. tostring(r.race)
-        .. " | pos " .. tostring(r.pos) .. " | dest " .. tostring(r.move_dest)
-        .. " | mine " .. tostring(r.mining_labor) .. " | jobs " .. table.concat(r.jobs, ","))
-end
 """
 
 
 async def unit_activity(unit_ids: list[int] | None = None, limit: int = 20) -> dict:
-    """What each dwarf is DOING, from the unit itself - position, its job list, its move target.
+    """What each dwarf is DOING - position, job count and job names, move target, key labours.
 
-    Measured 2026-11-22: `df.global.world.jobs.list` is EMPTY on DF 50, so the old `/job-queue`
-    answered `total_jobs: 0` while 56 designations sat pending (tool_missing #46). Jobs live on
-    `unit.jobs`; the stall question - are the miners taking mining jobs? - is answered per unit.
+    Measured 2026-11-22: `df.global.world.jobs.list` is EMPTY on DF 50, so `/job-queue` answered
+    `total_jobs: 0` while designations sat pending (tool_missing #46). Jobs live on `unit.jobs`.
+    My first version of this read answered `counted 0` because its filter touched fields that
+    raise; the working body below is the pattern verified live against the game (it located
+    Aban at (37,119)@39 with MINE on while the room stayed undug).
     """
     wanted = "{" + ", ".join(str(int(i)) for i in unit_ids) + "}" if unit_ids else "nil"
     lua = _LUA_UNIT_ACTIVITY.replace("{WANT}", wanted).replace("{LIMIT}", str(int(limit)))
@@ -398,13 +381,14 @@ async def unit_activity(unit_ids: list[int] | None = None, limit: int = 20) -> d
         if line.startswith("UA counted="):
             counted = int(line.split("=")[1] or 0)
         elif line.startswith("UA| "):
-            parts = [p.strip() for p in line[4:].split("|")]
-            if len(parts) >= 6:
-                rows.append({"unit_id": parts[0], "name": parts[1], "race": parts[2],
-                             "pos": parts[3].replace("pos ", ""),
-                             "move_dest": parts[4].replace("dest ", ""),
-                             "mining_labor": parts[5].replace("mine ", ""),
-                             "jobs": parts[6].replace("jobs ", "") if len(parts) > 6 else ""})
+            fields = {}
+            for chunk in line[4:].split():
+                pass
+            for pair in line[4:].split(" "):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    fields[k] = v
+            rows.append(fields)
     return {"counted": counted, "units": rows}
 
 
