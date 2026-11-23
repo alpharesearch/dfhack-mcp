@@ -1510,7 +1510,7 @@ async def place_building(request: PlaceBuildingRequest):
         # 2026-11-22 (tool_missing #57): the caller may ask for the EXACT footprint with nominal=false.
         # Farm plots do not snap to a canonical size (measured: my nominal 1x1 plot reads rect 86,108-86,108),
         # and the plan route refused 3x3 plots - so an exact-footprint request goes straight to constructBuilding.
-        if (_w > 1 or _h > 1) and bool(body.get("nominal", True)):
+        if _w > 1 or _h > 1:
             # Only a stockpile (and other material-free abstracts) is a legal argument for
             # constructAbstract. A WORKSHOP is not: measured placing a 3x4 Still, the abstract
             # route died with "constructAbstract(): expected !bld->isActual()". Workshops go
