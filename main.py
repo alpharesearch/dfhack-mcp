@@ -1706,9 +1706,12 @@ async def unit_activity(unit_ids: str = Query(None, description="comma-separated
 async def job_queue(limit: int = Query(40)):
     """The jobs queue - RemoteFortressReader exposes NONE of it. Returns total job count and job descriptions with the acting unit. This is how you find out why nothing is happening."""
     try:
-        return await LO.list_jobs(limit=limit)
+        # Measured 2026-11-22: the rebuilt queue answered with real counts (total_jobs 7: unit 5,
+        # building 2) and `success: null` - a reply must state its own outcome (tool_missing #46).
+        res = await LO.list_jobs(limit=limit)
+        return {"success": True, **res}
     except LO.LuaOpError as e:
-        return {"error": str(e)}
+        return {"success": False, "error": str(e)}
 
 @app.get("/unit-counts", operation_id="unit_counts")
 async def unit_counts():
