@@ -108,6 +108,10 @@ config object, so copy the keys you change.
   profile received briefings and wakes, and the plugin adopts agents created before activation.
   `GET` the panel/`/df-watch list` to see who is watched; `/df-watch off` drops a session (it
   re-subscribes by calling a tool); `require_tool_contact: false` restores the broadcast.
+- **The filter chat is named, not "Untitled"** (0.1.98): after `session.create`, the plugin calls the
+  session controller's `rename({ sessionId, title: 'df-observer-filter' })` (this deployment mounts
+  the `session-title` service). A created session has no human prompt to title from, so it showed as
+  Untitled in the sidebar; a refusal is logged as a note and never breaks the filter.
 - **The filter never leaks chats** (0.1.97): the filter session has a stable id, is reused across
   activations, is capped by `filter_max_spawns` (default 1) enforced before every
   `sessionController.create`, and inherits the briefed session's workspace as its `cwd`. The
