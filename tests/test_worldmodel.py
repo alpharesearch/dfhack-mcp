@@ -1025,6 +1025,23 @@ def test_the_soil_census_reports_dig_to_soil_ground_not_only_existing_soil():
     assert "potential_soil_clusters" in skill, "and it names the field to use"
 
 
+def test_the_labor_write_endpoint_does_not_claim_to_be_the_labor_menu():
+    """The endpoint's own description is part of the tool. Its docstring used to say 'This is how
+    the fort gets miners ... the `miners` count ... is read from the same labors' - the claim the
+    player's screenshot disproved (applied: 2 vs one tick) and the metric that misled me. The
+    docstring must state the layer it writes, that the detail owns the flags, and where the tick
+    lives."""
+    main = pathlib.Path("main.py").read_text()
+    i = main.index('@app.post("/set-unit-labors"')
+    seg = main[i:main.index("@app.", i + 30)]
+    doc = seg.split('"""')[1]
+    assert "EFFECTIVE labor flags" in doc and "NOT how a fort gets miners" in doc, "the docstring names its own layer"
+    assert "applied` validates NAMES" in doc, "it says what its success field means"
+    assert "governing_details" in doc and "durability" in doc, "and what to read instead"
+    assert "/work-details" in doc, "it points at the tick"
+    assert "This is how the fort gets miners" not in doc, "the lie is gone"
+
+
 def test_the_labor_menu_is_driven_at_the_work_detail_layer_and_labor_writes_say_so():
     """`/set-unit-labors` wrote `unit.status.labors` and reported `applied: N` while the player's
     Labor screen showed one miner: the game recomputes those flags from the WORK DETAILS, measured

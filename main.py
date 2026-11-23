@@ -3010,7 +3010,26 @@ async def labor_list():
 
 @app.post("/set-unit-labors", operation_id="set_unit_labors")
 async def set_unit_labors(request: SetUnitLaborsRequest):
-    """THE LABOR MENU (`y`), driven. changes: [{unit_id, labor, value}] where labor is a name from labor_list (MINE, MASON, ...) or a labor id, value true/false. This is how the fort gets miners: SetUnitLabors is RPC, so no cursor is involved. Verify with world_objects/look: the `miners` count in the ladder header is read from the same labors."""
+    """Set the EFFECTIVE labor flags on units (`unit.status.labors`) - NOT the Labor menu, and NOT how a fort gets miners.
+
+    changes: [{unit_id, labor, value}], labor a name from /labor-list (MINE, MASON, ...) or an id.
+    Measured 2026-11-22, the reason this docstring is not the one it was: a write answered
+    `applied: 2`, the player's Labor screen showed ONE tick, and after a tick was added a census of
+    5 `MINE` holders fell to exactly the 2 ticked dwarves. The game recomputes these flags from the
+    WORK DETAILS, so this endpoint changes a derived value - on its own it is not durable.
+
+    Read the answer, not just `applied`:
+      - `applied` validates NAMES against the RPC labor list. It says nothing about the game's state.
+      - `read_back` is the touched units' labor lists, read from the game after the write.
+      - `governing_details` lists which work details contain each touched unit; `durability` is
+        `detail-assigned` only when every touched unit is inside a detail, and
+        `not-in-detail: the game can reset these flags` otherwise.
+      - `unknown` lists labor names this build does not have (`MINING` is not one; it is `MINE`).
+
+    To make a dwarf a miner in the sense the game uses, tick the detail:
+    `GET /work-details action=assign detail=Miners unit_id=... mode=add`, then verify with
+    `GET /unit-labors?labor=MINE`. Use this endpoint to fix a flag a detail should already grant,
+    not to staff the fort."""
     body = await _as_dict(request)
     dec = await world._dec(await world._gen())
     by_name = {v: k for k, v in dec.flags.get("unit_labor", {}).items()}
