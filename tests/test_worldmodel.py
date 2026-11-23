@@ -344,6 +344,22 @@ def test_pile_categories_are_the_flags_the_game_exposes_not_a_wiki_list():
     assert "plants" not in names, "this build has no plants flag - plump helmets are FOOD"
 
 
+def test_zone_removal_is_opt_in_and_proven_by_the_zone_list():
+    """The gate my remove_zone docstring promised did not exist in the endpoint: a bare POST
+    {"building_id": N} reached a chunk that mutates `assigned_units` and every unit's
+    `general_refs` before `deconstruct` - on the path that produced
+    `crash_2026-11-21-22-53-41.txt`. Removal now requires acknowledge_risk, refuses when the
+    id is not a live zone, and answers with the read-back verdict (removed / UNVERIFIED /
+    still present), so a silent reply is never read as success."""
+    main = pathlib.Path("main.py").read_text()
+    i = main.index('@app.post("/remove-zone"')
+    seg = main[i:main.index("@app.", i + 30)]
+    assert 'body.get("acknowledge_risk") is not True' in seg, "the gate exists in the endpoint, not only in prose"
+    assert "not a live zone" in seg, "an id that is not in the zone list is refused, not sent"
+    assert "_building_present(" in seg, "the answer is the read-back verdict"
+    assert '"verdict": "UNVERIFIED"' in seg, "NO DATA is reported as unverified"
+
+
 def test_zone_removal_never_calls_notifycivzonemodified_without_a_building():
     """This is the crash of 2026-11-21 22:53. My remove_zone chunk ended with
     `pcall(function() dfhack.buildings.notifyCivzoneModified() end)` - no building argument -

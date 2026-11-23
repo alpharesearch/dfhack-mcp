@@ -348,6 +348,12 @@ class ResizeBuildingRequest(BaseModel):
     h: int
 
 
+class RemoveZoneRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    building_id: int = Field(..., description="Target zone ID")
+    acknowledge_risk: bool = Field(False, description="Must be True: zone removal mutates unit refs and has crashed this fort once")
+
+
 class BuildingIdRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
     building_id: int = Field(..., description="Target building ID")
@@ -2610,16 +2616,58 @@ async def list_zones():
 
 
 @app.post("/remove-zone", operation_id="remove_zone")
-async def remove_zone(request: BuildingIdRequest):
-    """Mark an activity zone for removal by id ({"building_id": N}). remove_building goes through findAtTile, which does not see zones."""
+async def remove_zone(request: RemoveZoneRequest):
+    """Remove an activity zone by id - **opt-in**, because this path has killed the fort once.
+
+    Measured 2026-11-21 22:53:41 (`crash_2026-11-21-22-53-41.txt`): a zone removal via RPC died
+    with SIGSEGV at address 0 inside `Buildings::notifyCivzoneModified`. The no-arg call is
+    gone, but the chunk still performs pointer surgery (setOwner(b, nil), erasing
+    `assigned_units`, erasing + `:delete()`-ing every `general_refs` civzone entry in
+    `units.active`, then `deconstruct`). That is the riskiest shape of write this project has,
+    so it is gated like zone creation: pass `acknowledge_risk: true`, and prefer the in-game
+    zone removal (`z -> ... -> remove`) for a living fortress. The answer carries a read-back
+    verdict: a zone is proven gone from the live zone list, not from the write's reply.
+    """
     body = await _as_dict(request)
+    bid = int(body["building_id"])
+    if body.get("acknowledge_risk") is not True:
+        return {"success": False,
+                "error": f"remove_zone is gated: this path crashed the fort once "
+                         f"(crash_2026-11-21-22-53-41.txt) and still mutates unit refs before "
+                         f"deconstruct; zone {bid} was NOT touched",
+                "hint": "remove it in-game (z -> the zone -> remove), or pass acknowledge_risk: true",
+                "requires": "acknowledge_risk"}
     dec = await world._dec(await world._gen())
+    # Never remove blind: is the id even a zone right now?
     try:
-        res = await LO.remove_zone(dec, int(body["building_id"]))
+        zones = await LO.list_zones(dec)
     except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "verdict": "UNVERIFIED",
+                "error": f"the zone list produced NO DATA, so removal is refused: {e}"}
+    mine = [z for z in zones if int(z["id"]) == bid]
+    if not mine:
+        return {"success": False, "verdict": "not a live zone",
+                "error": f"no zone with building_id {bid} in the live list "
+                         f"({', '.join(str(z['id']) for z in zones) or 'no zones'}); nothing removed"}
+    try:
+        res = await LO.remove_zone(dec, bid)
+        write_note = None
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        res, write_note = {"error": str(e)}, str(e)
     world.cache.reset()
-    return {"success": True, **res}
+    present = await _building_present(bid)
+    if present is False:
+        return {"success": True, "verdict": "removed", "removed_zone_id": bid,
+                "was": mine[0].get("type_name"),
+                "verified_by": "the id is absent from the live zone list",
+                "write_reply": write_note}
+    if present is None:
+        return {"success": False, "verdict": "UNVERIFIED", "removed_zone_id": bid,
+                "error": "the zone reads produced NO DATA: removal not proven",
+                "write_reply": write_note}
+    return {"success": False, "verdict": "still present", "removed_zone_id": bid,
+            "error": res.get("error") or "the zone is still in the live list",
+            "write_reply": write_note}
 
 
 @app.post("/create-zone", operation_id="create_zone")
