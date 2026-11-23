@@ -2469,11 +2469,15 @@ async def buildings_live(elev0: int = Query(None), elev1: int = Query(None),
             dec = await world._dec(await world._gen())
             for row in res.get("buildings", []):
                 tid = row.get("type_id")
-                if tid is not None:
+                resolved = str(row.get("type", ""))
+                # The Lua census names buildings with dfhack.buildings.getName (the game's own
+                # helper). Only when that gave nothing ("type 32") do we try the RPC decoder -
+                # and the RPC enum ids do NOT match the game's, so its answer is labelled.
+                if tid is not None and resolved.startswith("type "):
                     try:
                         row["type_name"] = str(dec.building_name(int(tid)))
                     except Exception:
-                        row["type_name"] = f"type {tid} (not in the decoder's list)"
+                        row["type_name"] = f"type {tid} (id not in the RPC decoder's enum)"
         except (DFHackError, DFHackTransportError) as e:
             res["names_note"] = f"type names unavailable: {e}"
         if type:

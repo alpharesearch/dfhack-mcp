@@ -1842,7 +1842,15 @@ function OPS.buildings_live(args)
         -- RPC decoder it already uses (`dec.building_name`), which is where "Wagon" came from.
         local tid = nil
         pcall(function() tid = tonumber(b:getType()) end)
-        local kind = tid ~= nil and ("type" .. tostring(tid)) or "?"
+        -- The name route that EXISTS here: dfhack.buildings.getName (measured: `df.building_defnames`,
+        -- `df.building_idnames`, `df.enums`, `dfhack.buildings.getGeneralBuild`, `df.is_id` and
+        -- `df.building.get_name` are all absent; the RPC ids do not match the game's ids - type 32 is
+        -- not in the RPC decoder's list, which is why "type 32" was the answer before).
+        local kind = "type " .. tostring(tid)
+        pcall(function()
+          local nm = dfhack.buildings.getName(b)
+          if nm ~= nil and tostring(nm) ~= "" then kind = tostring(nm) end
+        end)
         if want == nil or kind:upper():find(want) ~= nil then
           total = total + 1
           local flags = {}
