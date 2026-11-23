@@ -363,6 +363,45 @@ def test_labor_writes_carry_a_read_back_and_the_census_tool_exists():
     assert "pairs(u.status.labors)" in mod, "it reads the game's own labor fields"
 
 
+def test_the_soil_census_is_a_python_tool_that_reports_what_it_scanned():
+    """The farm rung ("3x3 plot in a 5x5 soil room") had no tool. My first census was a Lua module
+    op, and the Lua route to the tile grids is CLOSED on this build - measured: `world.T_map.all:
+    not found`, `map:find` nil for real coordinates, and every block grid (`matgrid`, `typegrid`,
+    `tileptr`, `regiongrid`, `water`) unreadable, with `pairs(block)` itself raising. It answered
+    `blocks_scanned: 0, soil_tiles: 0`: a read failure wearing a census. The census now rides the
+    RPC block cache and the game's tiletype list, and it must say how many blocks it scanned,
+    because 0 from a scan of nothing is not a map fact."""
+    main = pathlib.Path("main.py").read_text()
+    i = main.index('@app.get("/find-soil"')
+    seg = main[i:main.index('@app.get("/unit-labors"', i)]
+    assert "world.cache.blocks(" in seg, "the RPC block cache, not a Lua map walk"
+    assert "GetTiletypeList" in seg, "the game's own tiletype list defines soil"
+    assert "blocks_scanned" in seg, "the census reports how much it actually scanned"
+    assert "soil_tiletypes_seen" in seg, "it names the tiletypes it matched, so a wrong predicate is visible"
+    mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
+    assert "function OPS.find_soil" not in mod, "the Lua census is gone - it could only answer 0"
+    assert "blocks_scanned: 0" in mod, "and the reason is recorded where the next reader will look"
+
+
+def test_labor_writes_carry_a_read_back_and_the_census_tool_exists():
+    """`/set-unit-labors` answers `applied: N`, which validates NAMES against the RPC labor list -
+    not the game's labor state. Measured 2026-11-22 after the player said 'you only have one
+    miner': the write said applied=2, the plugin's profession-based metric said 1, and the game's
+    own `u.status.labors` (field name `MINE`; `MINING` does not exist and my pcall probe read it
+    as a silent false) said MINE on for all seven citizens. Three numbers, three meanings - so the
+    write must carry the game's answer, and there must be a census tool."""
+    main = pathlib.Path("main.py").read_text()
+    i = main.index('@app.post("/set-unit-labors"')
+    seg = main[i:main.index("@app.", i + 30)]
+    assert "read_back" in seg and "LO.unit_labors(" in seg, "the labor write answers with the game's state"
+    assert '@app.get("/unit-labors"' in main, "the census endpoint exists"
+    lo = pathlib.Path("luaops.py").read_text()
+    assert "async def unit_labors(" in lo, "the bridge exists"
+    mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
+    assert "function OPS.unit_labors" in mod, "the module op exists"
+    assert "pairs(u.status.labors)" in mod, "it reads the game's own labor fields"
+
+
 def test_the_soil_census_reads_the_block_list_and_names_its_materials():
     """The farm rung ("3x3 plot in a 5x5 soil room") had no tool: `/survey` counts tile CLASSES
     and soil is a MATERIAL property. My first raw probe iterated `df.global.world.map` and
