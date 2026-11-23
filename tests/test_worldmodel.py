@@ -358,7 +358,12 @@ def test_the_crash_categories_carry_the_measured_reference_sizes():
     assert "1327" in corps, "corpses.corpses allocated to the measured race length"
     assert "1327" in refuse and "113" in refuse, "refuse sub-vectors 1327 and refuse.type 113"
     assert "skulls" in refuse and "teeth" in refuse, "the fields my old table never knew existed"
-    assert 'type(v)=="table" or type(v)=="userdata"' in lo, "userdata is not skipped by the alloc scan"
+    # The configure allocation needs no type test at all: it addresses each field named in
+    # SETTINGS_ARRAYS and resizes it - which works on the game's `userdata` vectors. The scan
+    # that DOES classify values lives in the Lua module, and it must accept userdata.
+    assert "SETTINGS_ARRAYS" in lo and ':resize(' in lo, "allocation addresses fields by name and resizes"
+    mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
+    assert 'type(v) == "table" or type(v) == "userdata"' in mod, "the module's scan accepts userdata"
     mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
     assert "ref > 0 and #v < ref" in mod, "check is reference-anchored: a 0-size field is legal when the game's pile has 0 (wood.mats)"
 
