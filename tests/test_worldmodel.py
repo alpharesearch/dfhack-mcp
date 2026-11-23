@@ -360,7 +360,10 @@ def test_the_quickstart_skill_does_not_instruct_a_removed_tool():
     assert "is **removed**" in skill, "the skill states the removal and its reason"
     assert "work_details" in skill and "unit_labors" in skill, "the staffing route is named instead"
     assert "removed" in skill.lower(), "and the skill says why"
-    assert "OPT-IN ONLY" in skill, "the wagon removal is not a silent chain step"
+    # The player's rule (2026-11-22): the wagon is a WOOD decision, not an approval question -
+    # "if you need the wood break up the wagon, if there are lots of trees don't bother".
+    assert "no need to ask the player" in skill and "lots of trees" in skill, \
+        "the wagon rule is the player's wood rule, quoted"
 
 
 def test_the_building_census_exists_because_the_artery_had_no_coordinates():

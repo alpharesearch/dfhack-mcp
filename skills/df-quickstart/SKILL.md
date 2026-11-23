@@ -108,12 +108,13 @@ Every production chain in the flowchart stems from two initial designations:
    - **`Office`**: Place a `Table` + `Chair` via `place_building`, then `create_zone(kind="office", x=..., y=..., elev=..., w=3, h=3, owner_unit_id=<manager_unit_id>, acknowledge_risk=True)` (or `assign_zone_owner`) for **`Manager`** and **`Bookkeeper`**.
    - **`Dining hall`**: Place `Tables` + `Thrones`, then `create_zone(kind="dining", x=..., y=..., elev=..., w=5, h=5, acknowledge_risk=True)`.
    - **`Bedrooms`**: Place `Beds` (from `Carpenter's workshop`) + `Doors`, then `create_zone(kind="bedroom", x=..., y=..., elev=..., w=3, h=3, acknowledge_risk=True)`.
-   - **`Remove embark wagon`** - **OPT-IN ONLY, ask the player first.** Once indoor stockpiles
-     (`All stockpiles` / `Food pile`) exist, the wagon can go via `remove_building` (it also yields
-     3 logs). The player's standing rule on this fort is **keep the wagon**: it is the trade route's
-     anchor and the next caravan needs it, and a removal is an irreversible write, so it is never a
-     silent step in the chain. (Measured cost of acting on a flowchart line without asking: the zone
-     writes on this fort have crashed the game twice.)
+   - **`Remove embark wagon`** - **a wood decision, not an approval question** (the player's rule,
+     2026-11-22): *"no need to ask the player, if you need the wood break up the wagon, if there are
+     lots of trees don't bother."* So: check the wood supply and the trees first (`find_trees`,
+     `alerts_and_wellbeing` wood count, your `wood` pile). If trees are plentiful, leave the wagon
+     standing - it anchors the caravan route and the next wagon needs the 3-wide path. If the fort
+     needs logs now (barrels/bins/beds/buckets are queued behind wood and choppings are far away),
+     take it apart via `remove_building` (it yields 3 logs) and verify the logs land on the wood pile.
 3. **`Hospital` (Orange Location Node)**:
    - **Converging Prerequisites**: `Chief Medical Dwarf` (`manage_nobles`) + `Thread` + `Cloth` + `Buckets` + `Splint/Crutches` + `Beds` + `Tables` + `Chests`.
 4. **`Craftdwarf's workshop`** (`Labor: Crafting`)
