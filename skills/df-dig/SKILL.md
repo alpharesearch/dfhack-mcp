@@ -204,3 +204,15 @@ them and the ledger fills up with vanished counts.
 pending burns in-game days (food drops, seasons pass, animals breed) for nothing; a fort
 paused with work queued just wastes no time. The pause is a measurement tool: it freezes a
 stall so you can read it, and it is the polite thing to do while you think.
+
+## §19 - what `dig-reachable` does and does not decide
+
+Measured 2026-11-22: the oracle called `(68,116)@37` and `@36` **unreachable** from the dwarves'
+surface tile. I read that as "the game will not work it" - and the game built both stairs
+(`class=stairs_down`, `class=stairs_ud`) and queued the box (pending 44 -> 41 -> 18, `dug 5 -> 7`).
+
+* `reachable: false` = **no walkable neighbour in the computed graph**. It is a pre-flight warning
+  about connectivity, and it does NOT model digging from the tile above (which is how shafts, stair
+  wells and room tops get dug). Stair designations under an open tile are workable.
+* `pending_dig` read **while the game is paused** proves nothing. A stalled face is proven by
+  `dug` not moving **across running reads** on a named box - never by one paused sample.
