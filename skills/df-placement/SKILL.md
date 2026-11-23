@@ -241,3 +241,18 @@ came out of it, in order of preference:
 * The Trade **screen** is UI state: `main_interface.trade.open` is a boolean, not a function.
   Feeding `tr.bld` + `open = true` opens it, but the good lists only fill once a fort trader
   and a merchant are actually talking - so "open the screen" is not a route to barter.
+
+## A broker in the menu is not a broker to the depot
+
+Measured 2026-11-22: the depot screen said **"You do not have a broker"** while the nobles
+screen showed BROKER appointed. Reading the game's data: the BROKER position has **no aptitude
+list** on this build (`apt_count = 0`), histfig flags contain **no `merchanted`** field, and
+`df.job_type.NEGOTIATOR` is nil - so agent-side tools cannot verify the dwarf qualifies, and an
+appointment the menu accepts can be one the depot refuses. Rules:
+1. **`trade_flags.anyone_can_trade = true`** is the fortress's own answer for a fort without a
+   legitimate broker (`/trade-depot request_broker anyone_can_trade=true`; read-back `True`).
+2. `accessible` is the **game's flag** (`depot.accessible`), not a tool opinion: goods, a broker
+   and an open window all mean nothing until a dwarf can walk to the depot. The wagon route
+   (surface -> depot, 3 wide) is part of the *trade* prerequisite, not just the depot rung.
+3. Appointments by index are a UI-visible lie. If a tool cannot verify eligibility, it must say
+   so on the result (the module now stamps `legibility: UNVERIFIED`).

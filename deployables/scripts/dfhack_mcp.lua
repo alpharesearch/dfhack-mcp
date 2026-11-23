@@ -667,6 +667,28 @@ function OPS.manage_nobles(args)
     if pos_code == "BOOKKEEPER" and (args.bookkeeper_settings == nil) then
       pcall(function() df.global.plotinfo.nobles.bookkeeper_settings = 4 end)
     end
+  -- NOBLE LEGALITY: aptitudes. Measured 2026-11-22: the player's depot said "You do not have
+  -- a broker" while the nobles screen showed one appointed, because auto_assign picked citizens
+  -- round-robin by index with NO eligibility check. `positions.own[BROKER].apt` is EMPTY on this
+  -- build (measured apt_count=0) and histfig flags expose no `merchanted` field, so the game's
+  -- broker eligibility is not readable from those two sources - a position written onto an
+  -- unqualified dwarf is a UI-visible lie, and the fortress's answer is the depot flag
+  -- `anyone_can_trade`. The loop below therefore reports the aptitudes it CAN read, and warns
+  -- when a position has none (i.e. eligibility cannot be verified here).
+  local function apt_report(p)
+    local res = {}
+    if p == nil then return res end
+    local n = 0
+    pcall(function() n = #p.apt end)
+    for i = 0, n - 1 do
+      local a = p.apt[i]
+      local keyname = "?"
+      pcall(function() keyname = tostring(df.UnitAbility[a.key]) end)
+      res[#res + 1] = { key = keyname, value = tonumber(a.value) }
+    end
+    return res
+  end
+
   elseif action == "auto_assign" then
     local citizens = {}
     for _, u in ipairs(df.global.world.units.active) do
@@ -693,7 +715,13 @@ function OPS.manage_nobles(args)
         if cur_hf < 0 then
           local u = citizens[((c_idx - 1) % #citizens) + 1]
           c_idx = c_idx + 1
-          changes[#changes + 1] = assign_one_noble(code, u)
+          local ap = apt_report(pos_obj)
+          local ch = assign_one_noble(code, u)
+          ch.aptitudes = ap
+          if #ap == 0 then
+            ch.legibility = "UNVERIFIED: this position exposes no aptitude list on this build, so the tool cannot confirm the dwarf qualifies (measured for BROKER: apt_count 0, no histfig 'merchanted' flag). The game may still refuse the dwarf in its own screens - for a Trade Depot, trade_flags.anyone_can_trade=true is the fortress's answer."
+          end
+          changes[#changes + 1] = ch
         end
       end
     end
