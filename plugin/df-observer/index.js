@@ -1228,8 +1228,22 @@ export default class DFObserver extends TypertRemoteService {
       this.filterSpawns = (this.filterSpawns || 0) + 1
       // cwd: inherit the briefed session's workspace so the filter chat groups with the fort
       // instead of landing in the Host's own directory (that is what made them "Ungrouped").
-      const targetCwd = (this.liveTargets?.() || []).map((t) => t.agent?.session?.header?.cwd
-        ?? t.agent?.session?.cwd ?? t.cwd).find((c) => typeof c === 'string' && c.length > 0)
+      // The agent objects do not expose the header, so my first version of this found nothing and
+      // fell back to process.cwd() - measured: the filter chat landed in the Host workspace again.
+      // The documented source is the SessionSummary row: `list()` rows carry `cwd`.
+      let targetCwd = (this.liveTargets?.() || []).map((t) => t.cwd)
+        .find((c) => typeof c === 'string' && c.length > 0)
+      if (targetCwd === undefined) {
+        try {
+          const rows = await controller.list({}, this.abort.signal)
+          const wanted = new Set((this.liveTargets?.() || [])
+            .map((t) => String(t.agent?.session?.id ?? t.agent?.id ?? t.id)))
+          const row = (rows?.items || []).find((r) => wanted.has(String(r.sessionId)) && typeof r.cwd === 'string')
+          targetCwd = row?.cwd
+        } catch (error) {
+          this.note(`filter cwd lookup failed: ${error?.message ?? error}`)
+        }
+      }
       await controller.create({
         sessionId: this.filterSessionId,
         cwd: targetCwd ?? process.cwd(),
@@ -1250,8 +1264,15 @@ export default class DFObserver extends TypertRemoteService {
       // never a reason to fail the filter.
       if (agent) {
         try {
-          const titled = await controller.rename?.({ sessionId: this.filterSessionId, title: 'df-observer-filter' })
-          if (titled?.title) this.note(`filter session live: ${titled.title}`)
+          if (typeof controller.rename !== 'function') {
+            // Measured 2026-11-22: the chat was created but stayed Untitled, and the session log
+            // had NO title event - so say plainly what the mounted face exposes, do not skip silently.
+            this.note(`filter title skipped: the mounted sessionController face has no rename (typeof=${typeof controller.rename})`)
+          } else {
+            const titled = await controller.rename({ sessionId: this.filterSessionId, title: 'df-observer-filter' })
+            this.note(titled?.title ? `filter session titled: ${titled.title} (seq ${titled.seq})`
+                                    : 'filter title call returned no title')
+          }
         } catch (error) {
           this.note(`filter session title refused: ${error?.message ?? error}`)
         }
