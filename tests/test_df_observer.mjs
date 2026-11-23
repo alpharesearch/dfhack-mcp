@@ -2405,6 +2405,27 @@ test('require_tool_contact=false restores the old broadcast, and the fix is docu
          "the player\"s report is quoted where the gate is defined")
   assert(/name: 'df-watch'/.test(src), 'and there is an explicit command to see/control who is watched')
 })
+// The player's report, 2026-11-22: "under ungrouped it created a untitled new chat just now".
+// Measured: 85 `df-observer-filter-*` session directories in ~/.dsh/sessions/--home-markus--.
+// The filter's session id carried Date.now() (regenerated per activation), the agent lookup asked
+// ctx.agents.get(sessionId) (agents are keyed by AGENT id), so `filterAgent()` never resolved, and
+// `ensureFilterAgent()` created a NEW top-level session in the Host's own cwd on every wake cycle.
+test('the filter reuses one session and can never leak chats', () => {
+  const index = fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8')
+  assert(!/filterSessionId = `df-observer-filter-\$\{Date\.now\(\)/.test(index),
+         'the filter session id is stable - no per-activation id')
+  assert(/this\.filterSessionId = this\.filterSessionId \|\| 'df-observer-filter'/.test(index),
+         'and it is reused across activations')
+  assert(/for \(const agent of this\.ctx\.agents\.list\(\)\)/.test(index),
+         'the lookup matches the SESSION id where it lives, not agents.get(sessionId)')
+  assert(/filter_max_spawns: z\.number\(\)\.int\(\)\.min\(0\)\.default\(1\)/.test(index),
+         'a hard spawn cap exists (default 1)')
+  assert(/this\.filterSpawns >= cap/.test(index), 'and it is enforced before every create')
+  assert(/targetCwd \?\? process\.cwd\(\)/.test(index),
+         'the filter session inherits the briefed workspace - not the Host cwd ("Ungrouped")')
+  assert(/filter: \$\{this\.filterSpawns\} spawn/.test(index),
+         'the cap announces itself and falls back to the rule gate')
+})
 for (const [name, fn] of queue) {
   try {
     const out = await fn()

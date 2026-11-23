@@ -182,6 +182,12 @@ export const Config = z.object({
    * verdict; play sessions get the filtered briefing. Default OFF - measure,
    * then flip. The wake whitelist stays Config-enforced over the filter. */
   filter_enabled: z.boolean().default(false),
+  /** Hard cap on filter-session spawns per plugin activation (default 1). The filter reuses one
+   * session; when it cannot, the cap stops the leak and the rule gate decides briefings.
+   * Measured 2026-11-22: 85 `df-observer-filter-*` sessions in the Host cwd - the id was
+   * regenerated per activation and the agent lookup keyed the wrong id, so every wake cycle
+   * created a chat (tool_missing #39). */
+  filter_max_spawns: z.number().int().min(0).default(1),
   /** Preset the filter session runs (empty = profile default). */
   filter_agent_preset: z.string().default(''),
   /** Optional explicit model route for the filter ({provider, model}). */
@@ -1125,7 +1131,11 @@ export default class DFObserver extends TypertRemoteService {
 
   installFilterSurface() {
     const { ctx, config } = this
-    this.filterSessionId = `df-observer-filter-${Date.now().toString(36)}`
+    // Measured 2026-11-22 (player: "under ungrouped it created a untitled new chat just now"):
+    // this id carried Date.now(), so EVERY activation produced a fresh id, `filterAgent()` never
+    // matched it, and `ensureFilterAgent()` created a NEW top-level session each time - 85
+    // `df-observer-filter-*` session directories in the Host's own cwd. The id is stable now.
+    this.filterSessionId = this.filterSessionId || 'df-observer-filter'
     // The filter's standing rules: scoped to its own session only.
     ctx.effect(() => ctx.systemPrompt.section({
       name: 'df-observer-filter',
@@ -1183,11 +1193,31 @@ export default class DFObserver extends TypertRemoteService {
   }
 
   filterAgent() {
-    return this.filterSessionId ? this.ctx.agents.get(this.filterSessionId) : undefined
+    if (!this.filterSessionId) return undefined
+    // The old lookup was `ctx.agents.get(sessionId)`: an agent is keyed by AGENT id, so the
+    // session the plugin created never resolved to an agent - "created but not live yet", then
+    // spawned again. Match the session id where it actually lives.
+    const direct = this.ctx.agents.get(this.filterSessionId)
+    if (direct) return direct
+    for (const agent of this.ctx.agents.list()) {
+      const sid = agent.session?.id ?? agent.session ?? agent.id
+      if (String(sid) === this.filterSessionId) return agent
+    }
+    return undefined
   }
 
   async ensureFilterAgent() {
     if (!this.config.filter_enabled || this.filterAgent()) return this.filterAgent()
+    const cap = Math.max(0, Number(this.config.filter_max_spawns ?? 1))
+    if (this.filterSpawns >= cap) {
+      // The cap is the leak plug: never more than this many chats for the filter, and say so once.
+      if (!this.filterCapNoted) {
+        this.filterCapNoted = true
+        this.note(`filter: ${this.filterSpawns} spawn(s) used, cap ${cap} reached - the filter is OFF for this session and the rule gate keeps briefing decisions (the plugin created ${this.filterSpawns} chat(s) for the filter: tool_missing #39)`)
+      }
+      this.config = { ...this.config, filter_enabled: false }
+      return undefined
+    }
     const controller = this.ctx.get('sessionController')
     if (controller === undefined) {
       this.note('filter enabled but no sessionController in this composition: filter inactive (rule gate continues)')
@@ -1195,9 +1225,14 @@ export default class DFObserver extends TypertRemoteService {
       return undefined
     }
     try {
+      this.filterSpawns = (this.filterSpawns || 0) + 1
+      // cwd: inherit the briefed session's workspace so the filter chat groups with the fort
+      // instead of landing in the Host's own directory (that is what made them "Ungrouped").
+      const targetCwd = (this.liveTargets?.() || []).map((t) => t.agent?.session?.header?.cwd
+        ?? t.agent?.session?.cwd ?? t.cwd).find((c) => typeof c === 'string' && c.length > 0)
       await controller.create({
         sessionId: this.filterSessionId,
-        cwd: process.cwd(),
+        cwd: targetCwd ?? process.cwd(),
         ...(this.config.filter_agent_preset ? { agentPreset: this.config.filter_agent_preset } : {}),
       })
       for (let i = 0; i < 20 && !this.filterAgent(); i += 1) {

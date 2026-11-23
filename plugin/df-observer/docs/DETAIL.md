@@ -108,6 +108,11 @@ config object, so copy the keys you change.
   profile received briefings and wakes, and the plugin adopts agents created before activation.
   `GET` the panel/`/df-watch list` to see who is watched; `/df-watch off` drops a session (it
   re-subscribes by calling a tool); `require_tool_contact: false` restores the broadcast.
+- **The filter never leaks chats** (0.1.97): the filter session has a stable id, is reused across
+  activations, is capped by `filter_max_spawns` (default 1) enforced before every
+  `sessionController.create`, and inherits the briefed session's workspace as its `cwd`. The
+  player-measured bug: 85 `df-observer-filter-*` sessions in the Host cwd, all Untitled/Ungrouped
+  (`tool_missing.md` #39).
 - Subagents are not briefed by default (`brief_subagents: false`): they inherit
   the parent's log; the parent session carries the live state.
 - The plugin targets live root agents in its own Host process; game state is
