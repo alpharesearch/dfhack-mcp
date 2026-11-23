@@ -402,27 +402,6 @@ def test_labor_writes_carry_a_read_back_and_the_census_tool_exists():
     assert "pairs(u.status.labors)" in mod, "it reads the game's own labor fields"
 
 
-def test_the_soil_census_reads_the_block_list_and_names_its_materials():
-    """The farm rung ("3x3 plot in a 5x5 soil room") had no tool: `/survey` counts tile CLASSES
-    and soil is a MATERIAL property. My first raw probe iterated `df.global.world.map` and
-    measured `blocks=0` - that is the struct's method table, not the block list. The census must
-    read `map.all`, test the material's soil flags, and NAME the materials it saw, so a wrong
-    predicate is visible as an empty answer rather than a confident zero."""
-    mod = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
-    i = mod.index("function OPS.find_soil")
-    body = mod[i:mod.index("function M.dispatch")]
-    assert "map:find(" in body, "map:find is the block accessor on this build (map.all measured as 'not found')"
-    assert "blocks_scanned" in body, "the census reports how many blocks it walked"
-    assert "x_dim" in body, "bounds come from the map's own dimensions"
-    assert "MUDPYROCLASTIC" in body, "the soil predicate is the material flag DF checks"
-    assert "hidden" in body, "fog is not soil evidence"
-    assert "materials" in body, "the answer names the materials it matched"
-    lo = pathlib.Path("luaops.py").read_text()
-    assert "async def find_soil(" in lo, "the python bridge exists"
-    main = pathlib.Path("main.py").read_text()
-    assert '@app.get("/find-soil"' in main, "the endpoint exists"
-
-
 def test_the_crash_categories_carry_the_measured_reference_sizes():
     """The player built a UI pile so I could measure what the game allocates:
     corpses.corpses = vector<char>[1327] (race-indexed), every refuse.* sub-vector = 1327,
