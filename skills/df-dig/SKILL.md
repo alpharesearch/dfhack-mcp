@@ -306,3 +306,15 @@ Measured 2026-11-22 (the forest at elev 43, the fort at 36-38):
 4. A high plain is its own component (measured: 4,674 tiles at elev 42 as comp 12). Trees up there
    need a ramp/stair route from the fort's ground before `cut_trees` designations can be worked -
    which is exactly why wood stayed 0 with 3-5 trunks designated.
+
+## §25 - the designation summary is not the designation truth
+
+Measured 2026-11-22: a 63-tile strip I queued at elev 35 reads back as `already_designated: 63` in
+`/survey` and `DEFAULT_DIG` in every `/tile-at` probe, while the `/observe` summary in the same window
+said `designated_total: 4` (tool_missing #45). So:
+
+- After a designation write, verify with `/survey` on the box (and `/tile-at` on a few tiles), not
+  with the summary count.
+- A stall alert quoting `pending 0` with a suspiciously small `designated_total` is a *scan* question
+  first: check the box, then the access (stair vs plain dig from above, §19), then the labour census
+  (§20) - in that order.
