@@ -194,6 +194,21 @@ contents vs an item-type scan.
   scan), plus `bookkeeper: {unit, satisfied, precision}` so I stop quoting numbers whose scope
   I have to explain in prose.
 
+## 20. A depot you can't walk to is not a depot — the rung lied, my own read didn't
+Player: *"I don't think your trade depot is reachable"*. They were right, and the evidence was
+already in my hands: `trade_depot(action="status")` has reported **`accessible: false`** on
+every read (rounds 37-38), while the observer rung printed
+`[x] Trade depot with 3-wide wagon access`. I quoted the rung and kept #33 open; the rung is a
+building-existence test, not a path test (#82 asked for `wagon_path`).
+Measured cause: between the walkable corridor at `y118` (floors carrying zones) and my depot
+terrace at `y121-125`, the tiles **`58-59, y119-120@38` are rock** — the terrace was excavated
+behind an unbroken wall. Fix this round: `DEFAULT_DIG` on `x58-59, y119-120@38` (4 tiles).
+- **Rule:** after building anything that must be *reached* (depot, pasture, well, meeting),
+  prove a walk route from the fort to it — a region/connected check, not a footprint check. A
+  5×5 pad dug in isolation is a room with no door, no path and no wagon.
+- For trade specifically: `accessible: false` + `marked_now_count: 0` was my honest state, and
+  I will treat the rung as decoration until `accessible: true` and a caravan is present.
+
 ## 15. Automation to keep on (read back live, not assumed)
 `autofarm` (plump 30/50), `seedwatch` (5/30 on 5 crops), `ban-cooking seeds+brew` (12+20),
 `suspendmanager`, `buildingplan`, `prioritize`, `tailor`, `autonestbox`, `autoslab`,
