@@ -278,3 +278,11 @@ All 56 endpoints below remain live on the FastAPI HTTP server for `df-observer`,
 - Measured 2026-11-24: MCP-surface caveat - every endpoint listed in §5 is HTTP-only, so "the
   capability exists" is not "the agent can call it": `get_building_def_list` closed gap #2 and the
   32-tool pruning re-opened it as #74 (#2, #74; main.py `exclude_operations`).
+- Measured 2026-11-24: a low `boundMethods` is warm-up, not a broken plugin - after a server restart
+  it rose `0 -> 5` on its own within about two minutes, with no in-game action; telling the player to
+  run `remote-server stop; start` is an inference, not a measured fix (#93).
+- Measured 2026-11-24: restarting the server process does NOT recover the client's MCP session - tool
+  calls kept returning `-32600 "Session not found"` while `GET /get-status` answered 200 with
+  `connected: true` and a full `worldSignature` (`save: trade2`, 192x192x191, tick 237778). That
+  combination locates the break above the server-game link, on the harness side; no tool on the MCP
+  surface can re-handshake it (`/reconnect` is HTTP-only, `main.py:exclude_operations`) (#93).
