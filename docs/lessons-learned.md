@@ -226,6 +226,23 @@ decoration: my depot cannot host a caravan where it stands.
 - Next move: re-site the depot to a surface pad (surface here is elev 40 - the pen/grazing
   level; the plot at 41 and forest at 43 above it), keeping 3-wide surface clearance.
 
+## 22. The wagon route cannot be tunneled flat - it must follow the surface, and my flat digs keep vanishing
+Trade rung attempts, all measured: `x51-55,119-121@38` (3-wide, spine order from dug floor) →
+`designated 0`; `x35-39,116-118@40` (continuing the dug surface route west) → `designated 0`;
+probe column `x39,116-118` at **both** elev 39 and 40 → `designated 0` on 39. Meanwhile the
+segments that DID dig are the ones on the open surface line: pad `x46-50,116-120@40`
+(`dug 25`), route `x40-45,116-118@40` (`dug 18`), corridor `x51-57,119-121@38` (`dug 21`).
+- Reading: going west the terrain drops (elev 40 → 39 → 38) and the west tiles are fog and in
+  the **aquifer band** (1030 water tiles; the tool's own alert: *"damp tiles auto-cancel
+  designations"*). A flat 3-wide tunnel at a fixed elevation is therefore not the shape of a
+  wagon route here - the route has to **step down with the surface using ramps**, tile by tile,
+  on the open grass, not through rock at depth.
+- **Rule:** for wagon access, trace the actual surface line (open tiles at the map's top layer)
+  and dig 3-wide **along** it, adding ramps where the level changes; never tunnel into fog in
+  an aquifer band.
+- Both depots read `accessible: false` with **zero explanation** (#82), so I treat this as an
+  unfinished rung, not a satisfied one, and I am not spending more writes on flat tunnels.
+
 ## 15. Automation to keep on (read back live, not assumed)
 `autofarm` (plump 30/50), `seedwatch` (5/30 on 5 crops), `ban-cooking seeds+brew` (12+20),
 `suspendmanager`, `buildingplan`, `prioritize`, `tailor`, `autonestbox`, `autoslab`,
