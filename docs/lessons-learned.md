@@ -243,6 +243,12 @@ segments that DID dig are the ones on the open surface line: pad `x46-50,116-120
 - Both depots read `accessible: false` with **zero explanation** (#82), so I treat this as an
   unfinished rung, not a satisfied one, and I am not spending more writes on flat tunnels.
 
+- **Correction (round 129):** the very box I cited as cancelled - `x35-39,116-118@40` - is now
+  **`to_dig 0, dug 15`** (A56/A57). So "flat tunnel designations vanish" was drawn too fast:
+  a designation that reads `designated 0` on the next poll can stick and be dug later, so
+  cancellations are partly **timing**, and the honest rule is *re-read the box after a few
+  rounds before declaring a write dead* - and never conclude a mechanism from one poll.
+
 ## 15. Automation to keep on (read back live, not assumed)
 `autofarm` (plump 30/50), `seedwatch` (5/30 on 5 crops), `ban-cooking seeds+brew` (12+20),
 `suspendmanager`, `buildingplan`, `prioritize`, `tailor`, `autonestbox`, `autoslab`,
