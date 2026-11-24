@@ -514,6 +514,12 @@ def test_wave1_lua_wheelbarrow_cancel_and_tasks():
         assert task_key in lua_src, f"missing task {task_key}"
     # #75: farm soil helper
     assert "function OPS.check_farm_soil" in lua_src
+    # Trade screen UI actions (#18, #91)
+    for act in ("_open_depot_sheet", "_click_trade_button", "barter_confirm", "_accept_confirm_dialog", "close_trade"):
+        assert act in lua_src, f"missing trade_depot action {act}"
+    main_src = pathlib.Path("main.py").read_text()
+    for act in ("open_trade", "barter_confirm", "close_trade"):
+        assert act in main_src, f"main.py missing trade_depot action {act}"
 
 
 def test_wave1_building_aliases_material_guard_and_container_stockpile():

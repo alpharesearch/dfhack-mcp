@@ -457,7 +457,7 @@ class GatherAndItemsRequest(BaseModel):
 
 class TradeDepotRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
-    action: str = Field("status", description="One of 'status' (inspect depot, caravans, goods at depot, pending haul queue, and top tradeable fortress items/bins), 'request_broker' (summon/dismiss Broker at depot), 'mark_goods' (queue items/bins to be hauled to depot via dfhack.items.markForTrade), 'unmark_goods' (cancel pending haul jobs or unload goods from depot), 'barter_status' (inspect open barter screen), or 'barter_select' (select/deselect items on open barter screen)")
+    action: str = Field("status", description="One of 'status', 'request_broker', 'mark_goods', 'unmark_goods', 'open_trade', 'barter_status', 'barter_select', 'barter_confirm', or 'close_trade'")
     building_id: int | None = Field(None, description="Trade Depot building ID (omit to target the first Trade Depot)")
     item_ids: list[int] | None = Field(None, description="Optional explicit list of item/bin IDs to mark, unmark, or select in barter")
     item_filter: str | None = Field(None, description="Optional item description or type substring filter (e.g. 'bin', 'mug', 'craft', 'amulet', 'crown')")
@@ -3859,22 +3859,54 @@ async def gather_and_items(request: GatherAndItemsRequest):
 
 @app.post("/trade-depot", operation_id="trade_depot")
 async def trade_depot(request: TradeDepotRequest):
-    """Manage the Trade Depot (`status`, `request_broker`, `mark_goods`, `unmark_goods`, `barter_status`, `barter_select`) for caravan hauling, Broker summoning, and barter selection."""
+    """Manage the Trade Depot (`status`, `request_broker`, `mark_goods`, `unmark_goods`, `open_trade`, `barter_status`, `barter_select`, `barter_confirm`, `close_trade`) for caravan hauling, opening barter, selecting goods, and completing trade."""
     body = await _as_dict(request)
+    act = str(body.get("action", "status")).lower()
+    common_kw = dict(
+        building_id=body.get("building_id"),
+        item_ids=body.get("item_ids"),
+        item_filter=body.get("item_filter"),
+        min_value=int(body.get("min_value", 0)),
+        max_items=int(body.get("max_items", 25)),
+        trader_requested=body.get("trader_requested"),
+        anyone_can_trade=body.get("anyone_can_trade"),
+        side=str(body.get("side", "fortress")),
+        selected=bool(body.get("selected", True)),
+    )
     try:
-        res = await LO.trade_depot(
-            action=str(body.get("action", "status")),
-            building_id=body.get("building_id"),
-            item_ids=body.get("item_ids"),
-            item_filter=body.get("item_filter"),
-            min_value=int(body.get("min_value", 0)),
-            max_items=int(body.get("max_items", 25)),
-            trader_requested=body.get("trader_requested"),
-            anyone_can_trade=body.get("anyone_can_trade"),
-            side=str(body.get("side", "fortress")),
-            selected=bool(body.get("selected", True)),
-        )
-        if str(body.get("action", "status")).lower() == "status" and res.get("accessible") is False and res.get("x0") is not None:
+        if act == "open_trade":
+            s1 = await LO.trade_depot(action="_open_depot_sheet", **common_kw)
+            if not s1.get("already_open"):
+                await asyncio.sleep(0.25)
+                s2 = await LO.trade_depot(action="_click_trade_button", **common_kw)
+                if not s2.get("trade_screen_open"):
+                    return {"success": False, "action": "open_trade", **s2}
+                await asyncio.sleep(0.25)
+            bs = await LO.trade_depot(action="barter_status", **{**common_kw, "max_items": max(80, int(body.get("max_items", 80)))})
+            return {"success": bool(bs.get("trade_screen_open")), "action": "open_trade", **bs}
+        if act == "barter_confirm":
+            c1 = await LO.trade_depot(action="barter_confirm", **common_kw)
+            if not c1.get("clicked_button"):
+                return {"success": False, **c1}
+            await asyncio.sleep(0.2)
+            dlg = await LO.trade_depot(action="_accept_confirm_dialog", **common_kw)
+            await asyncio.sleep(0.25)
+            bs = await LO.trade_depot(action="barter_status", **{**common_kw, "max_items": max(80, int(body.get("max_items", 80)))})
+            return {
+                "success": True,
+                "confirmed": True,
+                **c1,
+                **dlg,
+                "after": bs,
+            }
+        if act == "close_trade":
+            cl = await LO.trade_depot(action="close_trade", **common_kw)
+            await asyncio.sleep(0.15)
+            if cl.get("trade_screen_open") or cl.get("view_sheet_open"):
+                cl = await LO.trade_depot(action="close_trade", **common_kw)
+            return {"success": not cl.get("trade_screen_open", False), **cl}
+        res = await LO.trade_depot(action=act, **common_kw)
+        if act == "status" and res.get("accessible") is False and res.get("x0") is not None:
             try:
                 cx = (int(res["x0"]) + int(res["x1"])) // 2
                 cy = (int(res["y0"]) + int(res["y1"])) // 2

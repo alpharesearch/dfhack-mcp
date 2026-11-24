@@ -4,7 +4,7 @@
 --@ module = true
 
 local M = {}
-M.VERSION = "2026.11.24-v2"
+M.VERSION = "2026.11.24-v3"
 M.GAME_Z_OFFSET = 129
 
 local ok_json, df_json = pcall(require, "json")
@@ -1701,8 +1701,251 @@ function OPS.trade_depot(args)
       merchant_side = summarize_side(0),
       fortress_side = summarize_side(1),
     }
+  elseif action == "_open_depot_sheet" then
+    local tr = df.global.game.main_interface.trade
+    if tr ~= nil and tr.open == true then
+      return {
+        action = "open_trade",
+        building_id = tonumber(depot.id),
+        already_open = true,
+        trade_screen_open = true,
+      }
+    end
+    local ok_gui, gui = pcall(require, "gui")
+    if not ok_gui or not gui then
+      error("failed to load DFHack gui module")
+    end
+    local scr = dfhack.gui.getDFViewscreen(true)
+    for _ = 1, 3 do
+      if not df.global.game.main_interface.view_sheets.open then break end
+      gui.simulateInput(scr, "LEAVESCREEN")
+    end
+    local occupied = {}
+    for _, u in ipairs(df.global.world.units.active) do
+      local alive = false
+      pcall(function() alive = dfhack.units.isAlive(u) end)
+      if alive and u.pos.z == depot.z then
+        occupied[tostring(u.pos.x) .. "," .. tostring(u.pos.y)] = true
+      end
+    end
+    local tx, ty, found = tonumber(depot.x1), tonumber(depot.y1), false
+    for y = tonumber(depot.y1), tonumber(depot.y2) do
+      for x = tonumber(depot.x1), tonumber(depot.x2) do
+        if not occupied[tostring(x) .. "," .. tostring(y)] then
+          tx, ty, found = x, y, true
+          break
+        end
+      end
+      if found then break end
+    end
+    dfhack.gui.revealInDwarfmodeMap(xyz2pos(tx, ty, depot.z), true, true)
+    local gps = df.global.gps
+    local scale = gps.viewport_zoom_factor / 4
+    for iter = 1, 4 do
+      if iter == 1 then
+        local dx = tx - df.global.window_x
+        local dy = ty - df.global.window_y
+        gps.precise_mouse_x = math.floor((dx + 0.5) * scale)
+        gps.precise_mouse_y = math.floor((dy + 0.5) * scale)
+        gps.mouse_x = math.floor(gps.precise_mouse_x / math.max(1, gps.tile_pixel_x))
+        gps.mouse_y = math.floor(gps.precise_mouse_y / math.max(1, gps.tile_pixel_y))
+      else
+        local mp = dfhack.gui.getMousePos(true)
+        if mp and mp.x == tx and mp.y == ty then break end
+        if mp then
+          gps.precise_mouse_x = gps.precise_mouse_x + math.floor((tx - mp.x) * scale)
+          gps.precise_mouse_y = gps.precise_mouse_y + math.floor((ty - mp.y) * scale)
+          gps.mouse_x = math.floor(gps.precise_mouse_x / math.max(1, gps.tile_pixel_x))
+          gps.mouse_y = math.floor(gps.precise_mouse_y / math.max(1, gps.tile_pixel_y))
+        end
+      end
+    end
+    gui.simulateInput(scr, "_MOUSE_L")
+    local vs = df.global.game.main_interface.view_sheets
+    return {
+      action = "_open_depot_sheet",
+      building_id = tonumber(depot.id),
+      clicked_tile = { x = tx, y = ty, found_unoccupied = found },
+      view_sheet_open = (vs.open == true),
+      viewing_bldid = tonumber(vs.viewing_bldid),
+      focus = table.concat(dfhack.gui.getFocusStrings(scr), ","),
+    }
+  elseif action == "_click_trade_button" then
+    local tr = df.global.game.main_interface.trade
+    if tr ~= nil and tr.open == true then
+      return {
+        action = "_click_trade_button",
+        building_id = tonumber(depot.id),
+        trade_screen_open = true,
+        already_open = true,
+      }
+    end
+    local ok_gui, gui = pcall(require, "gui")
+    if not ok_gui or not gui then error("failed to load DFHack gui module") end
+    local scr = dfhack.gui.getDFViewscreen(true)
+    local focus = table.concat(dfhack.gui.getFocusStrings(scr), ",")
+    if not dfhack.gui.matchFocusString("dwarfmode/ViewSheets/BUILDING/TradeDepot", scr) then
+      return {
+        action = "_click_trade_button",
+        building_id = tonumber(depot.id),
+        trade_screen_open = false,
+        error = "TradeDepot sheet is not open (focus=" .. focus .. ")",
+      }
+    end
+    local gps = df.global.gps
+    local bx, by = nil, nil
+    for y = 8, math.min(28, gps.dimy - 1) do
+      local row = {}
+      for x = 0, gps.dimx - 1 do
+        local t = dfhack.screen.readTile(x, y)
+        local ch = t and t.ch or 32
+        row[#row + 1] = (ch >= 32 and ch < 127) and string.char(ch) or " "
+      end
+      local line = table.concat(row)
+      local trimmed = line:match("^%s*(.-)%s*$")
+      if trimmed == "Trade" then
+        local pos = line:find("Trade", 1, true)
+        if pos then
+          bx = pos + 1
+          by = y
+          break
+        end
+      end
+    end
+    if not (bx and by) then
+      return {
+        action = "_click_trade_button",
+        building_id = tonumber(depot.id),
+        trade_screen_open = false,
+        error = "Trade button not visible on TradeDepot sheet (is a caravan at the depot with a broker ready?)",
+      }
+    end
+    gps.mouse_x = bx
+    gps.mouse_y = by
+    gps.precise_mouse_x = math.floor((bx + 0.5) * gps.tile_pixel_x)
+    gps.precise_mouse_y = math.floor((by + 0.5) * gps.tile_pixel_y)
+    gui.simulateInput(scr, "_MOUSE_L")
+    return {
+      action = "_click_trade_button",
+      building_id = tonumber(depot.id),
+      clicked_button = { x = bx, y = by },
+      trade_screen_open = (tr ~= nil and tr.open == true),
+      have_talker = (tr ~= nil and (tonumber(tr.havetalker) or 0) ~= 0),
+      still_unloading = (tr ~= nil and (tonumber(tr.stillunloading) or 0) ~= 0),
+      focus = table.concat(dfhack.gui.getFocusStrings(scr), ","),
+    }
+  elseif action == "barter_confirm" then
+    local tr = df.global.game.main_interface.trade
+    if tr == nil or tr.open ~= true then
+      return { action = "barter_confirm", building_id = tonumber(depot.id), confirmed = false, trade_screen_open = false, error = "trade screen is not open (call action='open_trade' first)" }
+    end
+    if (tonumber(tr.havetalker) or 0) == 0 then
+      return { action = "barter_confirm", building_id = tonumber(depot.id), confirmed = false, trade_screen_open = true, error = "no broker/merchant talker at the depot yet" }
+    end
+    if (tonumber(tr.stillunloading) or 0) ~= 0 then
+      return { action = "barter_confirm", building_id = tonumber(depot.id), confirmed = false, trade_screen_open = true, error = "caravan is still unloading goods" }
+    end
+    local function count_selected(s_idx)
+      local cnt, val_sum = 0, 0
+      pcall(function()
+        local goods = tr.good[s_idx]
+        local flags = tr.goodflag[s_idx]
+        for i = 0, #goods - 1 do
+          if flags[i].selected then
+            cnt = cnt + 1
+            val_sum = val_sum + (tonumber(dfhack.items.getValue(goods[i])) or 0)
+          end
+        end
+      end)
+      return cnt, val_sum
+    end
+    local m_cnt, m_val = count_selected(0)
+    local f_cnt, f_val = count_selected(1)
+    if f_cnt == 0 then
+      return {
+        action = "barter_confirm",
+        building_id = tonumber(depot.id),
+        confirmed = false,
+        trade_screen_open = true,
+        merchant_selected_before = m_cnt,
+        fortress_selected_before = f_cnt,
+        error = "no fortress goods selected to trade (use barter_select side='fortress' first)",
+      }
+    end
+    local ok_gui, gui = pcall(require, "gui")
+    if not ok_gui or not gui then error("failed to load DFHack gui module") end
+    local gps = df.global.gps
+    local bx, by = nil, nil
+    for y = math.max(0, gps.dimy - 12), gps.dimy - 1 do
+      local row = {}
+      for x = 0, gps.dimx - 1 do
+        local t = dfhack.screen.readTile(x, y)
+        local ch = t and t.ch or 32
+        row[#row + 1] = (ch >= 32 and ch < 127) and string.char(ch) or " "
+      end
+      local line = table.concat(row)
+      if line:find("Seize", 1, true) and line:find("Trade", 1, true) then
+        local pos = line:find("Trade", 1, true)
+        if pos then
+          bx = pos + 1
+          by = y
+          break
+        end
+      end
+    end
+    if not (bx and by) then
+      return { action = "barter_confirm", building_id = tonumber(depot.id), confirmed = false, error = "Trade button not found on barter screen" }
+    end
+    gps.mouse_x = bx
+    gps.mouse_y = by
+    gps.precise_mouse_x = math.floor((bx + 0.5) * gps.tile_pixel_x)
+    gps.precise_mouse_y = math.floor((by + 0.5) * gps.tile_pixel_y)
+    local scr = dfhack.gui.getDFViewscreen(true)
+    gui.simulateInput(scr, "_MOUSE_L")
+    return {
+      action = "barter_confirm",
+      building_id = tonumber(depot.id),
+      clicked_button = { x = bx, y = by },
+      merchant_selected_before = m_cnt,
+      fortress_selected_before = f_cnt,
+      merchant_value_before = m_val,
+      fortress_value_before = f_val,
+      focus_after_click = table.concat(dfhack.gui.getFocusStrings(dfhack.gui.getCurViewscreen(true)), ","),
+    }
+  elseif action == "_accept_confirm_dialog" then
+    local ok_gui, gui = pcall(require, "gui")
+    if not ok_gui or not gui then return { accepted_confirm_dialog = false } end
+    local cur = dfhack.gui.getCurViewscreen(true)
+    if dfhack.gui.matchFocusString("dfhack/lua/MessageBox", cur) then
+      gui.simulateInput(cur, "SELECT")
+      return { accepted_confirm_dialog = true }
+    end
+    return { accepted_confirm_dialog = false }
+  elseif action == "close_trade" then
+    local ok_gui, gui = pcall(require, "gui")
+    if not ok_gui or not gui then error("failed to load DFHack gui module") end
+    local tr = df.global.game.main_interface.trade
+    local vs = df.global.game.main_interface.view_sheets
+    for _ = 1, 5 do
+      local cur = dfhack.gui.getCurViewscreen(true)
+      if dfhack.gui.matchFocusString("dfhack/lua/MessageBox", cur) then
+        gui.simulateInput(cur, "SELECT")
+      elseif (tr ~= nil and tr.open == true) or (vs ~= nil and vs.open == true) then
+        gui.simulateInput(cur, "LEAVESCREEN")
+      else
+        break
+      end
+    end
+    local cur = dfhack.gui.getCurViewscreen(true)
+    return {
+      action = "close_trade",
+      building_id = tonumber(depot.id),
+      trade_screen_open = (tr ~= nil and tr.open == true),
+      view_sheet_open = (vs ~= nil and vs.open == true),
+      focus = table.concat(dfhack.gui.getFocusStrings(cur), ","),
+    }
   elseif action ~= "status" then
-    error("unknown trade_depot action '" .. tostring(action) .. "' (expected status, request_broker, mark_goods, unmark_goods, barter_status, or barter_select)")
+    error("unknown trade_depot action '" .. tostring(action) .. "' (expected status, request_broker, mark_goods, unmark_goods, open_trade, barter_status, barter_select, barter_confirm, or close_trade)")
   end
 
   -- Collect pending BringItemToDepot jobs and top tradeable candidate items
