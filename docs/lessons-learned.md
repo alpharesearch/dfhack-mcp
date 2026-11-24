@@ -60,6 +60,8 @@ position`** — a door needs solid walls on two opposite sides.
 ## 4. Stairs before rooms; a designation needs a reachable face
 349 floors + 72 stairs transition-verified. A face reading `designated N, dug 0` across many
 reads is almost always (1) unreachable, (2) no able miner, (3) deprioritized — check in order.
+- **Rule:** build the stairs before boxing the rooms, and treat a face stuck at `designated N,
+  dug 0` as a connectivity → crew → priority question, tested in that order, not as a dead write.
 
 ## 5. A later DEFAULT_DIG box silently flattens stair designations
 My 7×7 farm box (`x60-66,y114-120@35`) covered the 4 tiles just designated
@@ -72,6 +74,9 @@ Five rounds of frozen faces. `prioritize status` showed hauling/brewing/meals pr
 no mining; `prioritize Mine 100` answered `Ignoring unknown job type: "Mine"` *and*
 `Ignoring unknown job type: "100"`, then printed the list as if nothing failed; `prioritize -r`
 (200 lines) is the only way to learn the name. `prioritize Dig` → "Prioritized 19 jobs" (#76).
+- **Rule:** the mining job type is `Dig` (with `CarveUpDownStaircase`, `DigChannel`,
+  `ConstructBuilding` beside it), never `Mine`; and a `prioritize` reply that prints the list
+  after "Ignoring unknown job type" is a failed write, not a success (#76).
 
 ## 7. Wounds stop a fort; crew diagnostics count flags, not bodies
 `wounded 7` of 7 — every miner plus the Manager — while `picks 3`, `bottlenecks: []`,
@@ -116,6 +121,15 @@ Pen 5 (`56..60,116..119@40`) holds all 6 (sheep, goat, cavy, rabbit, 2 yaks).
 Pause only when the crew is genuinely idle. Wounds heal with time, jobs need time, crops grow
 with time — with 7 wounded, 82 queued jobs and growing plots the right call was **unpaused**,
 re-running the game whenever it self-paused with work queued.
+- **Rule:** pause only when the crew is genuinely idle — with wounds, queued jobs and growing
+  plots the correct state is unpaused, and a game that self-pauses while work is queued gets
+  re-run.
+
+## 15. Automation to keep on (read back live, not assumed)
+`autofarm` (plump 30/50), `seedwatch` (5/30 on 5 crops), `ban-cooking seeds+brew` (12+20),
+`suspendmanager`, `buildingplan`, `prioritize`, `tailor`, `autonestbox`, `autoslab`,
+`preserve-rooms/tombs`, `logistics`, `autochop target 60 30` — note `autochop 30 60` is
+`CR_WRONG_USAGE`; it needs the `target` subcommand.
 
 ## 16. A separator needs at least one unexcavated row — my "three rooms" were one room
 Player: *"to have a separator you need to keep at least one row of fog"*. My noble rooms at
@@ -198,7 +212,7 @@ contents vs an item-type scan.
 Player: *"I don't think your trade depot is reachable"*. They were right, and the evidence was
 already in my hands: `trade_depot(action="status")` has reported **`accessible: false`** on
 every read (rounds 37-38), while the observer rung printed
-`[x] Trade depot with 3-wide wagon access`. I quoted the rung and kept #33 open; the rung is a
+`[x] Trade depot with 3-wide wagon access`. I quoted the rung and kept to-do #33 open; the rung is a
 building-existence test, not a path test (#82 asked for `wagon_path`).
 Measured cause: between the walkable corridor at `y118` (floors carrying zones) and my depot
 terrace at `y121-125`, the tiles **`58-59, y119-120@38` are rock** — the terrace was excavated
@@ -248,9 +262,3 @@ segments that DID dig are the ones on the open surface line: pad `x46-50,116-120
   a designation that reads `designated 0` on the next poll can stick and be dug later, so
   cancellations are partly **timing**, and the honest rule is *re-read the box after a few
   rounds before declaring a write dead* - and never conclude a mechanism from one poll.
-
-## 15. Automation to keep on (read back live, not assumed)
-`autofarm` (plump 30/50), `seedwatch` (5/30 on 5 crops), `ban-cooking seeds+brew` (12+20),
-`suspendmanager`, `buildingplan`, `prioritize`, `tailor`, `autonestbox`, `autoslab`,
-`preserve-rooms/tombs`, `logistics`, `autochop target 60 30` — note `autochop 30 60` is
-`CR_WRONG_USAGE`; it needs the `target` subcommand.
