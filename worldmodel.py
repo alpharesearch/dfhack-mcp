@@ -47,7 +47,7 @@ from collections import Counter, defaultdict, deque
 # in-game Elevation = z - 129. Everything the layer publishes - parameters, band rows,
 # hazards, depths, dig boxes, script arguments - uses that number. The conversion lives
 # here and nowhere else:   z = elev + GAME_Z_OFFSET   (elev is always the in-game number)
-GAME_Z_OFFSET = 129
+GAME_Z_OFFSET = int(os.getenv("DFHACK_GAME_Z_OFFSET", "129"))
 UI_Z_OFFSET = GAME_Z_OFFSET          # alias so older call sites read correctly
 
 
@@ -1504,14 +1504,14 @@ class WorldModel:
     # 3D walk graph from tile semantics. This is what catches silently-cancelled
     # designations: a designation on rock nobody can reach is not a plan, it is a no-op.
 
-    WALK = (".", "g", "s", "S", "=", "/")   # floors, grass, smooth, constructed, stairs, ramps
+    WALK = (".", "g", "s", "w", "'", "+", ",", "c", "a", "-", "=", "<", ">", "/", "^")
 
     async def reach_map(self, e0: int | None = None, e1: int | None = None) -> dict:
         """(x,y,z) -> component id over EXPLORED walkable tiles, with z-links.
 
-        Links: the 4-neighbourhood on the same level between walkable tiles; between levels
-        at the same column for stairs ('=' is walkable from both sides) and ramps ('/' links
-        z to z+1, which is how DF slopes work). Unexplored tiles are ABSENT from the map:
+        Links: 8-neighbourhood on the same level between walkable tiles; symmetric
+        stair connections ('=', '<', '>') and ramp connections ('/' up to '^'/' ' and
+        its 8-neighbourhood at z+1). Unexplored tiles are ABSENT from the map:
         unknown, not blocked - the difference matters for planning.
         """
         if e0 is None or e1 is None:
@@ -1537,7 +1537,8 @@ class WorldModel:
         cid = 0
         seed_all = [(x, y, z) for (x, y), col in band.items()
                     for z, g in col.items() if g in W]
-        seen = set(seed_all)
+        DIRS8 = ((1, 0), (-1, 0), (0, 1), (0, -1),
+                 (1, 1), (1, -1), (-1, 1), (-1, -1))
         for s0 in seed_all:
             if s0 in comp:
                 continue
@@ -1549,16 +1550,29 @@ class WorldModel:
                 g = band[(x, y)].get(z, " ")
                 neigh = []
                 # DWARVES MOVE DIAGONALLY in DF, and so do water, vermin, miasma and ambush
-                # - so diagonal contact between open areas IS a path. A 4-neighbour graph
-                # reported rooms as separated when the game treats them as connected.
-                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1),
-                               (1, 1), (1, -1), (-1, 1), (-1, -1)):
+                # - so diagonal contact between open areas IS a path.
+                for dx, dy in DIRS8:
                     neigh.append((x + dx, y + dy, z))
-                if g == "=":                 # up-down stair: the level above and below
+                # Symmetric stair links:
+                if g in ("=", "<") and band[(x, y)].get(z + 1) in ("=", ">"):
                     neigh.append((x, y, z + 1))
+                if g in ("=", ">") and band[(x, y)].get(z - 1) in ("=", "<"):
                     neigh.append((x, y, z - 1))
-                if g == "/":                 # ramp: same column, one level up
-                    neigh.append((x, y, z + 1))
+                # Ramp up (z -> z+1): '/' connects through open/ramp_top above it to its 8-neighbours
+                if g == "/":
+                    above = band[(x, y)].get(z + 1)
+                    if above in ("^", " "):
+                        if above in W:
+                            neigh.append((x, y, z + 1))
+                        for dx, dy in DIRS8:
+                            if band.get((x + dx, y + dy), {}).get(z + 1) in W:
+                                neigh.append((x + dx, y + dy, z + 1))
+                # Ramp down (z -> z-1, symmetric counterpart):
+                if band[(x, y)].get(z - 1) == "/" and g in ("^", " "):
+                    neigh.append((x, y, z - 1))
+                for dx, dy in DIRS8:
+                    if band.get((x + dx, y + dy), {}).get(z - 1) == "/" and band.get((x + dx, y + dy), {}).get(z) in ("^", " "):
+                        neigh.append((x + dx, y + dy, z - 1))
                 for nx, ny, nz in neigh:
                     cell = band.get((nx, ny))
                     if cell is None:
@@ -1593,43 +1607,72 @@ class WorldModel:
                 "reachable": (me is not None and me == ref),
                 "components_total": r["count"]}
 
-    WAGON_WALK = (".", "g", "s", "S", "/")   # floors, grass, smooth, constructed, RAMPS - no stairs
+    WAGON_WALK = (".", "g", "s", "w", "'", "+", ",", "c", "a", "/", "^")   # no stairs
 
     async def wagon_path(self, x: int, y: int, elev: int, no_stairs: bool = True) -> dict:
-        """Can a wagon get from here to the map edge? BFS over floors and ramps, diagonals
-        included, stairs excluded (wagons refuse them) - the depot rung as evidence, not a
-        presence check. Reports the reachable tile count, the edge tiles reached, and the
-        3-wide sample columns so a route can be judged as a road, not a goat track.
-        """
-        band, _ = await self._stack(30, 43)
+        """Can a 3x3 wagon get from here to the map edge? BFS over 3x3-clear floors and ramps
+        (stairs excluded, no vertical floor-teleportation). Uses dynamic map extent and an
+        elevation band centered on `elev`."""
+        tile_x, tile_y, z_count = self.cache.tile_x, self.cache.tile_y, self.cache.z_count
+        if not tile_x:
+            tile_x, tile_y, z_count = await self.cache.extent()
+        e_lo = max(-GAME_Z_OFFSET, int(elev) - 5)
+        e_hi = (min(z_count - 1 - GAME_Z_OFFSET, int(elev) + 6)
+                if z_count > 0 else int(elev) + 6)
+        band, _ = await self._stack(e_lo, e_hi)
         walk = self.WAGON_WALK
+        DIRS8 = ((1, 0), (-1, 0), (0, 1), (0, -1),
+                 (1, 1), (1, -1), (-1, 1), (-1, -1))
+
+        def _wagon_fits(cx: int, cy: int, cz: int) -> bool:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    tx, ty = cx + dx, cy + dy
+                    if not (0 <= tx < tile_x and 0 <= ty < tile_y):
+                        return False
+                    if band.get((tx, ty), {}).get(cz, " ") not in walk:
+                        return False
+            return True
+
         start = (int(x), int(y), int(elev))
+        if not _wagon_fits(*start):
+            return {"from": list(start), "wagon_reachable_tiles": 0,
+                    "edge_tiles": [], "reaches_map_edge": False,
+                    "stairs_allowed": not no_stairs,
+                    "clearance": "3x3", "elev_range": [e_lo, e_hi],
+                    "map_extent": [tile_x, tile_y]}
         seen = {start}
         stack = [start]
         edges = []
         while stack:
             cx, cy, cz = stack.pop()
-            g = band.get((cx, cy), {}).get(cz, " ")
-            if g not in walk:
-                continue
-            if cx in (0, 191) or cy in (0, 191):
+            if cx <= 1 or cx >= tile_x - 2 or cy <= 1 or cy >= tile_y - 2:
                 edges.append((cx, cy, cz))
-            nbs = [(cx+dx, cy+dy, cz) for dx, dy in
-                   ((1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1))]
-            nbs += [(cx, cy, cz+1), (cx, cy, cz-1)]      # ramps link levels; stairs are not usable
+            nbs = [(cx + dx, cy + dy, cz) for dx, dy in DIRS8]
+            # Ramp up (cz -> cz+1): only from a ramp tile with open/ramp_top above
+            if band.get((cx, cy), {}).get(cz) == "/" and band.get((cx, cy), {}).get(cz + 1) in ("^", " "):
+                nbs.append((cx, cy, cz + 1))
+                for dx, dy in DIRS8:
+                    nbs.append((cx + dx, cy + dy, cz + 1))
+            # Ramp down (cz -> cz-1): symmetric ramp check
+            for dx, dy in ((0, 0),) + DIRS8:
+                nx, ny = cx + dx, cy + dy
+                if band.get((nx, ny), {}).get(cz - 1) == "/" and band.get((nx, ny), {}).get(cz) in ("^", " "):
+                    nbs.append((nx, ny, cz - 1))
             for n in nbs:
-                ng = band.get((n[0], n[1]), {}).get(n[2], " ")
-                if ng in walk and n not in seen:
+                if n not in seen and _wagon_fits(*n):
                     seen.add(n)
                     stack.append(n)
         return {"from": list(start), "wagon_reachable_tiles": len(seen),
                 "edge_tiles": edges[:12], "reaches_map_edge": bool(edges),
-                "stairs_allowed": not no_stairs}
+                "stairs_allowed": not no_stairs,
+                "clearance": "3x3", "elev_range": [e_lo, e_hi],
+                "map_extent": [tile_x, tile_y]}
 
     async def dig_reachable(self, x: int, y: int, elev: int,
                             from_x: int, from_y: int, from_elev: int) -> dict:
         """Can a dwarf actually work this tile? A wall tile is not walkable, so the test is:
-        a 4-neighbour at the same level (or the stair link below/above) is walkable AND in
+        an 8-neighbour at the same level (or the tile above/below) is walkable AND in
         the dwarves' component. Designations that fail this are cancelled silently by the
         game - the exact failure that ate my 3-wide adit designation.
         """
@@ -1645,19 +1688,22 @@ class WorldModel:
         ref = comp.get((int(from_x), int(from_y), int(from_elev)))
         if ref is None:
             return {"x": int(x), "y": int(y), "elev": int(elev),
-                    "reachable": False, "why": f"from-tile ({from_x},{from_y},{from_elev}) is not walkable"}
+                    "reachable": False, "why": f"from-tile ({from_x},{from_y},{from_elev}) is not walkable",
+                    "elev_range": r["elev_range"], "band_source": r["band_source"], "graph_tiles": r["tiles"]}
         via = []
-        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1),
+                       (1, 1), (1, -1), (-1, 1), (-1, -1)):
             c = comp.get((int(x) + dx, int(y) + dy, int(elev)))
             if c == ref:
                 via.append(f"({x+dx},{y+dy},{elev})")
-        for dz in (-1, 1):        # stair/ramp links into this tile
-            c = comp.get((int(x), int(y), int(elev) + dz))
-            if c == ref:
-                via.append(f"({x},{y},{elev+dz}) via stairs/ramp")
+        if comp.get((int(x), int(y), int(elev) + 1)) == ref:
+            via.append(f"({x},{y},{elev+1}) from above")
+        if comp.get((int(x), int(y), int(elev) - 1)) == ref:
+            via.append(f"({x},{y},{elev-1}) via stairs/ramp")
         return {"x": int(x), "y": int(y), "elev": int(elev),
                 "reachable": bool(via), "from_component": ref,
                 "access_via": via[:4] or ["none"],
+                "elev_range": r["elev_range"], "band_source": r["band_source"], "graph_tiles": r["tiles"],
                 "note": "workable from a walkable neighbour in the dwarves' component"}
 
 
@@ -1751,7 +1797,7 @@ class WorldModel:
         meaningless (on a building). Categories are counted, with samples, so a plan can be
         filtered before a single designation is sent.
         """
-        band, _ = await self._stack(min(elev - 6, 30), max(elev + 6, 43))
+        band, _ = await self._stack(int(elev) - 5, int(elev) + 6)
         gen = await self._gen()
         blocks = await self.cache.blocks(elev + GAME_Z_OFFSET, elev + GAME_Z_OFFSET + 1, gen)
         dec = await self._dec(gen)
@@ -2090,73 +2136,82 @@ class WorldModel:
         hz = await self.hazard_map(e0, e1) if require_dry else {}
         sites = []
         L, W, MD = int(length), int(width), int(min_depth)
+        DIGGABLE = ("#", "s", "w", "p", "B")
+        ENTRANCE_WALK = (".", "g", "s", "w", "'", "+", "/", "^")
+
+        def _check_rect(lv, x0: int, y0: int, rw: int, rh: int):
+            depths = []
+            for dy in range(rh):
+                for dx in range(rw):
+                    g = lv.grid[y0 + dy][x0 + dx]
+                    if g not in DIGGABLE:
+                        return None
+                    ox, oy = lv.origin
+                    d = surf.get((ox + x0 + dx, oy + y0 + dy))
+                    depths.append(None if d is None else (d - lv.elev))
+            if any(d is None or d < MD for d in depths):
+                return None
+            if require_dry:
+                ox, oy = lv.origin
+                for dy in range(rh):
+                    for dx in range(rw):
+                        rec = hz.get((ox + x0 + dx, oy + y0 + dy))
+                        if rec and any(e >= lv.elev for e in rec["aquifer"]):
+                            return None
+            return min(d for d in depths if d is not None)
+
+        def _add_site(lv, xs: int, ys: int, rw: int, rh: int, ex_g: int, ey_g: int, dmin: int, direction: str):
+            dist = None
+            if near:
+                nx, ny, ne = near
+                dist = abs(xs - nx) + abs(ys - ny) + abs(lv.elev - ne) * 2
+            sites.append({"elev": lv.elev, "x0": xs, "y0": ys,
+                          "x1": xs + rw - 1, "y1": ys + rh - 1,
+                          "length": L, "width": W, "direction": direction,
+                          "min_depth": dmin,
+                          "entrance": [ex_g, ey_g, lv.elev],
+                          "tiles": rw * rh, "dist_to_near": dist})
+
         for lv in levels:
             ox, oy = lv.origin
+            # Horizontal runs (L along X, W along Y): check East and West entrances
             for y in range(0, lv.rows - (W - 1)):
                 x = 0
                 while x < lv.cols - (L - 1):
-                    ok = True
-                    depths = []
-                    # Real geology is mixed: soil, stone, veins, ramps. A tunnel is defined
-                    # by a ROCK ROOF and depth under the surface, not by every tile being
-                    # wall. So accept any diggable tile (not open air, not water) provided
-                    # the tile directly above is solid - the ceiling must survive.
-                    DIGGABLE = ("#", ".", "g", "s", "S", "O", "b", "v")
-                    ROOF = ("#", ".", "S", "O", "b", "v")
-                    for dy in range(W):
-                        for dx in range(L):
-                            g = lv.grid[y + dy][x + dx]
-                            if g not in DIGGABLE:
-                                ok = False
-                                break
-                            # No per-tile roof test: in a mountain the rock above is
-                            # unexplored by definition, and DF lets you designate with fog
-                            # above. Depth under the local SURFACE is the roof guarantee,
-                            # and it is checked below via min_depth.
-                            d = surf.get((ox + x + dx, oy + y + dy))
-                            d = (lv.elev - d) if d is None else (d - lv.elev)
-                            depths.append(d)
-                        if not ok:
-                            break
-                    if not ok:
+                    dmin = _check_rect(lv, x, y, L, W)
+                    if dmin is None:
                         x += 1
                         continue
-                    if any(d is None or d < MD for d in depths):
-                        x += 1
+                    mid_y = y + (W // 2)
+                    east_ent = lv.grid[mid_y][x + L] if (x + L) < lv.cols else " "
+                    west_ent = lv.grid[mid_y][x - 1] if (x - 1) >= 0 else " "
+                    added = False
+                    if east_ent in ENTRANCE_WALK:
+                        _add_site(lv, ox + x, oy + y, L, W, ox + x + L, oy + mid_y, dmin, "W")
+                        added = True
+                    if west_ent in ENTRANCE_WALK:
+                        _add_site(lv, ox + x, oy + y, L, W, ox + x - 1, oy + mid_y, dmin, "E")
+                        added = True
+                    x += L if added else 1
+            # Vertical runs (W along X, L along Y): check North and South entrances
+            for x in range(0, lv.cols - (W - 1)):
+                y = 0
+                while y < lv.rows - (L - 1):
+                    dmin = _check_rect(lv, x, y, W, L)
+                    if dmin is None:
+                        y += 1
                         continue
-                    # DAMP check: an aquifer at or above the dig level in any column of the
-                    # run means water inflow when dug - the game warns "damp" for this.
-                    if require_dry:
-                        damp = False
-                        for dy in range(W):
-                            for dx in range(L):
-                                rec = hz.get((ox + x + dx, oy + y + dy))
-                                if rec and any(e >= lv.elev for e in rec["aquifer"]):
-                                    damp = True
-                                    break
-                            if damp:
-                                break
-                        if damp:
-                            x += 1
-                            continue
-                    # entrance: explored walkable ground just east of the run
-                    ex, ey = x + L, y + (W // 2)
-                    entrance = lv.grid[y + (W // 2)][ex] if ex < lv.cols else " "
-                    if entrance not in (".", "g", "s", "/"):
-                        x += 1
-                        continue
-                    xs, ys = ox + x, oy + y
-                    dist = None
-                    if near:
-                        nx, ny, ne = near
-                        dist = abs(xs - nx) + abs(ys - ny) + abs(lv.elev - ne) * 2
-                    dmin = min(d for d in depths if d is not None)
-                    sites.append({"elev": lv.elev, "x0": xs, "y0": ys,
-                                  "x1": xs + L - 1, "y1": ys + W - 1,
-                                  "length": L, "width": W, "min_depth": dmin,
-                                  "entrance": [ox + ex, oy + y + (W // 2), lv.elev],
-                                  "tiles": L * W, "dist_to_near": dist})
-                    x += L
+                    mid_x = x + (W // 2)
+                    south_ent = lv.grid[y + L][mid_x] if (y + L) < lv.rows else " "
+                    north_ent = lv.grid[y - 1][mid_x] if (y - 1) >= 0 else " "
+                    added = False
+                    if south_ent in ENTRANCE_WALK:
+                        _add_site(lv, ox + x, oy + y, W, L, ox + mid_x, oy + y + L, dmin, "N")
+                        added = True
+                    if north_ent in ENTRANCE_WALK:
+                        _add_site(lv, ox + x, oy + y, W, L, ox + mid_x, oy + y - 1, dmin, "S")
+                        added = True
+                    y += L if added else 1
         sites.sort(key=lambda r: (-r["min_depth"], r["dist_to_near"] if r["dist_to_near"] is not None else 10**9))
         return sites[:max_sites]
 

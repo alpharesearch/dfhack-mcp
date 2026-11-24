@@ -4,7 +4,7 @@ description: The access-first build order - staircase, connection tunnel, then r
 whenToUse: Use when a designated room or tunnel makes no progress (dug stays 0), when a fort has no dug floors yet, when staffing "miners/hunters/brewers" has to change, or when a stall alert claims a face is idle. Generic: applies to any embark, any elevation, any world.
 metadata:
   source: demonstrated live by the player on DF 53.17-r1 and measured from the game's own reads (see dfhack-mcp tool_missing.md #19-#48)
-  tools: send_dig_command, survey, tile_at, hazards, depth_profile, transitions, work_details, unit_labors, reach_map, dig_reachable, create_stockpile, configure_stockpile, place_building, fort_progress
+  tools: send_dig_command, survey, work_details, create_stockpile, configure_stockpile, place_building, fort_progress, fort_strata, fort_plan, building_status, workshop_job, manage_nobles, create_zone, assign_zone_owner, dfhack_automation
 ---
 
 # Access first: staircase, connection, room
@@ -94,3 +94,18 @@ order count rose, yet every order read `active: false, validated: false, worksho
 workshop before any dwarf can run it (tool_missing #50). A manager must exist first - `has_manager` in
 the same reply tells you, and nobles are appointed through the work-detail/labour machinery, not the
 removed flag write.
+
+## 8. Underground CAD planner: fort_strata + fort_plan
+
+Instead of guessing tile coordinates across z-levels, plan the underground layout with `fort_strata` and `fort_plan`:
+
+1. **Scan vertical geology first**: call `fort_strata` (defaults to fort center) to inspect `soil_walls`, `potential_soil`, `stone_walls`, `aquifer_tiles`, `water_tiles`, and `magma_tiles` per elevation; it prefers covered underground layers (`open_space == 0`) for `farm_elev`, `workshop_elev`, and `bedroom_elev`.
+2. **Anchor the central shaft**: call `fort_plan` with `action="set_hub"`, passing `(x, y)` and `elev_top`..`elev_bottom` (`radius=1` builds a 2x2 central shaft inside a 3x3 hub).
+3. **Start small, then lay out districts**: in early game, use `add_template(template="bootstrap_camp", direction="N"|"S"|"E"|"W", elev=...)` (~47 tiles: `7x5` `bootstrap_hall` + `3x3` `manager_office`) instead of an 808-tile Quickfort dig on day 1; later add `food_district`, `workshop_wing`, `bedroom_wing`, or `civic_hall`. The planner enforces solid wall thickness and rejects overlaps.
+4. **Inspect, validate, and find sites**: `action="view"` renders a non-RLE aligned ASCII floorplan; `action="validate"` checks aquifers, water, magma, and `potential_soil`; `action="find_site"` locates clean, dry, already-dug footprints and reports `pending_dig_tiles` if miners are still digging.
+5. **Commit access-first**: `action="commit"` with `phase="auto"` advances `shaft` -> `hub_and_corridors` (hub-attached corridors/halls only, zero disconnected child doorways) -> `rooms` (topological parent-before-child), filtering every `DEFAULT_DIG` tile for safety (`dry_run=true` previews counts).
+
+### Two-Stage Scale-Up: Bootstrap Fort -> DFHack Quickfort
+
+- **Stage 1 (Bootstrap Fort first)**: before running Quickfort `meta`/`build`/`orders` blueprints, establish basic workshops (Carpenter, Stoneworker, Still via `find_trees`, `cut_trees`, `place_building`), craft and place a Chair (`workshop_job action="queue"` + `place_building`), create and assign an Office (`create_zone kind="office"` + `assign_zone_owner`), appoint a Manager (`manage_nobles action="auto_assign", position="MANAGER"`), and enable `buildingplan` (`dfhack_automation action="apply_preset", preset="early_fort"`).
+- **Stage 2 (Scale with Quickfort)**: check `fort_plan(action="qf_status")` to verify readiness, browse blueprints with `action="qf_list"`, preview with `dry_run=true`, dig levels at `fort_strata` elevations with `action="qf_run"` (`/farming1`, `/industry1`), then apply orders and furnishings with `action="qf_orders"` and `action="qf_run"` (`/farming2`, `/industry2`).

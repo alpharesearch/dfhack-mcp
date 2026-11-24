@@ -7,8 +7,10 @@ metadata:
     Noise, Stockpile, Workshop, Trade depot, Well, Reservoir, Aquifer, Cave-in, Bridge,
     Floodgate, Moat, Miasma, Garbage dump, Pasture, Stress, Dining room, Office, Health
     care) plus three embarks played on region1 with the dfhack-mcp layer
-  tools: survey, box_state, hazards, depth_profile, tile_at, look, create_stockpile,
-    configure_stockpile, create_zone, place_building_plan, send_dig_command, fort_progress
+  tools: look, fort_progress, fort_strata, fort_plan, survey, world_map, place_building,
+    remove_building, building_status, workshop_job, create_stockpile, configure_stockpile,
+    list_stockpiles, create_zone, list_zones, remove_zone, assign_zone_owner, assign_pasture,
+    work_details, manage_nobles, work_order, trade_depot, dfhack_automation
 ---
 
 
@@ -293,3 +295,10 @@ Measured 2026-11-22 from the player's Labor screen and the live structures:
   recomputed layer is not a staffing tool. Staff with `/work-details`; read with `/unit-labors`.
 - Built-in details cannot be set to "Everybody does this" (`cannot_be_everybody`) - with 7 dwarves
   that mode is a starvation trap anyway: all-miner means nobody hauls, cooks, farms, or cuts wood.
+
+## §20 - Site finding, crafted furniture, and Quickfort readiness (32-tool MCP surface)
+
+- **Find clean footprints before placing**: call `fort_plan(action="find_site", elev=..., width=3, height=3)` to locate clean, dry, flat floor spots that avoid walls, slopes/ramps, pending digs, buildings, and zones (if `pending_dig_tiles > 0`, wait for miners to finish digging).
+- **Crafted furniture before `place_building`**: `Chair`, `Table`, `Bed`, and `Door` require a crafted item in stock (`workshop_job(action="queue")` -> verify `workshop_job(action="stock")`); `place_building` attaches the crafted item and rejects raw boulders or empty item lists.
+- **Proximity & clean status reads**: pass `near_x`, `near_y` to `find_water` and `find_trees` to sort closest clusters first; `building_status(only_incomplete=True)` excludes completed Activity Zones and Stockpiles.
+- **Bootstrap before Quickfort**: establish Carpenter, Stoneworker, Still, Chair + Office + skilled Manager, and `buildingplan` (`dfhack_automation early_fort`) before running Quickfort `meta`/`build`/`orders` (`fort_plan action="qf_status"` gates readiness).

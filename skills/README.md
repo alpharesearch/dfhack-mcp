@@ -8,8 +8,10 @@ into one harness install.
 | Skill | Covers |
 |---|---|
 | [`df-quickstart`](df-quickstart/SKILL.md) | full Quickstart Dependency Graph & Execution Playbook (from `FlowchartDF.png` & the DF Wiki Quickstart Guide), mapping every resource, workshop, stockpile, zone, noble, and goal node to exact `dfhack-mcp` tools and prerequisite checks |
-| [`df-dig`](df-dig/SKILL.md) | tunnels, rooms, stair shafts (`box`, `boxes`, `middle_first`, `stair_shaft`): depth/overburden, damp & hot hazards, designating into fog, labour, band ordering, proving the dig (`transitions`), background-job waits, this world's geometry |
-| [`df-placement`](df-placement/SKILL.md) | workshops, furniture, trade depots, farm plots (`configure_farmplot`), stockpiles (`create_stockpile` + category/container config), zones (`create_zone`), building status & stall diagnostics (`building_status`) |
+| [`df-access`](df-access/SKILL.md) | access-first build order (staircase, connection tunnel, room), work-detail staffing, `fort_strata` + `fort_plan` CAD (`bootstrap_camp`, `find_site`, topological commit), and two-stage Bootstrap -> DFHack Quickfort scale-up |
+| [`df-dig`](df-dig/SKILL.md) | tunnels, rooms, stair shafts (`box`, `boxes`, `middle_first`, `stair_shaft`), `fort_strata` + `fort_plan`: depth/overburden, damp & hot hazards, designating into fog, labour, band ordering, proving the dig |
+| [`df-placement`](df-placement/SKILL.md) | workshops, crafted furniture (`workshop_job`), trade depots (`trade_depot`), farm plots (`configure_farmplot`), zones (`create_zone`, `assign_zone_owner`), `fort_plan(action="find_site")`, `building_status`, and `dfhack_automation` |
+| [`df-stockpile`](df-stockpile/SKILL.md) | general, wood, and refuse stockpiles (`create_stockpile`, `configure_stockpile`, `list_stockpiles`), container/wheelbarrow limits, and `workshop_job(action="stock")` |
 
 Planned (the ladder in play order, one skill per discipline):
 `df-build` (stockpiles, zones, furniture, material-attached construction, depot + wagon path),
@@ -55,3 +57,5 @@ instructions** - they cannot supply skills. Skills come from skill providers reg
 place for play knowledge, and the MCP server stays the instrument panel.
 
 `df-access` - the access-first build order (staircase, connection tunnel, room), work-detail staffing, and the reads that prove a dig is real. Generic: no coordinates, any map.
+
+See [`docs/tool-notes.md`](../docs/tool-notes.md) for historical playtest findings, DF 53.17-r1 crash postmortems, and the HTTP-only diagnostic/operator endpoint reference (the MCP surface is pruned to 32 gameplay tools including `fort_strata`, `fort_plan`, `workshop_job`, `dfhack_automation`, and `trade_depot`).

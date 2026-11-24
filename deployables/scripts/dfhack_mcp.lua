@@ -4,7 +4,7 @@
 --@ module = true
 
 local M = {}
-M.VERSION = "2026.11.22-v1"
+M.VERSION = "2026.11.24-v1"
 M.GAME_Z_OFFSET = 129
 
 local ok_json, df_json = pcall(require, "json")
@@ -170,18 +170,20 @@ function OPS.building_status(args)
   local rows = {}
   for _, b in ipairs(df.global.world.buildings.all) do
     if want_id == nil or b.id == want_id then
-      local stage, max_stage = 0, 0
-      pcall(function() stage = b:getBuildStage() end)
-      pcall(function() max_stage = b:getMaxBuildStage() end)
-      local is_actual = true
-      pcall(function() is_actual = b:isActual() end)
-      local incomplete = (not is_actual) or (max_stage > 0 and stage < max_stage)
-      if (not only_incomplete) or incomplete then
-        local bname = "?"
-        pcall(function() bname = dfhack.buildings.getName(b) or "?" end)
-        local tname = tostring(b._type)
-        tname = tname:match("<type: ([_%w]+)") or tname
-        local jobs = {}
+      local tname = tostring(b._type)
+      tname = tname:match("<type: ([_%w]+)") or tname
+      local is_zone_or_pile = (tname == "building_civzonest" or tname == "building_stockpilest")
+      if (not only_incomplete) or (not is_zone_or_pile) then
+        local stage, max_stage = 0, 0
+        pcall(function() stage = b:getBuildStage() end)
+        pcall(function() max_stage = b:getMaxBuildStage() end)
+        local is_actual = true
+        pcall(function() is_actual = b:isActual() end)
+        local incomplete = (not is_actual) or (max_stage > 0 and stage < max_stage)
+        if (not only_incomplete) or incomplete then
+          local bname = "?"
+          pcall(function() bname = dfhack.buildings.getName(b) or "?" end)
+          local jobs = {}
         local job_filters = {}
         local suspended = false
         pcall(function()
@@ -234,6 +236,7 @@ function OPS.building_status(args)
           missing_item_filters = job_filters,
         }
         if #rows >= limit then break end
+        end
       end
     end
   end
@@ -723,7 +726,59 @@ function OPS.manage_nobles(args)
     }
   end
 
+  local ROLE_WEIGHTS = {
+    BROKER = {
+      APPRAISAL = 3, NEGOTIATION = 2, JUDGING_INTENT = 1, PERSUASION = 1,
+      FLATTERY = 1, COMEDY = 1, CONSOLING = 1, PACIFY = 1,
+    },
+    MANAGER = { ORGANIZATION = 3 },
+    BOOKKEEPER = { RECORD_KEEPING = 3 },
+    CHIEF_MEDICAL_DWARF = {
+      DIAGNOSE = 3, SURGERY = 2, SET_BONE = 2, SUTURE = 2, DRESS_WOUNDS = 2,
+    },
+  }
+  local function citizen_skill_score(u, weights)
+    local score = 0
+    local matched = {}
+    if u == nil or not weights then return score, matched end
+    pcall(function()
+      local soul = u.status and u.status.current_soul or nil
+      if soul == nil or soul.skills == nil then return end
+      for i = 0, #soul.skills - 1 do
+        local sk = soul.skills[i]
+        local sname = ""
+        pcall(function() sname = tostring(df.job_skill[sk.id] or "") end)
+        local w = weights[sname]
+        if w then
+          local rating = tonumber(sk.rating) or 0
+          if rating > 0 then
+            score = score + rating * w
+            matched[#matched + 1] = { skill = sname, rating = rating }
+          end
+        end
+      end
+    end)
+    table.sort(matched, function(a, b)
+      if a.rating ~= b.rating then return a.rating > b.rating end
+      return a.skill < b.skill
+    end)
+    return score, matched
+  end
+  local function living_citizens()
+    local out = {}
+    for _, u in ipairs(df.global.world.units.active) do
+      local cit, alive = false, false
+      pcall(function() cit = dfhack.units.isCitizen(u) end)
+      pcall(function() alive = dfhack.units.isAlive(u) end)
+      if cit and alive and tonumber(u.hist_figure_id) and tonumber(u.hist_figure_id) >= 0 then
+        out[#out + 1] = u
+      end
+    end
+    return out
+  end
+
   local changes = {}
+  local candidates_by_pos = nil
   if action == "assign" then
     local pos_code = args and args.position and tostring(args.position):upper():gsub("[ %-]", "_") or nil
     if not pos_code or pos_code == "" then error("position is required for action='assign' (e.g. MANAGER, BOOKKEEPER, BROKER, CHIEF_MEDICAL_DWARF)") end
@@ -739,60 +794,43 @@ function OPS.manage_nobles(args)
     if pos_code == "BOOKKEEPER" and (args.bookkeeper_settings == nil) then
       pcall(function() df.global.plotinfo.nobles.bookkeeper_settings = 4 end)
     end
-  -- NOBLE LEGALITY: aptitudes. Measured 2026-11-22: the player's depot said "You do not have
-  -- a broker" while the nobles screen showed one appointed, because auto_assign picked citizens
-  -- round-robin by index with NO eligibility check. `positions.own[BROKER].apt` is EMPTY on this
-  -- build (measured apt_count=0) and histfig flags expose no `merchanted` field, so the game's
-  -- broker eligibility is not readable from those two sources - a position written onto an
-  -- unqualified dwarf is a UI-visible lie, and the fortress's answer is the depot flag
-  -- `anyone_can_trade`. The loop below therefore reports the aptitudes it CAN read, and warns
-  -- when a position has none (i.e. eligibility cannot be verified here).
-  local function apt_report(p)
-    local res = {}
-    if p == nil then return res end
-    local n = 0
-    pcall(function() n = #p.apt end)
-    for i = 0, n - 1 do
-      local a = p.apt[i]
-      local keyname = "?"
-      pcall(function() keyname = tostring(df.UnitAbility[a.key]) end)
-      res[#res + 1] = { key = keyname, value = tonumber(a.value) }
-    end
-    return res
-  end
-
-  elseif action == "auto_assign" then
-    local citizens = {}
-    for _, u in ipairs(df.global.world.units.active) do
-      local cit, alive = false, false
-      pcall(function() cit = dfhack.units.isCitizen(u) end)
-      pcall(function() alive = dfhack.units.isAlive(u) end)
-      if cit and alive and tonumber(u.hist_figure_id) and tonumber(u.hist_figure_id) >= 0 then
-        citizens[#citizens + 1] = u
+  elseif action == "candidates" then
+    local citizens = living_citizens()
+    local want_pos = args and args.position and tostring(args.position):upper():gsub("[ %-]", "_") or nil
+    local roles = want_pos and { want_pos } or { "MANAGER", "BROKER", "BOOKKEEPER", "CHIEF_MEDICAL_DWARF" }
+    candidates_by_pos = {}
+    for _, code in ipairs(roles) do
+      local weights = ROLE_WEIGHTS[code] or {}
+      local ranked = {}
+      for _, cand in ipairs(citizens) do
+        local sc, rel = citizen_skill_score(cand, weights)
+        local prof = "?"
+        pcall(function() prof = tostring(dfhack.units.getProfessionName(cand)) end)
+        ranked[#ranked + 1] = {
+          unit_id = tonumber(cand.id),
+          name = unit_readable_name(cand),
+          profession = prof,
+          skill_score = sc,
+          relevant_skills = rel,
+        }
       end
-    end
-    if #citizens == 0 then error("no living citizens found to appoint as nobles") end
-    -- Measured 2026-11-22: this branch called `apt_report`, which is declared inside an EARLIER
-    -- block (line ~678), so at this point Lua looks it up as a GLOBAL and the call died with
-    -- "attempt to call a nil value (global 'apt_report')" - no noble was ever appointed (tool_missing #48).
-    -- Define the helper IN THIS SCOPE and read aptitudes defensively.
-    local function apt_report_local(pid)
-      local out = {}
-      pcall(function()
-        for _, p in ipairs(ent.positions.own) do
-          if tonumber(p.id) == tonumber(pid) then
-            for _, a in ipairs(p.flags2) do end
-            local n = 0
-            for k, v in pairs(p.aptaludes) do
-              if v ~= nil then n = n + 1; out[#out + 1] = tostring(k) end
-            end
-          end
-        end
+      table.sort(ranked, function(a, b)
+        if a.skill_score ~= b.skill_score then return a.skill_score > b.skill_score end
+        return a.unit_id < b.unit_id
       end)
-      return out
+      candidates_by_pos[code] = ranked
+    end
+  elseif action == "auto_assign" then
+    local citizens = living_citizens()
+    if #citizens == 0 then error("no living citizens found to appoint as nobles") end
+    local reassign_unskilled = (args and args.reassign_unskilled == true)
+    local hf_unit_map = {}
+    for _, cu in ipairs(citizens) do
+      local hfid = tonumber(cu.hist_figure_id)
+      if hfid and hfid >= 0 then hf_unit_map[hfid] = cu end
     end
     local essential = { "MANAGER", "BOOKKEEPER", "BROKER", "CHIEF_MEDICAL_DWARF" }
-    local c_idx = 1
+    local used_units = {}
     for _, code in ipairs(essential) do
       local pos_id = nil
       for _, p in ipairs(ent.positions.own) do
@@ -803,14 +841,50 @@ function OPS.manage_nobles(args)
         for _, a in ipairs(ent.positions.assignments) do
           if a.position_id == pos_id then cur_hf = tonumber(a.histfig) or -1; break end
         end
-        if cur_hf < 0 then
-          local u = citizens[((c_idx - 1) % #citizens) + 1]
-          c_idx = c_idx + 1
-          local ap = apt_report_local(pos_id)
-          local ch = assign_one_noble(code, u)
-          ch.aptitudes = ap
-          if #ap == 0 then
-            ch.legibility = "UNVERIFIED: this position exposes no aptitude list on this build, so the tool cannot confirm the dwarf qualifies (measured for BROKER: apt_count 0, no histfig 'merchanted' flag). The game may still refuse the dwarf in its own screens - for a Trade Depot, trade_flags.anyone_can_trade=true is the fortress's answer."
+        local weights = ROLE_WEIGHTS[code]
+        local cur_u = (cur_hf >= 0) and hf_unit_map[cur_hf] or nil
+        local cur_score = cur_u and select(1, citizen_skill_score(cur_u, weights)) or 0
+        local should_assign = (cur_hf < 0)
+        if not should_assign and reassign_unskilled and cur_score == 0 then
+          for _, cand in ipairs(citizens) do
+            if select(1, citizen_skill_score(cand, weights)) > 0 then
+              should_assign = true
+              break
+            end
+          end
+        end
+        if should_assign then
+          local scored = {}
+          for _, cand in ipairs(citizens) do
+            local uid = tonumber(cand.id) or 0
+            local sc, rel = citizen_skill_score(cand, weights)
+            scored[#scored + 1] = {
+              u = cand,
+              uid = uid,
+              score = sc,
+              relevant = rel,
+              used = used_units[uid] and 1 or 0,
+            }
+          end
+          table.sort(scored, function(a, b)
+            if a.score ~= b.score then return a.score > b.score end
+            if a.used ~= b.used then return a.used < b.used end
+            return a.uid < b.uid
+          end)
+          local pick = scored[1]
+          used_units[pick.uid] = true
+          local ch = assign_one_noble(code, pick.u)
+          if cur_u ~= nil and tonumber(cur_u.id) ~= pick.uid then
+            ch.reassigned_from_unit_id = tonumber(cur_u.id)
+          end
+          ch.skill_score = pick.score
+          ch.relevant_skills = pick.relevant
+          if pick.score > 0 then
+            ch.legibility = "verified via current_soul.skills"
+          elseif code == "BROKER" then
+            ch.legibility = "UNVERIFIED: 0 relevant trade skills in current_soul.skills; the game may refuse this Broker at the depot - set trade_flags.anyone_can_trade=true if needed."
+          else
+            ch.legibility = "UNVERIFIED: 0 relevant skills in current_soul.skills"
           end
           changes[#changes + 1] = ch
         end
@@ -818,7 +892,7 @@ function OPS.manage_nobles(args)
     end
     pcall(function() df.global.plotinfo.nobles.bookkeeper_settings = 4 end)
   elseif action ~= "list" then
-    error("unknown manage_nobles action '" .. tostring(action) .. "' (expected list, assign, or auto_assign)")
+    error("unknown manage_nobles action '" .. tostring(action) .. "' (expected list, assign, auto_assign, or candidates)")
   end
 
   if args and args.bookkeeper_settings ~= nil then
@@ -864,6 +938,7 @@ function OPS.manage_nobles(args)
   return {
     action = action,
     changes = changes,
+    candidates = candidates_by_pos,
     bookkeeper_settings = bk_settings,
     positions = positions,
   }
@@ -1637,12 +1712,13 @@ end
 -- game's own fields (`u.status.labors`, field names like MINE, not MINING - `labors.MINING`
 -- does not exist and a pcall probe reads it as a silent false) are the only authority.
 function OPS.unit_labors(args)
-  want = {}
+  local want = {}
   local ids = args and args.unit_ids
   if type(ids) == "table" then
     for _,id in ipairs(ids) do want[tonumber(id)] = true end
   end
   local filter = args and args.labor and tostring(args.labor):upper() or nil
+  local valid_labors = {}
   local units = {}
   for _,u in ipairs(df.global.world.units.active) do
     local cit, alive = false, false
@@ -1652,8 +1728,10 @@ function OPS.unit_labors(args)
       local on = {}
       pcall(function()
         for k,v in pairs(u.status.labors) do
+          local ku = tostring(k):upper()
+          valid_labors[ku] = true
           if v == true then
-            if filter == nil or tostring(k):upper() == filter then on[#on+1] = tostring(k) end
+            if filter == nil or ku == filter then on[#on+1] = tostring(k) end
           end
         end
       end)
@@ -1663,6 +1741,9 @@ function OPS.unit_labors(args)
       units[#units+1] = { unit_id = tonumber(u.id), name = nm, labors_on = on,
                           labor_count = #on, has_filter = (filter ~= nil and #on > 0) }
     end
+  end
+  if filter ~= nil and next(valid_labors) ~= nil and not valid_labors[filter] then
+    error("unknown labor '" .. tostring(filter) .. "'; call labor_list for valid labor names")
   end
   table.sort(units, function(a,b) return a.unit_id < b.unit_id end)
   -- Count citizens holding the filtered labor. `labor_count` is a NUMBER (it is the length
@@ -1717,6 +1798,20 @@ function OPS.unit_profession(args)
     end
     return nil
   end
+  local function collect_known_professions()
+    local names, seen = {}, {}
+    for _,u in ipairs(df.global.world.units.active) do
+      local pn = ""
+      pcall(function() pn = tostring(dfhack.units.getProfessionName(u)) end)
+      local pid = tonumber(u.profession)
+      if pn ~= "" and pid ~= nil and not seen[pid] then
+        seen[pid] = true
+        names[#names+1] = { id = pid, name = pn }
+      end
+    end
+    table.sort(names, function(a,b) return tostring(a.name) < tostring(b.name) end)
+    return names
+  end
   if action == "list" then
     local out = {}
     for _,u in ipairs(df.global.world.units.active) do
@@ -1733,17 +1828,7 @@ function OPS.unit_profession(args)
       end
     end
     table.sort(out, function(a,b) return a.unit_id < b.unit_id end)
-    local names, seen = {}, {}
-    for _,u in ipairs(df.global.world.units.active) do
-      local pn = ""
-      pcall(function() pn = tostring(dfhack.units.getProfessionName(u)) end)
-      local pid = tonumber(u.profession)
-      if pn ~= "" and pid ~= nil and not seen[pid] then
-        seen[pid] = true
-        names[#names+1] = { id = pid, name = pn }
-      end
-    end
-    table.sort(names, function(a,b) return tostring(a.name) < tostring(b.name) end)
+    local names = collect_known_professions()
     return { action = "list", citizens = out, professions = names }
   end
   if action == "set" then
@@ -1764,6 +1849,7 @@ function OPS.unit_profession(args)
     local pid = tonumber(args and args.profession_id)
     if pid == nil and pname ~= nil then pid = prof_id_by_name(pname) end
     if pid == nil then
+      local names = collect_known_professions()
       local avail = {}
       for _,x in ipairs(names) do avail[#avail+1] = tostring(x.name) end
       avail[#avail+1] = "(only professions a living citizen currently carries are nameable here - pass profession_id for the rest)"
@@ -2202,6 +2288,364 @@ function OPS.buildings_live(args)
   end
   table.sort(out, function(a, b) return tostring(a.type) < tostring(b.type) end)
   return { elev0 = e0, elev1 = e1, filter = want, buildings_listed = n, count = total, buildings = out }
+end
+
+-- 18. workshop_job: queue, inspect, or cancel jobs directly at a workshop (plus crafted stock census).
+-- Solves the early-game chicken-and-egg bootstrap: Manager work orders cannot validate until a
+-- Manager has an Office with a Chair, and placing a Chair requires a crafted Chair item.
+function OPS.workshop_job(args)
+  local action = (args and args.action and tostring(args.action):lower()) or "list"
+
+  local function is_free_item(it)
+    local ok, free = pcall(function()
+      local f = it.flags
+      return not f.in_building and not f.in_job and not f.forbid and not f.dump
+         and not f.in_inventory and not f.trader and not f.garbage_collect
+         and not f.removed
+    end)
+    return ok and free
+  end
+
+  local function is_usable_supply(it)
+    local ok, usable = pcall(function()
+      local f = it.flags
+      return not f.forbid and not f.dump and not f.trader
+         and not f.garbage_collect and not f.removed
+    end)
+    return ok and usable
+  end
+
+  local function collect_crafted_stock()
+    local items = {}
+    local vec_names = {
+      "CHAIR", "TABLE", "BED", "DOOR", "CABINET", "BOX", "COFFIN",
+      "BARREL", "BIN", "BUCKET", "TRAPPARTS", "WOOD", "BOULDER",
+    }
+    for _, vn in ipairs(vec_names) do
+      local cnt = 0
+      pcall(function()
+        for _, it in ipairs(df.global.world.items.other[vn]) do
+          if is_free_item(it) then cnt = cnt + 1 end
+        end
+      end)
+      items[vn] = cnt
+    end
+    for _, vn in ipairs({ "DRINK", "FOOD", "SEEDS" }) do
+      local cnt = 0
+      pcall(function()
+        for _, it in ipairs(df.global.world.items.other[vn]) do
+          if is_usable_supply(it) then
+            local ss = 1
+            pcall(function() ss = tonumber(it:getStackSize()) or 1 end)
+            cnt = cnt + ss
+          end
+        end
+      end)
+      items[vn] = cnt
+    end
+    local pots = 0
+    pcall(function()
+      for _, it in ipairs(df.global.world.items.other.TOOL) do
+        if is_free_item(it) then
+          local sid = ""
+          pcall(function() sid = tostring(it.subtype.id or "") end)
+          if sid == "ITEM_TOOL_LARGE_POT" then pots = pots + 1 end
+        end
+      end
+    end)
+    items.LARGE_POT = pots
+    local buildings = {}
+    for _, bn in ipairs({ "CHAIR", "TABLE", "BED", "DOOR", "WORKSHOP_ANY", "FARM_PLOT" }) do
+      local cnt = 0
+      pcall(function() cnt = #df.global.world.buildings.other[bn] end)
+      buildings[bn] = cnt
+    end
+    return { items = items, buildings = buildings }
+  end
+
+  local function summarize_ws_jobs(ws)
+    local jobs = {}
+    pcall(function()
+      for _, j in ipairs(ws.jobs) do
+        local jtype = "?"
+        pcall(function() jtype = tostring(df.job_type[j.job_type] or j.job_type) end)
+        local desc = jtype
+        pcall(function() desc = tostring(dfhack.job.getName(j) or jtype) end)
+        local w_id = nil
+        pcall(function()
+          local w = dfhack.job.getWorker(j)
+          if w ~= nil then w_id = tonumber(w.id) end
+        end)
+        local susp = false
+        pcall(function() susp = (j.flags.suspend == true) end)
+        local rep = false
+        pcall(function() rep = (j.flags["repeat"] == true) end)
+        jobs[#jobs + 1] = {
+          job_id = tonumber(j.id),
+          job_type = jtype,
+          description = desc,
+          worker_id = w_id,
+          suspended = susp,
+          repeat_job = rep,
+        }
+      end
+    end)
+    return jobs
+  end
+
+  local function list_workshops()
+    local out = {}
+    for _, ws in ipairs(df.global.world.buildings.other.WORKSHOP_ANY) do
+      local wtype = "?"
+      pcall(function() wtype = tostring(df.workshop_type[ws:getSubtype()] or ws:getSubtype()) end)
+      local wname = wtype
+      pcall(function() wname = tostring(dfhack.buildings.getName(ws) or wtype) end)
+      local stage, max_stage = 0, 0
+      pcall(function() stage = ws:getBuildStage() end)
+      pcall(function() max_stage = ws:getMaxBuildStage() end)
+      local jobs = summarize_ws_jobs(ws)
+      out[#out + 1] = {
+        building_id = tonumber(ws.id),
+        name = wname,
+        workshop_type = wtype,
+        x = tonumber(ws.centerx),
+        y = tonumber(ws.centery),
+        elev = tonumber(ws.z) - M.GAME_Z_OFFSET,
+        complete = (max_stage == 0 or stage >= max_stage),
+        jobs_count = #jobs,
+        jobs = jobs,
+      }
+    end
+    table.sort(out, function(a, b) return a.building_id < b.building_id end)
+    return out
+  end
+
+  if action == "stock" then
+    return { action = "stock", stock = collect_crafted_stock() }
+  elseif action == "list" then
+    return { action = "list", workshops = list_workshops(), stock = collect_crafted_stock() }
+  elseif action == "cancel" then
+    local bid = args and tonumber(args.building_id) or nil
+    local jid = args and tonumber(args.job_id) or nil
+    if bid == nil and jid == nil then
+      error("building_id or job_id is required for action='cancel'")
+    end
+    local cancelled = {}
+    local target_ws = nil
+    for _, ws in ipairs(df.global.world.buildings.other.WORKSHOP_ANY) do
+      if bid == nil or tonumber(ws.id) == bid then
+        if bid ~= nil then target_ws = ws end
+        for idx = #ws.jobs - 1, 0, -1 do
+          local j = ws.jobs[idx]
+          if jid == nil or tonumber(j.id) == jid then
+            local desc = "?"
+            pcall(function() desc = tostring(dfhack.job.getName(j) or "?") end)
+            local ok_rm = pcall(function() dfhack.job.removeJob(j) end)
+            if ok_rm then
+              cancelled[#cancelled + 1] = { job_id = tonumber(j.id), building_id = tonumber(ws.id), description = desc }
+            end
+          end
+        end
+      end
+    end
+    return {
+      action = "cancel",
+      building_id = bid,
+      cancelled_count = #cancelled,
+      cancelled = cancelled,
+      jobs_after = target_ws and summarize_ws_jobs(target_ws) or nil,
+    }
+  elseif action ~= "queue" then
+    error("unknown workshop_job action '" .. tostring(action) .. "' (expected list, stock, queue, or cancel)")
+  end
+
+  local raw_task = args and args.task and tostring(args.task):lower():gsub("[ %-]", "_") or nil
+  if not raw_task or raw_task == "" then
+    error("task is required for action='queue' (e.g. chair, barrel, bed, table, door, bin, bucket, pot, wheelbarrow, mechanisms, crafts, cabinet, chest, coffin, blocks, brew, meal)")
+  end
+
+  local TASKS = {
+    chair = { job_type = "ConstructThrone", allowed = { "Carpenters", "Masons" } },
+    throne = { job_type = "ConstructThrone", allowed = { "Carpenters", "Masons" } },
+    constructthrone = { job_type = "ConstructThrone", allowed = { "Carpenters", "Masons" } },
+    makechair = { job_type = "ConstructThrone", allowed = { "Carpenters", "Masons" } },
+    table = { job_type = "ConstructTable", allowed = { "Carpenters", "Masons" } },
+    constructtable = { job_type = "ConstructTable", allowed = { "Carpenters", "Masons" } },
+    maketable = { job_type = "ConstructTable", allowed = { "Carpenters", "Masons" } },
+    door = { job_type = "ConstructDoor", allowed = { "Carpenters", "Masons" } },
+    constructdoor = { job_type = "ConstructDoor", allowed = { "Carpenters", "Masons" } },
+    makedoor = { job_type = "ConstructDoor", allowed = { "Carpenters", "Masons" } },
+    cabinet = { job_type = "ConstructCabinet", allowed = { "Carpenters", "Masons" } },
+    constructcabinet = { job_type = "ConstructCabinet", allowed = { "Carpenters", "Masons" } },
+    chest = { job_type = "ConstructChest", allowed = { "Carpenters", "Masons" } },
+    box = { job_type = "ConstructChest", allowed = { "Carpenters", "Masons" } },
+    constructchest = { job_type = "ConstructChest", allowed = { "Carpenters", "Masons" } },
+    coffin = { job_type = "ConstructCoffin", allowed = { "Carpenters", "Masons" } },
+    constructcoffin = { job_type = "ConstructCoffin", allowed = { "Carpenters", "Masons" } },
+    bed = { job_type = "ConstructBed", allowed = { "Carpenters" }, default_mat = "wood" },
+    constructbed = { job_type = "ConstructBed", allowed = { "Carpenters" }, default_mat = "wood" },
+    makebed = { job_type = "ConstructBed", allowed = { "Carpenters" }, default_mat = "wood" },
+    barrel = { job_type = "MakeBarrel", allowed = { "Carpenters" }, default_mat = "wood" },
+    makebarrel = { job_type = "MakeBarrel", allowed = { "Carpenters" }, default_mat = "wood" },
+    bin = { job_type = "ConstructBin", allowed = { "Carpenters" }, default_mat = "wood" },
+    constructbin = { job_type = "ConstructBin", allowed = { "Carpenters" }, default_mat = "wood" },
+    makebin = { job_type = "ConstructBin", allowed = { "Carpenters" }, default_mat = "wood" },
+    bucket = { job_type = "MakeBucket", allowed = { "Carpenters" }, default_mat = "wood" },
+    makebucket = { job_type = "MakeBucket", allowed = { "Carpenters" }, default_mat = "wood" },
+    wheelbarrow = { job_type = "MakeTool", tool_id = "ITEM_TOOL_WHEELBARROW", allowed = { "Carpenters" }, default_mat = "wood" },
+    pot = { job_type = "MakeTool", tool_id = "ITEM_TOOL_LARGE_POT", allowed = { "Craftsdwarfs" }, default_mat = "stone" },
+    rock_pot = { job_type = "MakeTool", tool_id = "ITEM_TOOL_LARGE_POT", allowed = { "Craftsdwarfs" }, default_mat = "stone" },
+    large_pot = { job_type = "MakeTool", tool_id = "ITEM_TOOL_LARGE_POT", allowed = { "Craftsdwarfs" }, default_mat = "stone" },
+    crafts = { job_type = "MakeCrafts", allowed = { "Craftsdwarfs" }, default_mat = "stone" },
+    makecrafts = { job_type = "MakeCrafts", allowed = { "Craftsdwarfs" }, default_mat = "stone" },
+    mechanisms = { job_type = "ConstructMechanisms", allowed = { "Mechanics" }, default_mat = "stone" },
+    constructmechanisms = { job_type = "ConstructMechanisms", allowed = { "Mechanics" }, default_mat = "stone" },
+    blocks = { job_type = "ConstructBlocks", allowed = { "Masons", "Carpenters" } },
+    constructblocks = { job_type = "ConstructBlocks", allowed = { "Masons", "Carpenters" } },
+    brew = { job_type = "CustomReaction", reaction_name = "BREW_DRINK_FROM_PLANT", allowed = { "Still" }, no_mat = true },
+    drink = { job_type = "CustomReaction", reaction_name = "BREW_DRINK_FROM_PLANT", allowed = { "Still" }, no_mat = true },
+    brew_drink = { job_type = "CustomReaction", reaction_name = "BREW_DRINK_FROM_PLANT", allowed = { "Still" }, no_mat = true },
+    meal = { job_type = "PrepareMeal", allowed = { "Kitchen" }, no_mat = true },
+    prepare_meal = { job_type = "PrepareMeal", allowed = { "Kitchen" }, no_mat = true },
+  }
+
+  local spec = TASKS[raw_task]
+  if not spec then
+    error("unknown workshop task '" .. tostring(raw_task) .. "'")
+  end
+
+  local mat = args and args.material and tostring(args.material):lower() or spec.default_mat
+  if mat == "log" or mat == "logs" then mat = "wood" end
+  if mat == "rock" or mat == "boulder" or mat == "boulders" then mat = "stone" end
+
+  local function is_allowed_ws(wtype)
+    for _, a in ipairs(spec.allowed) do
+      if a == wtype then return true end
+    end
+    return false
+  end
+
+  local bid = args and tonumber(args.building_id) or nil
+  local target_ws = nil
+  local target_wtype = nil
+  if bid ~= nil then
+    for _, ws in ipairs(df.global.world.buildings.other.WORKSHOP_ANY) do
+      if tonumber(ws.id) == bid then
+        target_ws = ws
+        pcall(function() target_wtype = tostring(df.workshop_type[ws:getSubtype()] or ws:getSubtype()) end)
+        break
+      end
+    end
+    if target_ws == nil then error("workshop not found with building_id " .. tostring(bid)) end
+    local stage, max_stage = 0, 0
+    pcall(function() stage = target_ws:getBuildStage() end)
+    pcall(function() max_stage = target_ws:getMaxBuildStage() end)
+    if max_stage > 0 and stage < max_stage then
+      error("workshop " .. tostring(bid) .. " is not finished building yet (stage " .. tostring(stage) .. "/" .. tostring(max_stage) .. ")")
+    end
+    if not is_allowed_ws(target_wtype) then
+      error("workshop " .. tostring(bid) .. " (" .. tostring(target_wtype) .. ") cannot run task '" .. raw_task .. "' (expected: " .. table.concat(spec.allowed, " or ") .. ")")
+    end
+  else
+    local prefer_wtype = (mat == "wood") and "Carpenters" or ((mat == "stone") and "Masons" or nil)
+    for pass = 1, 2 do
+      for _, ws in ipairs(df.global.world.buildings.other.WORKSHOP_ANY) do
+        local wtype = ""
+        pcall(function() wtype = tostring(df.workshop_type[ws:getSubtype()] or ws:getSubtype()) end)
+        local stage, max_stage = 0, 0
+        pcall(function() stage = ws:getBuildStage() end)
+        pcall(function() max_stage = ws:getMaxBuildStage() end)
+        if (max_stage == 0 or stage >= max_stage) and is_allowed_ws(wtype) then
+          if pass == 2 or prefer_wtype == nil or wtype == prefer_wtype then
+            target_ws = ws
+            target_wtype = wtype
+            break
+          end
+        end
+      end
+      if target_ws ~= nil then break end
+    end
+    if target_ws == nil then
+      error("no completed " .. table.concat(spec.allowed, " or ") .. " workshop found; build one with place_building first")
+    end
+  end
+
+  if mat == nil and not spec.no_mat then
+    mat = (target_wtype == "Carpenters") and "wood" or "stone"
+  end
+
+  local count = math.max(1, math.min(10, tonumber(args and args.count) or 1))
+  local rep = (args and args.repeat_job == true)
+  local tool_sub = nil
+  if spec.tool_id then
+    pcall(function()
+      for i, td in ipairs(df.global.world.raws.itemdefs.tools) do
+        if tostring(td.id) == spec.tool_id then tool_sub = i - 1; break end
+      end
+      if tool_sub == nil then
+        for i = 0, #df.global.world.raws.itemdefs.tools - 1 do
+          local td = df.global.world.raws.itemdefs.tools[i]
+          if tostring(td.id) == spec.tool_id then tool_sub = i; break end
+        end
+      end
+    end)
+    if tool_sub == nil then error("tool subtype not found for " .. tostring(spec.tool_id)) end
+  end
+
+  local queued = 0
+  for _ = 1, count do
+    local job = dfhack.job.createLinked()
+    job.job_type = df.job_type[spec.job_type]
+    if tool_sub ~= nil then
+      job.item_subtype = tool_sub
+    end
+    if spec.reaction_name then
+      job.reaction_name = spec.reaction_name
+      job.mat_type = -1
+    elseif not spec.no_mat then
+      if mat == "wood" then
+        job.mat_type = -1
+        job.material_category.wood = true
+        local jitem = df.job_item:new()
+        jitem.item_type = df.item_type.WOOD
+        jitem.mat_type = -1
+        jitem.mat_index = -1
+        jitem.quantity = 1
+        jitem.vector_id = df.job_item_vector_id.WOOD
+        job.job_items.elements:insert('#', jitem)
+      else
+        job.mat_type = 0
+        job.mat_index = -1
+        local jitem = df.job_item:new()
+        jitem.item_type = df.item_type.BOULDER
+        jitem.mat_type = 0
+        jitem.mat_index = -1
+        jitem.quantity = 1
+        jitem.vector_id = df.job_item_vector_id.BOULDER
+        jitem.flags2.non_economic = true
+        jitem.flags3.hard = true
+        job.job_items.elements:insert('#', jitem)
+      end
+    end
+    if rep then pcall(function() job.flags["repeat"] = true end) end
+    dfhack.job.assignToWorkshop(job, target_ws)
+    queued = queued + 1
+  end
+
+  local wname = target_wtype
+  pcall(function() wname = tostring(dfhack.buildings.getName(target_ws) or target_wtype) end)
+  return {
+    action = "queue",
+    building_id = tonumber(target_ws.id),
+    workshop_name = wname,
+    workshop_type = target_wtype,
+    task = raw_task,
+    job_type = spec.job_type,
+    material = mat,
+    queued_count = queued,
+    jobs_after = summarize_ws_jobs(target_ws),
+    stock = collect_crafted_stock(),
+  }
 end
 
 function M.dispatch(op, raw_args)

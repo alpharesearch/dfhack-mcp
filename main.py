@@ -172,6 +172,7 @@ from dfhack_client_python.py_export.RemoteFortressReader_pb2 import (BlockReques
 Coord, SingleBool, KeyboardEvent)
 import worldmodel as WM
 import luaops as LO
+import fortplan as FP
 
 # SDL1.2 key codes (DF runs on SDL1): KeyboardEvent mirrors SDL_Event.key
 # (type, which, state, scancode, sym, mod, unicode). scancode is unused by SDL1.
@@ -281,6 +282,7 @@ class SendDigCommandRequest(BaseModel):
     boxes: list[DigBox] | None = Field(None, description="List of rectangles in in-game Elevation coordinates; middle-first ordering is applied automatically per box")
     stair_shaft: StairShaftSpec | None = Field(None, description="Multi-z stairwell helper: automatically designates DOWN_STAIR_DIG at the top elevation, UP_DOWN_STAIR_DIG on every intermediate elevation, and UP_STAIR_DIG at the bottom elevation")
     middle_first: bool = Field(True, description="For box/boxes: order the center spine of the rectangle before the flanks so miners carve an access path into fog")
+    safe: bool = Field(True, description="Filter out already-dug floors, stairs, ramps, buildings, water, and aquifer tiles before designating DEFAULT_DIG (default True; set False to override)")
     swap: bool = Field(False, description="Legacy x/y swap flag (default False)")
 
 
@@ -400,10 +402,39 @@ class AssignPastureRequest(BaseModel):
 
 class ManageNoblesRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
-    action: str = Field("list", description="One of 'list' (inspect all noble positions), 'assign' (assign a specific position to unit_id), or 'auto_assign' (fill vacant MANAGER, BOOKKEEPER, BROKER, CHIEF_MEDICAL_DWARF positions across living citizens and set max bookkeeper precision)")
-    position: str | None = Field(None, description="Noble position code for action='assign' (e.g. 'MANAGER', 'BOOKKEEPER', 'BROKER', 'CHIEF_MEDICAL_DWARF', 'MILITIA_COMMANDER', 'SHERIFF')")
+    action: str = Field("list", description="One of 'list' (inspect all noble positions), 'candidates' (rank living citizens by current_soul.skills for noble roles), 'assign' (assign a specific position to unit_id), or 'auto_assign' (fill vacant MANAGER, BOOKKEEPER, BROKER, CHIEF_MEDICAL_DWARF positions with highest-skill living citizens)")
+    position: str | None = Field(None, description="Noble position code for action='assign' or 'candidates' (e.g. 'MANAGER', 'BOOKKEEPER', 'BROKER', 'CHIEF_MEDICAL_DWARF', 'MILITIA_COMMANDER', 'SHERIFF')")
     unit_id: int | None = Field(None, description="Citizen unit ID for action='assign' (pass -1 to vacate)")
     bookkeeper_settings: int | None = Field(None, ge=0, le=4, description="Optional bookkeeper precision level (0..4, where 4 is maximum precision)")
+    reassign_unskilled: bool = Field(False, description="For action='auto_assign': if True, replace an existing noble who has 0 relevant skills when a higher-skill citizen is available")
+
+
+class WorkshopJobRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    action: str = Field("list", description="One of 'list' (list workshops, their active jobs, and crafted stock), 'stock' (count free crafted furniture/barrels/pots/raws), 'queue' (queue a crafting/brewing job directly at a workshop), or 'cancel' (remove a workshop job)")
+    task: str | None = Field(None, description="Task to queue when action='queue': chair, barrel, bed, table, door, bin, bucket, pot, wheelbarrow, mechanisms, crafts, cabinet, chest, coffin, blocks, brew, meal")
+    building_id: int | None = Field(None, description="Target workshop building ID (omit to auto-pick a compatible completed workshop)")
+    material: str | None = Field(None, description="Optional material ('wood' or 'stone'; inferred from workshop when omitted)")
+    count: int = Field(1, ge=1, le=10, description="Number of jobs to queue at the workshop (1..10)")
+    repeat_job: bool = Field(False, description="Set the repeat flag on queued workshop jobs")
+    job_id: int | None = Field(None, description="Specific job ID to cancel when action='cancel' (omit to cancel all jobs on building_id)")
+
+
+SAFE_AUTOMATION_PLUGINS = {
+    "autofarm", "autochop", "autobutcher", "seedwatch", "buildingplan",
+    "suspendmanager", "tailor", "autonestbox", "autoslab", "prioritize",
+    "logistics", "preserve-rooms", "preserve-tombs", "ban-cooking", "orders",
+}
+
+
+class AutomationRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    action: str = Field("status", description="One of 'status' (check safe automation plugins), 'enable', 'disable', 'configure' (run allowlisted plugin with args), or 'apply_preset' ('early_fort' or 'standard_orders')")
+    plugin: str | None = Field(None, description="Allowlisted DFHack automation plugin name: autofarm, autochop, autobutcher, seedwatch, buildingplan, suspendmanager, tailor, autonestbox, autoslab, prioritize, logistics, preserve-rooms, preserve-tombs, ban-cooking, orders")
+    args: list[str] = Field(default_factory=list, description="Arguments for action='configure' (e.g. ['default', '50'] for autofarm, ['all', '30'] for seedwatch, ['import', 'library/basic'] for orders)")
+    preset: str | None = Field(None, description="For action='apply_preset': 'early_fort' (autofarm+seedwatch+ban-cooking+suspendmanager+buildingplan+autonestbox+autoslab+prioritize+tailor) or 'standard_orders' (orders import library/basic)")
+    include_rockstock: bool = Field(False, description="For preset='standard_orders': also import library/rockstock")
+    include_autochop: bool = Field(False, description="For preset='early_fort': also configure autochop target 30 60 and enable autochop")
 
 
 class GatherAndItemsRequest(BaseModel):
@@ -443,10 +474,14 @@ class WorkOrderRequest(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
     action: str | None = Field(None, description="One of 'create' (default when job or json is given), 'list' (default when job is omitted: inspect active manager orders & manager status), or 'cancel' (remove matching order_id or job)")
     order_id: int | None = Field(None, description="Manager order ID to cancel when action='cancel'")
-    job: str | None = Field(None, description="df.job_type name. Measured 2026-11-22: furniture takes the Construct* names - 'MakeBed' answers CR_FAILURE while 'ConstructBed' creates order 4; 'ConstructDoor' is in the game's own list. Production jobs are Make*/Smelt* (e.g. 'MakeCharcoal', 'SmeltOre', 'MakeBarrel', 'MakeTable', 'MakeChair', 'BrewDrink'). Names must be real df.job_type entries: pairs(df.job_type) yields type metadata, not the list (#49 family), so do not enumerate names that way")
+    job: str | None = Field(None, description="df.job_type name or friendly alias (e.g. 'ConstructThrone'/'MakeChair', 'ConstructBed', 'ConstructDoor', 'ConstructTable', 'MakeBarrel', 'MakeCharcoal', 'SmeltOre', 'MakePot', 'BrewDrink').")
     amount: int | None = Field(None, ge=1, description="Total amount to produce")
-    material: str | None = Field(None, description="Optional material filter (e.g. 'rock', 'wood')")
+    material: str | None = Field(None, description="Optional material filter ('wood' -> material_category:['wood'], 'rock'/'stone' -> 'INORGANIC', or a DF material string)")
+    material_category: list[str] | None = Field(None, description="Optional DFHack material_category list (e.g. ['wood'])")
     item_type: str | None = Field(None, description="Optional item_type filter")
+    item_subtype: str | None = Field(None, description="Optional item_subtype filter (e.g. 'ITEM_TOOL_LARGE_POT')")
+    reaction: str | None = Field(None, description="Optional custom reaction name (e.g. 'BREW_DRINK_FROM_PLANT')")
+    workshop_id: int | None = Field(None, description="Optional target workshop ID")
     quantity: int | None = Field(None, description="Optional quantity field")
     json_spec: str | dict | None = Field(None, alias="json", description="Optional raw workorder JSON string or object")
 
@@ -474,8 +509,9 @@ RUN_COMMAND_DENY_PREFIXES = (
 )
 RUN_COMMAND_ALLOWLIST = {
     "help", "ls", "tags", "version",
-    "autochop", "autobutcher", "autofarm", "autolabor", "autonestbox", "autoslab",
+    "autochop", "autobutcher", "autofarm", "autolabor", "autonestbox", "autoslab", "autocheese",
     "buildingplan", "suspendmanager", "prioritize", "orders", "workorder",
+    "logistics", "preserve-rooms", "preserve-tombs",
     "quickfort", "dreamfort",
     "warn-stranded", "locate-ore", "list-waves", "caravan", "liquids",
     "clean", "cleanowned", "seedwatch", "tailor", "ban-cooking",
@@ -486,6 +522,7 @@ RUN_COMMAND_ALLOWLIST = {
 # decode tables (tiletype/item/material/building/profession names), the z-chunk block
 # cache, and the previous-snapshot used for delta reporting.
 world = WM.WorldModel()
+plan_store = FP.FortPlanStore()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -718,7 +755,7 @@ async def run_command(request: RunCommandRequest):
         return {"command": command, "arguments": list(arguments), "success": False,
                 "blocked": True,
                 "error": f"command '{command}' is denied on the MCP surface (no raw Lua, cheats, or destructive commands)",
-                "hint": "use typed tools instead: send_dig_command, place_building, create_stockpile, work_order, set_unit_labors"}
+                "hint": "use typed tools instead: send_dig_command, place_building, create_stockpile, work_order, work_details"}
     if cmd_norm not in RUN_COMMAND_ALLOWLIST:
         return {"command": command, "arguments": list(arguments), "success": False,
                 "blocked": True,
@@ -916,20 +953,7 @@ async def set_pause_state(request: SetPauseStateRequest):
 
 @app.post("/cut-trees", operation_id="cut_trees")
 async def cut_trees(request: CutTreesRequest):
-    """Fell the trees in a rectangle - the player's own action, typed.
-
-    How a human does it (the player's words, 2026-11-21): *"as a player i select the tree
-    trunk with the chopping order"*. So the target is the TRUNK tile: the chopping order
-    lands on `tree_trunk` (TreeTrunk). A sapling is NOT a tree to fell - clearing a sapling
-    is the "clear vegetation" order, a different job with a different reward. This tool
-    designates trunks only and reports what it found, so a request to "fell 3-5 trees"
-    (the quickstart rung) cannot silently become 5 sapling clearings.
-
-    Body: {x0, y0, x1, y1, elev, limit?}  -> designates DEFAULT_DIG on every trunk tile in
-    the box (the game turns that into Fell Tree jobs), verifies the designations landed,
-    and reports the wood count before/after - hauling and cutting take in-game time, so
-    `wood_after` is a fact about the moment of reading, not a promise.
-    """
+    """Fell trees in `[x0..x1, y0..y1]` at `elev` by designating `DEFAULT_DIG` on `tree_trunk` tiles (saplings are ignored). Reports designated trunks and wood count."""
     body = await _as_dict(request)
     x0, y0, x1, y1, e = (int(body[k]) for k in ("x0", "y0", "x1", "y1", "elev"))
     limit = int(body.get("limit") or 0) or 0
@@ -995,15 +1019,10 @@ async def _designate(designation: str, locations: list[list[int]]) -> int:
 
 @app.get("/find-water", operation_id="find_water")
 async def find_water(elev0: int = Query(...), elev1: int = Query(...),
-                     cell: int = Query(16), min_depth: int = Query(3), max_levels: int = Query(8)):
-    """Where the water IS, per elevation - the census a well plan needs before any digging.
-
-    The wiki's rule is exact: a well is 1x1 on a floor with a CLEAR line to water >=3/7
-    deep, and it does not work through a staircase. So the questions are: which tiles hold
-    water, how deep, and is there a floor above them. This reads the map blocks and reports
-    clusters per `cell` with the depth range, per elevation - the answer to "the fort keeps
-    cancelling Give water: No water source" is a coordinate, not a guess.
-    """
+                     cell: int = Query(16), min_depth: int = Query(3), max_levels: int = Query(8),
+                     near_x: int | None = Query(None, description="Optional x to sort closest clusters first"),
+                     near_y: int | None = Query(None, description="Optional y to sort closest clusters first")):
+    """Scan map blocks across `elev0..elev1` for water tiles (`>= min_depth`, default 3/7 for wells) and return clustered coordinates and depth ranges."""
     from worldmodel import GAME_Z_OFFSET
     gen = await world._gen()
     dec = await world._dec(gen)
@@ -1043,8 +1062,15 @@ async def find_water(elev0: int = Query(...), elev1: int = Query(...),
     out = []
     for c in cells.values():
         c["classes"] = sorted(c["classes"])
+        if near_x is not None and near_y is not None:
+            cx_c = (c["x0"] + c["x1"]) / 2.0
+            cy_c = (c["y0"] + c["y1"]) / 2.0
+            c["dist"] = round(((cx_c - near_x) ** 2 + (cy_c - near_y) ** 2) ** 0.5, 1)
         out.append(c)
-    out.sort(key=lambda c: (-c["water_tiles"], -c["max_depth"]))
+    if near_x is not None and near_y is not None:
+        out.sort(key=lambda c: (c["dist"], -c["water_tiles"]))
+    else:
+        out.sort(key=lambda c: (-c["water_tiles"], -c["max_depth"]))
     return {"success": True, "levels_scanned": list(levels), "water_tiles_found": total,
             "clusters": out[:40], "min_depth": mind,
             "note": "a well needs a floor tile with a clear line to water >=3/7 below it - "
@@ -1053,15 +1079,10 @@ async def find_water(elev0: int = Query(...), elev1: int = Query(...),
 
 @app.get("/find-trees", operation_id="find_trees")
 async def find_trees(elev0: int = Query(...), elev1: int = Query(...),
-                     cell: int = Query(16), max_levels: int = Query(8)):
-    """Where the trees ARE - a whole-map census of trunk tiles, per elevation.
-
-    Built first because felling needs a target: the chopping order lands on the TRUNK
-    (the player: "as a player i select the tree trunk with the chopping order"). The survey
-    endpoint lumps vegetation into `other`, so this reads the map blocks directly and
-    decodes every tile's class - trunks counted per `cell`x`cell` bin with a sample
-    coordinate, saplings counted separately (a sapling is the vegetation order, not a tree).
-    """
+                     cell: int = Query(16), max_levels: int = Query(8),
+                     near_x: int | None = Query(None, description="Optional x to sort closest clusters first"),
+                     near_y: int | None = Query(None, description="Optional y to sort closest clusters first")):
+    """Scan map blocks across `elev0..elev1` and return clustered `tree_trunk` coordinates (with separate sapling counts) for `cut_trees`."""
     from worldmodel import GAME_Z_OFFSET
     gen = await world._gen()
     dec = await world._dec(gen)
@@ -1099,7 +1120,14 @@ async def find_trees(elev0: int = Query(...), elev1: int = Query(...),
                 else:
                     c["saplings"] += 1
                     sap_total += 1
-    clusters = sorted(cells.values(), key=lambda c: -c["trunks"])[:40]
+    if near_x is not None and near_y is not None:
+        for c in cells.values():
+            cx_c = (c["x0"] + c["x1"]) / 2.0
+            cy_c = (c["y0"] + c["y1"]) / 2.0
+            c["dist"] = round(((cx_c - near_x) ** 2 + (cy_c - near_y) ** 2) ** 0.5, 1)
+        clusters = sorted(cells.values(), key=lambda c: (c["dist"], -c["trunks"]))[:40]
+    else:
+        clusters = sorted(cells.values(), key=lambda c: -c["trunks"])[:40]
     return {"success": True, "levels_scanned": list(levels), "cells_with_trees": len(cells),
             "trunks_found": trunk_total, "saplings_found": sap_total, "clusters": clusters,
             "note": "fell trunks with /cut-trees using a cluster box; saplings are the vegetation order"}
@@ -1139,35 +1167,73 @@ def _expand_dig_box(x0: int, y0: int, x1: int, y1: int, e0: int, e1: int | None 
     return out
 
 
+_SAFE_DIG_GLYPHS = {"#", "?", "B", "p"}
+
+
+async def _filter_safe_dig_points(pts: list[list[int]]) -> tuple[list[list[int]], dict]:
+    """Filter out tiles that are not rock/fog (floors, stairs, ramps, buildings) or have water/aquifer."""
+    if not pts:
+        return [], {}
+    by_z: dict[int, list[list[int]]] = {}
+    for p in pts:
+        by_z.setdefault(int(p[2]), []).append(p)
+    kept: list[list[int]] = []
+    skipped = {"non_rock": 0, "building": 0, "water_or_aquifer": 0}
+    try:
+        gen = await world._gen()
+        dec = await world._dec(gen)
+    except Exception:
+        return pts, {}
+    for z, z_pts in by_z.items():
+        elev = z - GAME_Z_OFFSET
+        try:
+            blocks = await world.cache.blocks(z, z + 1, gen)
+            hz = await world.hazard_map(elev, elev)
+        except Exception:
+            kept.extend(z_pts)
+            continue
+        bld: set[tuple[int, int]] = set()
+        live: dict[tuple[int, int], str] = {}
+        fog: set[tuple[int, int]] = set()
+        for b in blocks:
+            if int(b.map_z) != z:
+                continue
+            for bb in b.buildings:
+                for xx in range(bb.pos_x_min, bb.pos_x_max + 1):
+                    for yy in range(bb.pos_y_min, bb.pos_y_max + 1):
+                        bld.add((xx, yy))
+            for i, hid in enumerate(b.hidden):
+                if int(hid):
+                    fog.add((b.map_x + (i % 16), b.map_y + (i // 16)))
+            for i, tid in enumerate(b.tiles):
+                live[(b.map_x + (i % 16), b.map_y + (i // 16))] = dec.tile_class(int(tid)).glyph
+        for p in z_pts:
+            x, y = int(p[0]), int(p[1])
+            if (x, y) in bld:
+                skipped["building"] += 1
+                continue
+            rec = hz.get((x, y))
+            if rec and (any(e >= elev for e in rec.get("aquifer", [])) or any(e >= elev for e in rec.get("water", {}))):
+                skipped["water_or_aquifer"] += 1
+                continue
+            if (x, y) not in fog:
+                g = live.get((x, y))
+                if g is not None and g not in _SAFE_DIG_GLYPHS:
+                    skipped["non_rock"] += 1
+                    continue
+            kept.append(p)
+    return kept, {k: v for k, v in skipped.items() if v > 0}
+
+
 @app.post("/send-dig-command", operation_id="send_dig_command")
 async def send_dig_command(request: SendDigCommandRequest):
-    """Designate digging - the `m` menu over RPC, no blueprint and no instant-dig.
-    designation: one of NO_DIG, DEFAULT_DIG, UP_DOWN_STAIR_DIG, CHANNEL_DIG, RAMP_DIG,
-    DOWN_STAIR_DIG, UP_STAIR_DIG (or STAIR_SHAFT with box).
-
-    Three ways to pass coordinates:
-    1. `box`: `{x0, y0, x1, y1, elev, elev1?}` (or `boxes`: list of boxes) using in-game
-       Elevation numbers directly (`z = elevation + 129`, `WM.GAME_Z_OFFSET`, converted
-       internally). Orders the middle spine before the flanks (`middle_first=True`) so
-       miners carve access into fog cleanly.
-    2. `stair_shaft`: `{x0, y0, x1?, y1?, from_elev, to_elev, connect_above?, continue_below?}`
-       - automatically designates `DOWN_STAIR_DIG` at the top elevation, `UP_DOWN_STAIR_DIG`
-       on every intermediate elevation, and `UP_STAIR_DIG` at the bottom elevation so a
-       multi-z stairwell is never half-ordered.
-    3. `locations`: list of `[x, y, z]` where `z = elevation + 129` (`WM.GAME_Z_OFFSET` - the
-       SAME number every read tool uses), sent AS GIVEN.
-
-    FOG WORKFLOW (verified live on 53.17-r1): designating into unexplored fog (`hidden=True`,
-    `?` glyph) WORKS and is the intended workflow for extending tunnels, rooms, and stair
-    shafts into the mountain. Gate before designating with `hazards` (damp/hot),
-    `depth_profile` / `overburden` (depth >= 2), and `survey` (do not designate over existing
-    floors/buildings). Note: `tile_at` does not show `dig_designation` on hidden tiles, so
-    verify fog orders via `world_objects` / `look` dig clusters, and verify completion by
-    positive tile state (`dug > 0 and to_dig == 0` in `survey`), never by designation count
-    dropping to 0. Use `NO_DIG` to clear a rectangle."""
+    """Designate digging (`NO_DIG`, `DEFAULT_DIG`, `UP_DOWN_STAIR_DIG`, `CHANNEL_DIG`, `RAMP_DIG`, `DOWN_STAIR_DIG`, `UP_STAIR_DIG`, or `STAIR_SHAFT`).
+    Accepts `box`/`boxes` (`{x0,y0,x1,y1,elev,elev1?}` using in-game elevation, converted via `z = elevation + 129` / `WM.GAME_Z_OFFSET`, ordered middle-first), `stair_shaft` (`{x0,y0,from_elev,to_elev,...}`), or raw `locations` `[x,y,z]`.
+    FOG WORKFLOW: designating into unexplored fog (`hidden=True`) WORKS and is the intended workflow; gate with `fort_strata`/`survey` and verify completion via `survey` (`dug > 0 and to_dig == 0`)."""
     body = await _as_dict(request)
     swap = bool(body.get("swap", False))
     middle_first = bool(body.get("middle_first", True))
+    safe = bool(body.get("safe", True))
 
     def _apply_swap(pts: list[list[int]]) -> list[list[int]]:
         return [[int(p[1]), int(p[0]), int(p[2])] for p in pts] if swap \
@@ -1236,6 +1302,7 @@ async def send_dig_command(request: SendDigCommandRequest):
 
     total_sent = 0
     boxes_applied = []
+    skipped_summary: dict[str, int] = {}
     for bx in boxes_in:
         b_des = str(bx.get("designation") or designation).upper()
         if b_des not in DIG_DESIGNATIONS:
@@ -1244,7 +1311,11 @@ async def send_dig_command(request: SendDigCommandRequest):
             int(bx["x0"]), int(bx["y0"]), int(bx["x1"]), int(bx["y1"]),
             int(bx["elev"]), bx.get("elev1"), middle_first=middle_first
         ))
-        n_box = await _designate(b_des, pts)
+        if safe and b_des == "DEFAULT_DIG":
+            pts, sk = await _filter_safe_dig_points(pts)
+            for k, v in sk.items():
+                skipped_summary[k] = skipped_summary.get(k, 0) + v
+        n_box = await _designate(b_des, pts) if pts else 0
         total_sent += n_box
         boxes_applied.append({
             "x0": int(bx["x0"]), "y0": int(bx["y0"]),
@@ -1259,7 +1330,12 @@ async def send_dig_command(request: SendDigCommandRequest):
     if body.get("locations"):
         locs = [Coord(x=int(p[1]), y=int(p[0]), z=int(p[2])) for p in body["locations"]] if swap \
                else [Coord(x=int(p[0]), y=int(p[1]), z=int(p[2])) for p in body["locations"]]
-        total_sent += await _designate(designation, [[c.x, c.y, c.z] for c in locs])
+        loc_pts = [[c.x, c.y, c.z] for c in locs]
+        if safe and designation == "DEFAULT_DIG":
+            loc_pts, sk = await _filter_safe_dig_points(loc_pts)
+            for k, v in sk.items():
+                skipped_summary[k] = skipped_summary.get(k, 0) + v
+        total_sent += await _designate(designation, loc_pts) if loc_pts else 0
 
     if not boxes_in and not body.get("locations"):
         return {"success": False,
@@ -1268,6 +1344,8 @@ async def send_dig_command(request: SendDigCommandRequest):
     out_res = {"designation": designation, "tiles": total_sent, "success": True}
     if boxes_applied:
         out_res["boxes_applied"] = boxes_applied
+    if skipped_summary:
+        out_res["skipped_tiles"] = skipped_summary
     return out_res
 
 @app.post("/get-block-list", operation_id="get_block_list")
@@ -1330,7 +1408,7 @@ async def look(e0: int = Query(-999, description="start game elevation; omit for
                e1: int = Query(-999, description="end game elevation; omit for auto fort band"),
                with_legend: bool = Query(False, description="include the map glyph legend"),
                max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS, description="token budget, cap 30000")):
-    """START HERE. The whole-fort briefing in one call: date, pause state, population rolled up by profession/species/soldiers/wounded/hostile, latest reports, a per-elevation strip (walls/floors/open/water/magma/digs/buildings/items), what CHANGED since your last look, pending dig clusters as rectangles, building and item rollups, and named walkable regions. Auto-targets the elevation band where units and dig activity actually are. ~500-1,000 tokens. Then zoom with world_zone/world_map/world_objects."""
+    """Start here: whole-fort briefing with date, pause state, population rollup, recent reports, per-elevation strip, delta since last read, pending dig clusters, buildings, items, and walkable regions. Zoom in with `world_map`."""
     e0 = None if e0 == -999 else e0
     e1 = None if e1 == -999 else e1
     return await world.look(max_tokens=max_tokens, with_legend=with_legend, e0=e0, e1=e1)
@@ -1349,7 +1427,7 @@ async def world_map(e: int = Query(..., description="in-game Elevation"),
                     rle: bool = Query(False, description="run-length encode flat rows (default False so the top X-coordinate ruler aligns character-for-character; set True for wide >60-col scans)"),
                     with_legend: bool = Query(False, description="include the glyph legend"),
                     max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS)):
-    """A single elevation as a 1-char-per-tile glyph grid for an explicit x/y window, with a top X-coordinate ruler, left Y-coordinate labels, and walkable-region letters annotated alongside. Keep windows ~40x40 (~400 tokens). Tiletype names are NEVER sent; read the legend once. Water/magma/hidden override the base glyph."""
+    """Render a single elevation `e` as an aligned 1-char-per-tile glyph grid over `[x0..x1, y0..y1]` with X/Y coordinate rulers and walkable-region labels (keep windows ~40x40)."""
     return await world.view(e, x0, x1, y0, y1, max_tokens=max_tokens, rle=rle,
                             with_legend=with_legend)
 
@@ -1364,7 +1442,7 @@ async def world_objects(e0: int = Query(..., description="start in-game Elevatio
 async def fort_progress(e0: int = Query(-999, description="start game elevation; omit for auto fort band"),
                         e1: int = Query(-999, description="end game elevation; omit for auto fort band"),
                         max_tokens: int = Query(WM.DEFAULT_MAX_TOKENS)):
-    """THE PLAY THE GAME TOOL. The Quickstart milestone ladder evaluated against your live fort: pause/labors, entry tunnel, stairwell, stockpile, meeting area, refuse pile, farm plot, wood, still, pasture, workshops, furniture, wheelbarrows, barrels, garbage dump, trade depot, bedrooms, dining, offices, smelter+forge, military - each marked [x]/[ ] with its evidence. Then NEXT gives the first unsatisfied rung with its exact key sequence (m/u/t/p/z/b-o-f-...), why it matters, a concrete coordinate box inside a real walkable region, and water/magma alerts. Play the ladder in order; that is how this game is learned."""
+    """Evaluate the Quickstart milestone ladder against the live fort (tunnel, stairs, stockpiles, farms, workshops, nobles, military) and return the next unsatisfied rung with actionable guidance."""
     e0 = None if e0 == -999 else e0
     e1 = None if e1 == -999 else e1
     return await world.progress(e0, e1, max_tokens=max_tokens)
@@ -1491,7 +1569,7 @@ async def _verify_footprint_ground(e: int, x0: int, y0: int, w: int, h: int,
 
 @app.post("/place-building", operation_id="place_building")
 async def place_building(request: PlaceBuildingRequest):
-    """CREATE A BUILDING at an exact tile - no menu, no mouse, no dwarf. building: friendly name (Stockpile, Zone, Trade Depot, Bed, Table, Chair, Door, Chest, Well, Farm Plot, Still, Mechanic, Carpenter, Stoneworker, Jeweler, Smelter, Forge, Kitchen, Butcher, Weapon Rack, Axle, Gear Assembly, Water Wheel, Lever, Trap, Cage, Trackstop...); x/y int, elev GAME ELEVATION; w/h optional (a Trade Depot is 5x5, a workshop 3x3); complete:true (default) finishes it via completeBuild - pass false to queue it for a dwarf to build with real materials; material:"log"/"boulder"/"block" with count:N attaches REAL item objects found by description (measured: constructWithItems rejects an empty list, and RFR item ids do not resolve); abstract:true for material-free buildings (auto for Stockpile/Zone - the game REQUIRES one of items/filters/abstract); items:[itemId,...] for furniture and doors. Returns the game type + building id verified by findAtTile, and the game's own rejection text (e.g. 'one of items, filters or abstract is required') when it refuses. Pre-flight site gate rejects footprints containing rock, fog, open air, or water."""
+    """Place a building or furniture (`Trade Depot`, `Well`, `Farm Plot`, `Still`, `Carpenter`, `Stoneworker`, `Bed`, `Table`, `Chair`, `Door`, etc.) at `(x, y, elev)` with optional `w`/`h`, `material` (`log`/`boulder`/`block`), `items`, or `complete=False`. Pre-flight site gate rejects rock, fog, open air, or water (use `create_stockpile`/`create_zone` for piles/zones)."""
     body = await _as_dict(request)
     _x0, _y0, _e = int(body["x"]), int(body["y"]), int(body["elev"])
     _w, _h = int(body.get("w") or 1), int(body.get("h") or 1)
@@ -1551,7 +1629,8 @@ async def place_building(request: PlaceBuildingRequest):
                                       abstract=body.get("abstract"),
                                       items=body.get("items"),
                                       material=body.get("material"),
-                                      count=int(body.get("count", 3)))
+                                      count=int(body.get("count", 3)),
+                                      nominal=bool(body.get("nominal", True)))
     except LO.LuaOpError as e:
         return {"success": False, "error": str(e)}
     world.cache.reset()
@@ -1589,36 +1668,37 @@ async def _building_present(building_id: int) -> bool | None:
 
 @app.post("/remove-building", operation_id="remove_building")
 async def remove_building(request: RemoveBuildingRequest):
-    """Deconstruct a building - by tile (x, y, elev) OR by building_id.
-
-    Measured 2026-11-21: this endpoint read body["x"] unconditionally, so the natural call
-    {"building_id": 28} answered HTTP 500 with no explanation - the tool the player asked
-    to fix ("looks like the remove tool needs some work too"). An id is resolved to the
-    footprint start from the live pile/zone lists; a call that names neither is answered
-    with a usage message, not a traceback.
-    """
+    """Deconstruct a building by `(x, y, elev)` or `building_id` and verify removal (refuses activity zones; use `remove_zone` for zones)."""
     body = await _as_dict(request)
     x = y = elev = None
-    if body.get("building_id") is not None:
-        bid = int(body["building_id"])
+    bid_req = int(body["building_id"]) if body.get("building_id") is not None else None
+    if bid_req is not None:
         dec = await world._dec(await world._gen())
+        try:
+            zones = await LO.list_zones(dec)
+        except LO.LuaOpError as e:
+            zones = []
+        for row in zones:
+            if int(row["id"]) == bid_req:
+                return {"success": False, "verdict": "refused_zone", "building_id": bid_req,
+                        "error": f"building_id {bid_req} is an activity zone ({row.get('type_name', 'Zone')}); findAtTile cannot see zones so remove_building cannot remove it",
+                        "hint": "call remove_zone(building_id=..., acknowledge_risk=True) instead"}
         for row in await LO.list_stockpiles(dec):
-            if int(row["id"]) == bid:
+            if int(row["id"]) == bid_req:
                 x, y, elev = int(row["x0"]), int(row["y0"]), int(row["elev"])
                 break
         if x is None:
             try:
-                zones = await LO.list_zones(await world._dec(await world._gen()))
-            except LO.LuaOpError as e:
-                return {"success": False, "error": f"zone scan failed while resolving id {bid}: {e}"}
-            for row in zones:
-                if int(row["id"]) == bid:
-                    x, y, elev = int(row["x0"]), int(row["y0"]), int(row["elev"])
-                    break
+                live = await LO.buildings_live()
+                for row in live.get("buildings", []):
+                    if int(row.get("building_id", -1)) == bid_req:
+                        x, y, elev = int(row["x"]), int(row["y"]), int(row["elev"])
+                        break
+            except (LO.LuaOpError, DFHackError, DFHackTransportError):
+                pass
         if x is None:
             return {"success": False,
-                    "error": f"no stockpile or zone with building_id {bid} - the live lists are the "
-                             "source; a pile marked for removal may already be gone"}
+                    "error": f"no building or stockpile with building_id {bid_req} in live lists"}
     else:
         try:
             x, y, elev = int(body["x"]), int(body["y"]), int(body["elev"])
@@ -1630,28 +1710,58 @@ async def remove_building(request: RemoveBuildingRequest):
         res = await LO.remove_building(x, y, elev)
         write_note = None
     except LO.LuaOpError as e:
-        # The write's own reply is allowed to be silent; it is not evidence about the game.
         res, write_note = {"error": str(e)}, str(e)
     world.cache.reset()
-    bid = res.get("building_id")
+    bid = res.get("building_id") if isinstance(res, dict) else None
     if bid is None:
-        # The reply never named the building; resolve it from the tile we were given.
-        at = await LO.building_at(x, y, elev)
-        bid = at.get("building_id") if isinstance(at, dict) else None
-    present = await _building_present(int(bid)) if bid is not None else None
+        bid = bid_req
+    if bid is None:
+        try:
+            at = await LO.building_at(x, y, elev)
+            bid = at.get("building_id") if isinstance(at, dict) else None
+        except (LO.LuaOpError, DFHackError, DFHackTransportError):
+            pass
+    if isinstance(res, dict) and res.get("verdict") == "marked":
+        return {"success": True, "verdict": "marked", "removed": False,
+                "marked_for_removal": True, "building_id": bid,
+                "resolved_from_tile": [x, y, elev],
+                "note": res.get("note"), "write_reply": write_note}
+
+    # Verify absence against buildings_live (and fallback to building_at)
+    present: bool | None = None
+    verified_by = "buildings_live"
+    try:
+        live = await LO.buildings_live()
+        blds = live.get("buildings")
+        if isinstance(blds, list):
+            if bid is not None:
+                present = any(int(r.get("building_id", -1)) == int(bid) for r in blds)
+            else:
+                present = any(int(r.get("x", -1)) == x and int(r.get("y", -1)) == y and int(r.get("elev", -999)) == elev for r in blds)
+    except (LO.LuaOpError, DFHackError, DFHackTransportError):
+        pass
+    if present is None:
+        try:
+            at = await LO.building_at(x, y, elev)
+            if isinstance(at, dict):
+                present = (at.get("building") is not None)
+                verified_by = "findAtTile"
+        except (LO.LuaOpError, DFHackError, DFHackTransportError):
+            present = None
+
     if present is False:
         return {"success": True, "verdict": "removed", "building_id": bid,
                 "resolved_from_tile": [x, y, elev],
-                "verified_by": "the id is absent from the live pile/zone lists",
+                "verified_by": f"the building is absent from {verified_by}",
                 "write_reply": write_note}
     if present is None:
         return {"success": False, "verdict": "UNVERIFIED", "building_id": bid,
                 "resolved_from_tile": [x, y, elev],
-                "error": "the pile/zone reads produced NO DATA: removal not proven",
+                "error": "buildings_live and findAtTile produced NO DATA: removal not proven",
                 "write_reply": write_note}
     return {"success": False, "verdict": "still present", "building_id": bid,
             "resolved_from_tile": [x, y, elev],
-            "error": res.get("error") or "the building is still in the live lists",
+            "error": (res.get("error") if isinstance(res, dict) else None) or f"the building is still present in {verified_by}",
             "write_reply": write_note}
 
 @app.get("/tile-at", operation_id="tile_at")
@@ -1819,7 +1929,7 @@ for _, id in ipairs(want) do
     rec.found = 1
     -- One pile with an unreadable field must not kill the whole probe (measured:
     -- the pile probe printed NO rows, and every pile then read NO DATA).
-    pcall(function() rec.x0 = b.x1; rec.x1 = b.x2; rec.y0 = b.y1; rec.y1 = b.y2; rec.elev = b.z - 129 end)
+    pcall(function() rec.x0 = b.x1; rec.x1 = b.x2; rec.y0 = b.y1; rec.y1 = b.y2; rec.elev = b.z - __Z_OFF__ end)
     local on = {}
     for _, c in ipairs(CATS) do
       local ok, v = pcall(function() return b.settings.flags[c] end)
@@ -1838,7 +1948,7 @@ for _, it in ipairs(df.global.world.items.other.IN_PLAY) do
     local tn = "?"
     pcall(function() for k, v in pairs(df) do if v == it._type then tn = k end end end)
     for _, rec in ipairs(piles) do
-      if rec.found == 1 and pos.z - 129 == rec.elev
+      if rec.found == 1 and pos.z - __Z_OFF__ == rec.elev
          and pos.x >= rec.x0 and pos.x <= rec.x1
          and pos.y >= rec.y0 and pos.y <= rec.y1 then
         rec.counts.total = (rec.counts.total or 0) + 1
@@ -1876,7 +1986,7 @@ def observe_pile_lua(pile_ids: list[int]) -> str:
     are aggregated by item-type name - the honest granularity from items.other.IN_PLAY.
     """
     ids = " ".join(str(int(i)) for i in pile_ids)
-    return OBSERVE_PILE_LUA_TEMPLATE.replace("__IDS__", ids).strip()
+    return OBSERVE_PILE_LUA_TEMPLATE.replace("__IDS__", ids).replace("__Z_OFF__", str(GAME_Z_OFFSET)).strip()
 
 
 OBSERVE_PICKS_LUA = """
@@ -2440,17 +2550,7 @@ async def work_details(action: str = Query("list", description="'list' (the whol
                        mode: str = Query(None, description="assign: 'add' (tick) or 'remove' (untick); set-mode/create: 'everybody' (1), 'nobody' (2), or 'selected' (3)"),
                        labor: str = Query(None, description="set-labor/create: labor name(s) from /labor-list, e.g. MINE, CARPENTER, MASON, BREWER"),
                        value: bool = Query(None, description="set-labor: true to grant, false to revoke (default true)")):
-    """THE LABOR MENU, at the layer the game actually uses - the green tick marks.
-
-    Measured 2026-11-22: the details live at `df.global.plotinfo.labor_info.work_details`, each
-    with `name`, `allowed_labors`, `flags` (`mode` = 1 `EverybodyDoesThis`, 2 `NobodyDoesThis`,
-    3 `OnlySelectedDoesThis`) and **`assigned_units` (a sorted vector of unit ids - the tick
-    column itself)**. After every mutation (`assign`, `set-mode`, `set-labor`, `create`, `delete`),
-    this tool sorts `assigned_units`, switches `flags.mode` to `OnlySelectedDoesThis` (`3`) when
-    adding a unit, and runs **`dfhack.units.setAutomaticProfessions(u)`** across all citizens so
-    `unit.status.labors` updates immediately (even while paused) and reports `effective_holders`
-    and `unit_labors_after`.
-    """
+    """Inspect or edit work details (`list`, `assign`, `set-mode`, `set-labor`, `create`, `delete`). Updates `assigned_units`, switches mode to `OnlySelectedDoesThis` on assign, and refreshes citizen professions/labors immediately."""
     try:
         res = await LO.work_details(action=action, detail=detail, unit_id=unit_id,
                                     mode=mode, labor=labor, value=value)
@@ -2756,13 +2856,7 @@ async def make_stockpile(request: CreateStockpileRequest):
 
 @app.post("/create-stockpile", operation_id="create_stockpile")
 async def create_stockpile(request: CreateStockpileRequest):
-    """Create a multi-tile stockpile (abstract -> setSize -> completeBuild), optionally configuring its categories (`allow`, `deny`, `all_categories`) and container limits (`max_wheelbarrows`, `max_barrels`, `max_bins`) in the same call. Use this, not place_building, for any pile bigger than 1 tile.
-
-    SITE GATE (measured 2026-11-21, three times on one fort): a pile placed on tiles that
-    are not dug floor - `open` cavern air, unexcavated rock, fog - is accepted by the game
-    and lands IN MID AIR. The player's words: "you had build the three stockpiles in mid
-    air". Furniture floating over a cavern is a bug factory, so this endpoint now reads the
-    footprint first and refuses when any tile is not a dug, walkable floor."""
+    """Create a multi-tile stockpile (`x, y, elev, w, h`) and optionally set `allow`/`deny`/`all_categories` and `max_wheelbarrows`/`max_barrels`/`max_bins`. Rejects footprints containing rock, fog, or open space."""
     body = await _as_dict(request)
     x0, y0, e = int(body["x"]), int(body["y"]), int(body["elev"])
     w, h = max(1, int(body["w"])), max(1, int(body["h"]))
@@ -2868,15 +2962,7 @@ async def list_stockpiles():
 
 @app.post("/configure-stockpile", operation_id="configure_stockpile")
 async def configure_stockpile(request: ConfigureStockpileRequest, raw_request: Request):
-    """Set a stockpile's accepted categories, container limits and wheelbarrows.
-
-    Body: {"building_id": 12, "allow": ["wood"], "deny": ["stone"], "all_categories": false,
-    "max_wheelbarrows": 3, "max_barrels": 0, "max_bins": 0}. The game's own category names
-    are: ammo, animals, armor, bars_blocks, cloth, coins, corpses, finished_goods, food,
-    furniture, gems, leather, misc, refuse, sheet, stone, weapons, wood. all_categories=true
-    with a deny list is the general pile (take everything except stone and wood, per the
-    quickstart). A wood pile near the entrance is allow=["wood"].
-    """
+    """Set a stockpile's accepted categories (`allow`/`deny`/`all_categories`: `ammo`, `animals`, `armor`, `bars_blocks`, `cloth`, `coins`, `corpses`, `finished_goods`, `food`, `furniture`, `gems`, `leather`, `misc`, `refuse`, `sheet`, `stone`, `weapons`, `wood`) and container limits (`max_wheelbarrows`, `max_barrels`, `max_bins`), verified via `list_stockpiles`."""
     body = await _as_dict(request)
     # The gate reads the RAW body, not the validated model: `_as_dict` uses
     # exclude_none=True, so absent allow/deny disappear from `body` entirely and a check on
@@ -2927,7 +3013,7 @@ async def configure_stockpile(request: ConfigureStockpileRequest, raw_request: R
 @app.get("/survey", operation_id="survey")
 async def survey(elev: int = Query(...), x0: int = Query(...), y0: int = Query(...),
                  x1: int = Query(...), y1: int = Query(...)):
-    """Pre-flight check before designating a box: what is on every tile. NEVER designate over stuff - floors, stairs, ramps, buildings, items and existing designations are not rock. Returns counts per category, safe_to_designate, the blocked set, and samples, so a plan gets filtered before a single designation is sent."""
+    """Pre-flight check for `[x0..x1, y0..y1]` at `elev`: returns tile category counts (`rock`, `floor`, `hidden`, `open`, etc.), `dug`, `to_dig`, `safe_to_designate`, and blocked samples."""
     return await world.survey(elev, x0, y0, x1, y1)
 
 @app.get("/depth-profile", operation_id="depth_profile")
@@ -3025,17 +3111,7 @@ async def list_zones():
 
 @app.post("/remove-zone", operation_id="remove_zone")
 async def remove_zone(request: RemoveZoneRequest):
-    """Remove an activity zone by id - **opt-in**, because this path has killed the fort once.
-
-    Measured 2026-11-21 22:53:41 (`crash_2026-11-21-22-53-41.txt`): a zone removal via RPC died
-    with SIGSEGV at address 0 inside `Buildings::notifyCivzoneModified`. The no-arg call is
-    gone, but the chunk still performs pointer surgery (setOwner(b, nil), erasing
-    `assigned_units`, erasing + `:delete()`-ing every `general_refs` civzone entry in
-    `units.active`, then `deconstruct`). That is the riskiest shape of write this project has,
-    so it is gated like zone creation: pass `acknowledge_risk: true`, and prefer the in-game
-    zone removal (`z -> ... -> remove`) for a living fortress. The answer carries a read-back
-    verdict: a zone is proven gone from the live zone list, not from the write's reply.
-    """
+    """Remove an activity zone by `building_id` (requires `acknowledge_risk=True` due to DFHack pointer cleanup; see `docs/tool-notes.md`) and verify against `list_zones`."""
     body = await _as_dict(request)
     bid = int(body["building_id"])
     if body.get("acknowledge_risk") is not True:
@@ -3080,18 +3156,7 @@ async def remove_zone(request: RemoveZoneRequest):
 
 @app.post("/create-zone", operation_id="create_zone")
 async def create_zone(request: CreateZoneRequest):
-    """CREATE AN ACTIVITY ZONE - the meeting area, pasture, pit/pond, dump - at an exact rectangle.
-
-    Body: {"kind": "meeting" | "pasture" | "pit" | "pond" | "dump" | "watersource" | any
-    name substring from get_building_def_list, "x": int, "y": int, "elev": GAME ELEVATION,
-    "w": int, "h": int}. Zones are ABSTRACT buildings (no materials), so the pile recipe
-    works: allocInstance -> setSize -> constructAbstract, verified by findAtTile.
-
-    Why this tool exists: the ladder rungs for the meeting area (wiki step 5), the pasture,
-    the garbage dump and the refuse zone all need a zone, and the `zone` plugin implements
-    no commands (SETUP-LINUX notes), so until now zones were UI-only and uncreatable by
-    an agent. Dig the room out FIRST: a zone on unmined rock marks nothing.
-    """
+    """Create an activity zone (`meeting`, `pasture`, `pit`, `pond`, `dump`, `watersource`, `office`, `bedroom`, `dining`, `tomb`, etc.) at `(x, y, elev, w, h)` on dug ground (requires `acknowledge_risk=True`)."""
     body = await _as_dict(request)
     # ZONE WRITES ARE OPT-IN. Measured twice on this fort (2026-11-21): the game crashed
     # after `create_zone` calls - allocInstance -> setSize -> constructAbstract -> write
@@ -3162,7 +3227,7 @@ async def create_zone(request: CreateZoneRequest):
 
 @app.get("/labor-list", operation_id="labor_list")
 async def labor_list():
-    """Every labor name you can pass to set_unit_labors (the DFHack unit_labor enum, decoded from the game). Use these exact strings - MINING, MASON, CARPENTER, PLANT, IRRIGATE, FARMER, CRAFTSMAN, TRANSPORT, ..."""
+    """Every labor name you can pass to work_details / unit_labors (the DFHack unit_labor enum, decoded from the game). Use these exact strings - MINE, MASON, CARPENTER, PLANT, IRRIGATE, FARMER, CRAFTSMAN, TRANSPORT, ..."""
     dec = await world._dec(await world._gen())
     labors = dec.flags.get("unit_labor", {})
     return {"count": len(labors), "labors": sorted(labors.values())}
@@ -3194,13 +3259,33 @@ async def work_order_link(order_id: int = Query(...), workshop_id: int = Query(.
         return {"success": False, "error": str(e)}
 
 
+_WORKORDER_JOB_ALIASES = {
+    "makechair": ("ConstructThrone", {}),
+    "chair": ("ConstructThrone", {}),
+    "throne": ("ConstructThrone", {}),
+    "makebed": ("ConstructBed", {}),
+    "bed": ("ConstructBed", {}),
+    "makedoor": ("ConstructDoor", {}),
+    "door": ("ConstructDoor", {}),
+    "maketable": ("ConstructTable", {}),
+    "table": ("ConstructTable", {}),
+    "makebin": ("ConstructBin", {}),
+    "bin": ("ConstructBin", {}),
+    "makecabinet": ("ConstructCabinet", {}),
+    "makebox": ("ConstructChest", {}),
+    "makechest": ("ConstructChest", {}),
+    "makecoffin": ("ConstructCoffin", {}),
+    "makepot": ("MakeTool", {"item_subtype": "ITEM_TOOL_LARGE_POT", "material": "INORGANIC"}),
+    "rockpot": ("MakeTool", {"item_subtype": "ITEM_TOOL_LARGE_POT", "material": "INORGANIC"}),
+    "largepot": ("MakeTool", {"item_subtype": "ITEM_TOOL_LARGE_POT", "material": "INORGANIC"}),
+    "brewdrink": ("CustomReaction", {"reaction": "BREW_DRINK_FROM_PLANT"}),
+    "brew": ("CustomReaction", {"reaction": "BREW_DRINK_FROM_PLANT"}),
+}
+
+
 @app.post("/work-order", operation_id="work_order")
 async def work_order(request: WorkOrderRequest):
-    """THE MANAGER'S WORK-ORDER SCREEN (`j-m-q`), driven.
-    - Create: `{"job":"MakeBarrel","amount":5}` (or raw `{"json":"{\"job\":\"MilkCreature\"}"}`).
-    - List: `{"action":"list"}` (or `{}`) returns all active manager orders (`amount_left`, `amount_total`, `validated`, `active`) and whether a `MANAGER` noble is appointed (`has_manager`).
-    - Cancel: `{"action":"cancel","order_id":0}` (or `{"action":"cancel","job":"MakeBarrel"}`).
-    Jobs are df.job_type names (MakeCharcoal, MakeBed, MakeTable, MakeChair, MakeBarrel, ConstructMechanisms, BrewDrink, SmeltOre, ...)."""
+    """Manage manager work orders (`action='create'|'list'|'cancel'`): e.g. `{"job":"MakeBarrel","amount":5}`, `{"action":"list"}`, or `{"action":"cancel","order_id":0}`."""
     body = await _as_dict(request)
     act = str(body.get("action") or ("create" if ("job" in body or "json" in body) else "list")).strip().lower()
     if act in ("list", "cancel"):
@@ -3220,12 +3305,27 @@ async def work_order(request: WorkOrderRequest):
     else:
         if "job" not in body:
             return {"error": "give job (a df.job_type name), json, or action='list'|'cancel'"}
-        spec_obj = {"job": str(body["job"])}
+        raw_job = str(body["job"]).strip()
+        alias_norm = raw_job.lower().replace("_", "").replace(" ", "")
+        spec_obj: dict[str, Any] = {}
+        if alias_norm in _WORKORDER_JOB_ALIASES:
+            mapped_job, defaults = _WORKORDER_JOB_ALIASES[alias_norm]
+            spec_obj["job"] = mapped_job
+            spec_obj.update(defaults)
+        else:
+            spec_obj["job"] = raw_job
         if "amount" in body:
             spec_obj["amount_total"] = int(body["amount"])
-        for k in ("material", "item_type", "quantity"):
-            if k in body:
+        for k in ("material", "material_category", "item_type", "item_subtype", "reaction", "workshop_id", "quantity"):
+            if k in body and body[k] is not None:
                 spec_obj[k] = body[k]
+        if "material" in spec_obj:
+            mat_l = str(spec_obj["material"]).strip().lower()
+            if mat_l in ("wood", "log", "logs"):
+                spec_obj.pop("material", None)
+                spec_obj.setdefault("material_category", ["wood"])
+            elif mat_l in ("rock", "stone", "boulder", "boulders"):
+                spec_obj["material"] = "INORGANIC"
         spec = json.dumps(spec_obj)
     args = [spec]
     try:
@@ -3278,11 +3378,7 @@ async def game_paths():
 async def building_status(building_id: int | None = Query(None, description="Specific building ID to inspect; omit to list unfinished/planned buildings"),
                           only_incomplete: bool = Query(True, description="When True (default), list only buildings still under construction / awaiting materials"),
                           limit: int = Query(25, ge=1, le=100, description="Max buildings to return")):
-    """Diagnose why a planned building (Well, Workshop, Furniture) or dig is not finishing:
-    reports build_stage/max_build_stage, attached items, active construction jobs, whether
-    suspended, missing item filters (e.g. 'needs mechanisms'), crew labor/pick bottlenecks,
-    and recent cancellation announcements from the game report log. Powered by
-    deployables/scripts/dfhack_mcp.lua."""
+    """Diagnose unfinished buildings (`build_stage`, attached items, active jobs, suspended flag, missing materials, crew labor/pick bottlenecks, and recent cancellations)."""
     try:
         res = await LO.building_status(building_id=building_id,
                                        only_incomplete=only_incomplete,
@@ -3370,10 +3466,7 @@ async def configure_farmplot(request: ConfigureFarmplotRequest):
 
 @app.post("/assign-zone-owner", operation_id="assign_zone_owner")
 async def assign_zone_owner(request: AssignZoneOwnerRequest):
-    """Assign (or inspect) the citizen owner of an activity zone (`Office`, `Bedroom`,
-    `DiningHall`, `Tomb`) via `dfhack.buildings.setOwner` and `getRoomDescription`. In DF v50+/v53,
-    rooms are activity zones, and once population exceeds 20 the Manager noble requires an
-    assigned `Office` zone (with a chair/throne) to validate manager work orders."""
+    """Assign or inspect the citizen owner of an activity zone (`Office`, `Bedroom`, `DiningHall`, `Tomb`). Managers require an assigned `Office` zone with a chair once population > 20."""
     body = await _as_dict(request)
     try:
         res = await LO.assign_zone_owner(
@@ -3387,12 +3480,7 @@ async def assign_zone_owner(request: AssignZoneOwnerRequest):
 
 @app.post("/assign-pasture", operation_id="assign_pasture")
 async def assign_pasture(request: AssignPastureRequest):
-    """Assign, unassign, or clear tame grazing animals (yaks, sheep, goats, horses, cavies,
-    rabbits — or specific `unit_ids` / `species`) on a Pen/Pasture activity zone:
-    - `action='assign'` (default): assigns matching animals (`all_grazers=True` by default).
-    - `action='unassign'`: removes specific `unit_ids` or `species` from the pasture.
-    - `action='clear'`: removes all animals from the pasture without deleting the Pen zone.
-    To delete the Pen/Pasture zone itself, call `remove_zone` (`POST /remove-zone`)."""
+    """Assign, unassign, or clear tame grazing animals (`all_grazers=True`, `unit_ids`, or `species`) on a Pen/Pasture zone."""
     body = await _as_dict(request)
     try:
         res = await LO.assign_pasture(
@@ -3409,12 +3497,9 @@ async def assign_pasture(request: AssignPastureRequest):
 
 @app.post("/manage-nobles", operation_id="manage_nobles")
 async def manage_nobles(request: ManageNoblesRequest):
-    """List, assign, or auto-assign fortress noble positions (`MANAGER`, `BOOKKEEPER`,
+    """List, rank candidates, assign, or auto-assign fortress noble positions (`MANAGER`, `BOOKKEEPER`,
     `BROKER`, `CHIEF_MEDICAL_DWARF`, `MILITIA_COMMANDER`, `SHERIFF`, etc.) and set bookkeeper
-    precision (`bookkeeper_settings=4` = maximum precision). On a fresh embark, `MANAGER`,
-    `BOOKKEEPER`, `BROKER`, and `CHIEF_MEDICAL_DWARF` are vacant (`histfig=-1`); calling
-    `manage_nobles(action='auto_assign')` appoints living citizens to all vacant essential
-    roles and sets highest bookkeeper accuracy."""
+    precision (`bookkeeper_settings=4` = maximum precision)."""
     body = await _as_dict(request)
     try:
         res = await LO.manage_nobles(
@@ -3422,18 +3507,130 @@ async def manage_nobles(request: ManageNoblesRequest):
             position=body.get("position"),
             unit_id=body.get("unit_id"),
             bookkeeper_settings=body.get("bookkeeper_settings"),
+            reassign_unskilled=bool(body.get("reassign_unskilled", False)),
         )
         return {"success": True, **res}
     except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
         return {"success": False, "error": str(e)}
 
 
+@app.post("/workshop-job", operation_id="workshop_job")
+async def workshop_job(request: WorkshopJobRequest):
+    """Manage direct workshop jobs and crafted stock (`list`, `stock`, `queue`, `cancel`). `queue` works before a Manager or Office exists (e.g. first Chair and Barrels)."""
+    body = await _as_dict(request)
+    try:
+        res = await LO.workshop_job(
+            action=str(body.get("action", "list")),
+            task=body.get("task"),
+            building_id=body.get("building_id"),
+            material=body.get("material"),
+            count=int(body.get("count", 1)),
+            repeat_job=bool(body.get("repeat_job", False)),
+            job_id=body.get("job_id"),
+        )
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def _run_dfhack_cmd(cmd: str, arguments: list[str] | None = None) -> dict:
+    drain_replies()
+    args = [str(a) for a in (arguments or [])]
+    try:
+        await RunCommand(input=CoreRunCommandRequest(command=cmd, arguments=args))
+        return {"command": f"{cmd} {' '.join(args)}".strip(), "ok": True,
+                "output": "\n".join(drain_replies()).strip()}
+    except (DFHackError, DFHackTransportError) as e:
+        out = getattr(e, "replies", None) or drain_replies()
+        return {"command": f"{cmd} {' '.join(args)}".strip(), "ok": False,
+                "error": str(e), "output": "\n".join(out).strip()}
+
+
+@app.post("/automation", operation_id="dfhack_automation")
+async def dfhack_automation(request: AutomationRequest):
+    """Inspect, enable, disable, or configure safe DFHack automation helpers (`autofarm`, `seedwatch`, `autochop`, `autobutcher`, `buildingplan`, `suspendmanager`, `tailor`, `autonestbox`, `autoslab`, `prioritize`, `logistics`, `ban-cooking`, `orders`) or apply `early_fort`/`standard_orders` presets."""
+    body = await _as_dict(request)
+    act = str(body.get("action", "status")).strip().lower()
+    plugin = str(body.get("plugin") or "").strip().lower()
+
+    if act == "status":
+        en = await _run_dfhack_cmd("enable", [])
+        states = {}
+        for line in (en.get("output") or "").splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                kn = k.strip().lower()
+                if kn in SAFE_AUTOMATION_PLUGINS:
+                    states[kn] = v.strip()
+        af = await _run_dfhack_cmd("autofarm", ["status"])
+        sw = await _run_dfhack_cmd("seedwatch", ["status"])
+        ac = await _run_dfhack_cmd("autochop", ["status"])
+        return {
+            "success": True,
+            "action": "status",
+            "plugins": states,
+            "autofarm": af.get("output"),
+            "seedwatch": sw.get("output"),
+            "autochop": ac.get("output"),
+        }
+
+    if act in ("enable", "disable", "configure"):
+        if plugin not in SAFE_AUTOMATION_PLUGINS:
+            return {
+                "success": False,
+                "blocked": True,
+                "error": f"plugin '{plugin}' is not in SAFE_AUTOMATION_PLUGINS",
+                "allowed": sorted(SAFE_AUTOMATION_PLUGINS),
+            }
+        if act in ("enable", "disable"):
+            res = await _run_dfhack_cmd(act, [plugin])
+            return {"success": res["ok"], "action": act, "plugin": plugin, **res}
+        res = await _run_dfhack_cmd(plugin, [str(a) for a in body.get("args", [])])
+        return {"success": res["ok"], "action": act, "plugin": plugin, **res}
+
+    if act == "apply_preset":
+        preset = str(body.get("preset") or "early_fort").strip().lower()
+        steps_cmds: list[tuple[str, list[str]]] = []
+        if preset == "early_fort":
+            steps_cmds = [
+                ("enable", ["autofarm"]),
+                ("autofarm", ["default", "50"]),
+                ("enable", ["seedwatch"]),
+                ("seedwatch", ["all", "30"]),
+                ("ban-cooking", ["seeds"]),
+                ("ban-cooking", ["brew"]),
+                ("enable", ["suspendmanager"]),
+                ("enable", ["buildingplan"]),
+                ("enable", ["autonestbox"]),
+                ("enable", ["autoslab"]),
+                ("enable", ["prioritize"]),
+                ("enable", ["tailor"]),
+            ]
+            if body.get("include_autochop"):
+                steps_cmds.extend([("autochop", ["target", "30", "60"]), ("enable", ["autochop"])])
+        elif preset == "standard_orders":
+            steps_cmds = [("orders", ["import", "library/basic"])]
+            if body.get("include_rockstock"):
+                steps_cmds.append(("orders", ["import", "library/rockstock"]))
+        else:
+            return {"success": False, "error": f"unknown preset '{preset}' (expected 'early_fort' or 'standard_orders')"}
+        results = [await _run_dfhack_cmd(c, a) for c, a in steps_cmds]
+        out: dict[str, Any] = {
+            "success": all(r["ok"] for r in results),
+            "action": "apply_preset",
+            "preset": preset,
+            "steps": results,
+        }
+        if preset == "standard_orders":
+            out["note"] = "Manager orders require a skilled MANAGER noble and an assigned Office zone (with a crafted Chair) to validate."
+        return out
+
+    return {"success": False, "error": f"unknown automation action '{act}' (expected status, enable, disable, configure, or apply_preset)"}
+
+
 @app.get("/alerts", operation_id="alerts_and_wellbeing")
 async def alerts_and_wellbeing():
-    """Time-critical fortress alerts and citizen wellbeing radar: checks for blocking modal UI
-    popups (`world.status.popups`), active caravans (`plotinfo.caravans`), hostile invaders on
-    the map, unpastured grazing animals at risk of starvation, strange moods/tantrums, and
-    per-citizen thirst, hunger, drowsiness, stress, and wounds."""
+    """Check blocking UI popups, active caravans, invaders, unpastured grazers, strange moods/tantrums, and citizen thirst/hunger/drowsiness/stress/wounds."""
     try:
         res = await LO.alerts_and_wellbeing()
         return {"success": True, **res}
@@ -3443,11 +3640,7 @@ async def alerts_and_wellbeing():
 
 @app.post("/gather-and-items", operation_id="gather_and_items")
 async def gather_and_items(request: GatherAndItemsRequest):
-    """Perform Quickstart surface plant gathering, ground item dump/forbid flagging, or
-    seed/brewable cooking protection:
-    - `action='gather_plants'`: designate explored surface shrubs in `[x0..x1, y0..y1]` at `elev` for herbalism/gathering (`d -> p`).
-    - `action='dump' | 'undump' | 'forbid' | 'reclaim'`: set or clear `dump` / `forbid` flags on loose ground items in `[x0..x1, y0..y1]` at `elev` (with optional `item_filter`, e.g. `'boulder'`).
-    - `action='protect_seeds'`: run `ban-cooking seeds` (and `ban-cooking brew` when `ban_brew=True`) so kitchen jobs never destroy seed stock."""
+    """Gather surface plants (`gather_plants`), flag ground items (`dump`/`undump`/`forbid`/`reclaim`), or protect seeds/brewables from cooking (`protect_seeds`)."""
     body = await _as_dict(request)
     try:
         res = await LO.gather_and_items(
@@ -3467,12 +3660,7 @@ async def gather_and_items(request: GatherAndItemsRequest):
 
 @app.post("/trade-depot", operation_id="trade_depot")
 async def trade_depot(request: TradeDepotRequest):
-    """Manage the Trade Depot, caravan goods hauling, Broker attendance, and barter selection:
-    - `action='status'` (default): inspect Trade Depot state (`accessible`, `trader_requested`, `anyone_can_trade`), active caravans, goods already unloaded at the depot, pending `BringItemToDepot` haul jobs, and top tradeable fortress items/bins by value.
-    - `action='request_broker'`: summon (`trader_requested=True`) or dismiss the Broker at the Trade Depot, and optionally toggle `anyone_can_trade`.
-    - `action='mark_goods'`: mark specific `item_ids` or items matching `item_filter` / `min_value` (up to `max_items`) for hauling to the Trade Depot via `dfhack.items.markForTrade`. Works even before merchants arrive.
-    - `action='unmark_goods'`: cancel pending depot haul jobs (`dfhack.job.removeJob`) or unload trade goods from the depot.
-    - `action='barter_status' | 'barter_select'`: inspect or toggle `trade.goodflag[side][idx].selected` when the barter screen (`df.global.game.main_interface.trade`) is open."""
+    """Manage the Trade Depot (`status`, `request_broker`, `mark_goods`, `unmark_goods`, `barter_status`, `barter_select`) for caravan hauling, Broker summoning, and barter selection."""
     body = await _as_dict(request)
     try:
         res = await LO.trade_depot(
@@ -3492,6 +3680,389 @@ async def trade_depot(request: TradeDepotRequest):
         return {"success": False, "error": str(e)}
 
 
+class FortPlanRequest(BaseModel):
+    action: str = Field(
+        "view",
+        description=(
+            "Action: 'view' (render ASCII floorplan & legend), 'set_hub' (set central shaft), "
+            "'add_room' (attach a room with collision check), 'add_template' (food_district | "
+            "workshop_wing | bedroom_wing | civic_hall), 'remove_room', 'validate' (check hazards & soil), "
+            "'commit' (access-first phased dig designations), or 'clear'."
+        ),
+    )
+    elev: int | None = Field(None, description="Target elevation for view, add_room, add_template, or commit.")
+    x: int | None = Field(None, description="Hub center x coordinate (set_hub).")
+    y: int | None = Field(None, description="Hub center y coordinate (set_hub).")
+    elev_top: int | None = Field(None, description="Hub shaft top elevation (set_hub).")
+    elev_bottom: int | None = Field(None, description="Hub shaft bottom elevation (set_hub).")
+    radius: int = Field(1, description="Hub landing radius around shaft center (default 1 -> 3x3).")
+    name: str | None = Field(None, description="Room name (add_room / remove_room).")
+    kind: str = Field("workshop", description="Room kind (workshop, stockpile, farm, still, kitchen, bedroom, dining, office, temple, barracks, hospital, depot, corridor).")
+    parent: str = Field("hub", description="Anchor room name or 'hub' to attach to.")
+    direction: str = Field("E", description="Attachment/template facing direction: N, S, E, W.")
+    width: int | None = Field(None, description="Room width (defaults by kind).")
+    height: int | None = Field(None, description="Room height (defaults by kind).")
+    corridor_len: int = Field(2, description="Connecting corridor length in tiles (default 2).")
+    corridor_width: int = Field(1, description="Connecting corridor width in tiles (default 1).")
+    offset: int = Field(0, description="Perpendicular offset along parent face.")
+    notes: str = Field("", description="Optional room notes.")
+    template: str | None = Field(None, description="District template: bootstrap_camp | food_district | workshop_wing | bedroom_wing | civic_hall.")
+    prefix: str = Field("", description="Optional name prefix for template rooms.")
+    wall_thickness: int = Field(1, description="Minimum solid wall tiles between rooms (default 1).")
+    phase: str = Field("auto", description="Commit phase: auto | shaft | hub_and_corridors | rooms | all.")
+    dry_run: bool = Field(False, description="If true, compute designations or Quickfort stats without mutating DF.")
+    blueprint: str | None = Field(None, description="Quickfort blueprint path or filter (e.g. 'library/dreamfort.csv' or 'dreamfort').")
+    label: str | None = Field(None, description="Quickfort blueprint label (e.g. '/farming1', '/industry1', '/industry2').")
+    force: bool = Field(False, description="Bypass Quickfort bootstrap/aquifer safety gates.")
+
+
+async def _plan_save_key() -> str:
+    try:
+        sig = await world.signature()
+        if isinstance(sig, dict) and sig.get("key"):
+            return str(sig["key"])
+    except Exception:
+        pass
+    return "default"
+
+
+def _find_anchor(plan: dict, parent: str, elev: int | None) -> dict | None:
+    if parent == "hub":
+        hub = plan.get("hub")
+        if not hub:
+            return None
+        anchor = dict(hub)
+        if elev is not None:
+            anchor["elev"] = int(elev)
+        return anchor
+    for r in plan.get("rooms", []):
+        if r.get("name") == parent:
+            return r
+    return None
+
+
+@app.get("/fort-strata", operation_id="fort_strata")
+async def fort_strata(
+    x: int | None = None,
+    y: int | None = None,
+    elev: int | None = None,
+    radius: int = 12,
+    above: int = 3,
+    below: int = 8,
+):
+    """Scan vertical geological strata around `(x, y, elev)` (defaults to fort center) to locate
+    soil/potential-soil layers for farms, safe stone layers for workshops/bedrooms, aquifers,
+    water, magma, and caverns before planning an underground fortress."""
+    try:
+        return await FP.fort_strata(
+            world,
+            x=x,
+            y=y,
+            elev=elev,
+            radius=radius,
+            above=above,
+            below=below,
+        )
+    except (DFHackError, DFHackTransportError, ValueError) as e:
+        return {"success": False, "error": str(e)}
+
+
+async def _quickfort_readiness() -> dict:
+    nobles_res: dict = {}
+    workshops_res: dict = {}
+    zones_res: list = []
+    auto_res: dict = {}
+    try:
+        nobles_res = await LO.manage_nobles(action="list")
+    except Exception:
+        pass
+    try:
+        workshops_res = await LO.workshop_job(action="list")
+    except Exception:
+        pass
+    try:
+        dec = await world._dec(await world._gen())
+        zones_res = await LO.list_zones(dec)
+    except Exception:
+        pass
+    try:
+        en = await _run_dfhack_cmd("enable", [])
+        plugins = {}
+        for line in (en.get("output") or "").splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                plugins[k.strip().lower()] = v.strip()
+        auto_res = {"plugins": plugins}
+    except Exception:
+        pass
+    return FP.check_quickfort_readiness(nobles_res, workshops_res, zones_res, auto_res)
+
+
+@app.post("/fort-plan", operation_id="fort_plan")
+async def fort_plan(request: FortPlanRequest):
+    """Underground fortress CAD & Quickfort planner (`view`, `set_hub`, `add_room`, `add_template`, `remove_room`, `validate`, `commit`, `find_site`, plus `qf_status`, `qf_list`, `qf_orders`, `qf_run`)."""
+    body = await _as_dict(request)
+    action = str(body.get("action", "view")).lower()
+    save_key = await _plan_save_key()
+    plan = plan_store.load(save_key)
+
+    try:
+        if action == "clear":
+            plan_store.clear(save_key)
+            return {"success": True, "save_key": save_key, "cleared": True}
+
+        if action == "set_hub":
+            if body.get("x") is None or body.get("y") is None or body.get("elev_top") is None or body.get("elev_bottom") is None:
+                return {"success": False, "error": "set_hub requires x, y, elev_top, and elev_bottom."}
+            hub = FP.ensure_hub(
+                plan,
+                x=int(body["x"]),
+                y=int(body["y"]),
+                elev_top=int(body["elev_top"]),
+                elev_bottom=int(body["elev_bottom"]),
+                radius=int(body.get("radius", 1)),
+            )
+            plan_store.save(save_key, plan)
+            return {"success": True, "save_key": save_key, "hub": hub}
+
+        if action == "add_room":
+            parent = str(body.get("parent", "hub"))
+            anchor = _find_anchor(plan, parent, body.get("elev"))
+            if anchor is None:
+                return {"success": False, "error": f"Parent {parent!r} not found in plan (call set_hub first)."}
+            kind = str(body.get("kind", "workshop"))
+            defaults = FP.ROOM_DEFAULTS.get(kind, FP.ROOM_DEFAULTS["workshop"])
+            w = int(body["width"]) if body.get("width") is not None else int(defaults["width"])
+            h = int(body["height"]) if body.get("height") is not None else int(defaults["height"])
+            room_rect, corr_rect = FP.compute_attached_room(
+                anchor,
+                direction=str(body.get("direction", "E")),
+                width=w,
+                height=h,
+                corridor_len=int(body.get("corridor_len", 2)),
+                corridor_width=int(body.get("corridor_width", 1)),
+                offset=int(body.get("offset", 0)),
+                elev=body.get("elev"),
+            )
+            name = str(body.get("name") or f"{kind}_{len(plan['rooms']) + 1}")
+            new_room = {
+                "name": name,
+                "kind": kind,
+                "elev": int(room_rect["elev"]),
+                "x0": int(room_rect["x0"]),
+                "y0": int(room_rect["y0"]),
+                "x1": int(room_rect["x1"]),
+                "y1": int(room_rect["y1"]),
+                "corridor": corr_rect,
+                "parent": parent,
+                "direction": str(body.get("direction", "E")).upper(),
+                "needs_soil": bool(defaults.get("needs_soil", False)),
+                "notes": str(body.get("notes") or defaults.get("purpose", "")),
+            }
+            if any(r.get("name") == name for r in plan["rooms"]):
+                return {"success": False, "error": f"Room named {name!r} already exists."}
+            collisions = FP.check_plan_collisions(
+                plan,
+                new_room,
+                corr_rect,
+                wall_thickness=int(body.get("wall_thickness", 1)),
+            )
+            if collisions:
+                return {"success": False, "error": "Room collides with existing plan.", "collisions": collisions}
+            plan["rooms"].append(new_room)
+            plan_store.save(save_key, plan)
+            return {"success": True, "save_key": save_key, "room": new_room, "view": FP.render_plan_view(plan, elev=new_room["elev"])}
+
+        if action == "add_template":
+            template = body.get("template")
+            if not template:
+                return {"success": False, "error": f"add_template requires template in {FP.VALID_TEMPLATES}."}
+            parent = str(body.get("parent", "hub"))
+            anchor = _find_anchor(plan, parent, body.get("elev"))
+            if anchor is None:
+                return {"success": False, "error": f"Parent {parent!r} not found in plan (call set_hub first)."}
+            new_rooms = FP.build_template_rooms(
+                template=str(template),
+                anchor=anchor,
+                direction=str(body.get("direction", "E")),
+                prefix=str(body.get("prefix", "")),
+                elev=body.get("elev"),
+            )
+            wall_t = int(body.get("wall_thickness", 1))
+            existing_names = {r.get("name") for r in plan["rooms"]}
+            for nr in new_rooms:
+                if nr["name"] in existing_names:
+                    return {"success": False, "error": f"Room name {nr['name']!r} already exists; pass a unique prefix."}
+                collisions = FP.check_plan_collisions(plan, nr, nr.get("corridor"), wall_thickness=wall_t)
+                if collisions:
+                    return {
+                        "success": False,
+                        "error": f"Template room {nr['name']!r} collides with existing plan.",
+                        "collisions": collisions,
+                    }
+            plan["rooms"].extend(new_rooms)
+            plan_store.save(save_key, plan)
+            view_elev = new_rooms[0]["elev"] if new_rooms else body.get("elev")
+            return {"success": True, "save_key": save_key, "added": [r["name"] for r in new_rooms], "view": FP.render_plan_view(plan, elev=view_elev)}
+
+        if action == "remove_room":
+            name = body.get("name")
+            if not name:
+                return {"success": False, "error": "remove_room requires name."}
+            before = len(plan["rooms"])
+            plan["rooms"] = [r for r in plan["rooms"] if r.get("name") != name]
+            if len(plan["rooms"]) == before:
+                return {"success": False, "error": f"Room {name!r} not found."}
+            plan_store.save(save_key, plan)
+            return {"success": True, "save_key": save_key, "removed": name}
+
+        if action == "validate":
+            checks = await FP.validate_rooms_terrain(world, plan.get("rooms", []))
+            return {"success": True, "save_key": save_key, "all_ok": all(c["ok"] for c in checks), "rooms": checks}
+
+        if action == "commit":
+            res = await FP.commit_plan(
+                world,
+                plan,
+                designate_fn=_designate,
+                filter_safe_fn=_filter_safe_dig_points,
+                expand_box_fn=_expand_dig_box,
+                phase=str(body.get("phase", "auto")),
+                dry_run=bool(body.get("dry_run", False)),
+                elev=body.get("elev"),
+            )
+            if not body.get("dry_run", False) and res.get("total_designated", 0) > 0:
+                world.cache.reset()
+            return {"success": True, "save_key": save_key, **res}
+
+        if action == "view":
+            return {"success": True, **FP.render_plan_view(plan, elev=body.get("elev"))}
+
+        if action == "find_site":
+            hub = plan.get("hub") or {}
+            ce = body.get("elev") if body.get("elev") is not None else hub.get("elev_bottom")
+            cx = body.get("x") if body.get("x") is not None else hub.get("x")
+            cy = body.get("y") if body.get("y") is not None else hub.get("y")
+            if ce is None or cx is None or cy is None:
+                rx, ry, re = await FP._resolve_center(world, cx, cy, ce)
+                cx = rx if cx is None else int(cx)
+                cy = ry if cy is None else int(cy)
+                ce = re if ce is None else int(ce)
+            w = int(body.get("width") or 3)
+            h = int(body.get("height") or 3)
+            raw_r = body.get("radius")
+            scan_rad = int(raw_r) if raw_r is not None and int(raw_r) > 2 else 16
+            zones: list = []
+            try:
+                dec = await world._dec(await world._gen())
+                zones = await LO.list_zones(dec)
+            except Exception:
+                pass
+            res = await FP.find_clean_sites(
+                world, x=int(cx), y=int(cy), elev=int(ce),
+                width=w, height=h, radius=scan_rad, zones=zones,
+            )
+            return {"success": True, "save_key": save_key, **res}
+
+        if action == "qf_status":
+            readiness = await _quickfort_readiness()
+            return {"success": True, "save_key": save_key, "hub": plan.get("hub"), **readiness}
+
+        if action == "qf_list":
+            bp_filter = str(body.get("blueprint") or "").strip()
+            args = ["list", bp_filter] if bp_filter else ["list"]
+            res = await _run_dfhack_cmd("quickfort", args)
+            bps = FP.parse_quickfort_list(res.get("output") or "")
+            return {"success": res["ok"], "count": len(bps), "blueprints": bps, "error": res.get("error")}
+
+        if action == "qf_orders":
+            bp = str(body.get("blueprint") or "").strip()
+            if not bp:
+                return {"success": False, "error": "qf_orders requires blueprint."}
+            lbl = body.get("label")
+            dry = bool(body.get("dry_run", False))
+            force = bool(body.get("force", False))
+            if not dry and not force:
+                readiness = await _quickfort_readiness()
+                if not readiness["ready_for_meta_and_orders"]:
+                    return {
+                        "success": False,
+                        "blocked": True,
+                        "error": "Bootstrap fort not ready for Quickfort work orders.",
+                        **readiness,
+                    }
+            args = FP.build_quickfort_args("orders", bp, label=lbl, dry_run=dry)
+            res = await _run_dfhack_cmd("quickfort", args)
+            return {
+                "success": res["ok"],
+                "save_key": save_key,
+                "dry_run": dry,
+                "command": res["command"],
+                "output": res.get("output"),
+                "error": res.get("error"),
+            }
+
+        if action == "qf_run":
+            bp = str(body.get("blueprint") or "").strip()
+            if not bp:
+                return {"success": False, "error": "qf_run requires blueprint."}
+            if body.get("elev") is None:
+                return {"success": False, "error": "qf_run requires elev."}
+            ce = int(body["elev"])
+            hub = plan.get("hub") or {}
+            cx = body.get("x") if body.get("x") is not None else hub.get("x")
+            cy = body.get("y") if body.get("y") is not None else hub.get("y")
+            if cx is None or cy is None:
+                return {"success": False, "error": "qf_run requires x and y (or set_hub first)."}
+            cx, cy = int(cx), int(cy)
+            lbl = body.get("label")
+            dry = bool(body.get("dry_run", False))
+            force = bool(body.get("force", False))
+            dig_only = FP.is_dig_only_blueprint(bp, lbl)
+
+            if not dry and not force:
+                if not dig_only:
+                    readiness = await _quickfort_readiness()
+                    if not readiness["ready_for_meta_and_orders"]:
+                        return {
+                            "success": False,
+                            "blocked": True,
+                            "error": "Bootstrap fort not ready for Quickfort build/meta blueprints; finish bootstrap workshops + Manager + buildingplan first.",
+                            **readiness,
+                        }
+                strata = await FP.fort_strata(world, x=cx, y=cy, elev=ce, radius=10, above=0, below=0)
+                bad_layers = [
+                    l for l in strata.get("layers", [])
+                    if l.get("aquifer_tiles", 0) > 0 or l.get("magma_tiles", 0) > 0
+                ]
+                if bad_layers:
+                    return {
+                        "success": False,
+                        "blocked": True,
+                        "error": f"Hazard detected at elev {ce}; pass force=true to override.",
+                        "strata": strata,
+                    }
+
+            args = FP.build_quickfort_args("run", bp, label=lbl, x=cx, y=cy, elev=ce, dry_run=dry)
+            res = await _run_dfhack_cmd("quickfort", args)
+            if not dry and res["ok"]:
+                world.cache.reset()
+            return {
+                "success": res["ok"],
+                "save_key": save_key,
+                "dig_only": dig_only,
+                "cursor": {"x": cx, "y": cy, "elev": ce, "z": ce + WM.GAME_Z_OFFSET},
+                "dry_run": dry,
+                "command": res["command"],
+                "output": res.get("output"),
+                "error": res.get("error"),
+            }
+
+        return {"success": False, "error": f"Unknown action {action!r}."}
+    except (ValueError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
 mcp = FastApiMCP(
     app,
     name="Dwarf Fortress MCP Server",
@@ -3504,7 +4075,26 @@ mcp = FastApiMCP(
     # - world_zone is subsumed by look's per-elevation strip; building_at is inside tile_at.
     # - make_stockpile is unified into create_stockpile (site gate + categories);
     #   resize_building and repair_stockpile_settings stay HTTP-only.
-    exclude_operations=["game_lua", "observe", "observe_stats", "game_paths", "get_block_list", "world_raw", "get_versions", "get_world_info", "get_map_info", "get_view_info", "get_unit_list", "world_zone", "building_at", "make_stockpile", "resize_building", "repair_stockpile_settings"]
+    exclude_operations=[
+        # Previously excluded debug, observer, raw, and legacy endpoints (16)
+        "game_lua", "observe", "observe_stats", "game_paths", "get_block_list",
+        "world_raw", "get_versions", "get_world_info", "get_map_info",
+        "get_view_info", "get_unit_list", "world_zone", "building_at",
+        "make_stockpile", "resize_building", "repair_stockpile_settings",
+        # Superseded vertical/geology/reachability micro-probes (13)
+        "overburden", "column", "cross_section", "depth_profile", "magma_depth",
+        "probe_plan", "tunnel_sites", "find_soil", "hazards", "warnings",
+        "reach_map", "dig_reachable", "walkable_between",
+        # Legacy / raw / debug / UI-hack endpoints (11)
+        "apply_blueprint", "copy_screen", "pass_keyboard_event", "reconnect",
+        "world_cache_reset", "world_delta", "world_minimap", "world_objects",
+        "transitions", "pile_arrays", "wagon_path",
+        # Redundant read / lookup endpoints (16)
+        "get_status", "get_pause_state", "get_reports", "tile_at", "tile_legend",
+        "list_buildings", "buildings_live", "get_building_def_list", "labor_list",
+        "unit_counts", "list_units", "unit_labors", "unit_professions",
+        "unit_activity", "job_queue", "work_order_link",
+    ]
 )
 # Streamable HTTP (POST/GET /mcp) - the transport dsh-mcp-client speaks.
 # mcp.mount() is deprecated and mounts the legacy SSE pair (GET /mcp + POST /mcp/messages/).

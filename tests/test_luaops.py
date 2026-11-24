@@ -253,8 +253,32 @@ def test_pruned_mcp_surface_and_run_command_allowlist():
     for op in ("game_lua", "observe", "observe_stats", "get_block_list", "world_raw",
                "get_versions", "get_world_info", "get_map_info", "get_view_info",
                "get_unit_list", "world_zone", "building_at", "make_stockpile",
-               "resize_building", "repair_stockpile_settings"):
+               "resize_building", "repair_stockpile_settings",
+               "overburden", "column", "cross_section", "depth_profile", "magma_depth",
+               "probe_plan", "tunnel_sites", "find_soil", "apply_blueprint",
+               "pass_keyboard_event", "buildings_live", "list_buildings",
+               "work_order_link", "pile_arrays", "tile_legend", "labor_list",
+               "get_building_def_list"):
         assert f'"{op}"' in excluded, f"{op} should be excluded from the MCP tool surface"
+
+    # Verify exposed MCP tool count (<= 32) and concise docstrings (< 9,500 chars)
+    import main as M
+    excl_set = set(re.findall(r'"([^"]+)"', excluded))
+    exposed_ops = {}
+    for r in M.app.routes:
+        op = getattr(r, "operation_id", None)
+        if not op or op in excl_set or op == "mcp_http":
+            continue
+        exposed_ops[op] = (r.endpoint.__doc__ or "").strip()
+    assert len(exposed_ops) <= 32, f"expected <= 32 exposed MCP tools, got {len(exposed_ops)}: {sorted(exposed_ops)}"
+    for core_op in ("fort_strata", "fort_plan", "trade_depot", "workshop_job",
+                    "dfhack_automation", "look", "send_dig_command", "place_building"):
+        assert core_op in exposed_ops, f"core tool {core_op} must remain exposed on MCP"
+    total_doc_chars = sum(len(d) for d in exposed_ops.values())
+    assert total_doc_chars < 9500, f"exposed docstring bloat too high: {total_doc_chars} chars"
+
+    notes_path = pathlib.Path(__file__).resolve().parents[1].joinpath("docs", "tool-notes.md")
+    assert notes_path.is_file() and notes_path.stat().st_size > 1000, "docs/tool-notes.md must exist"
 
     assert "RUN_COMMAND_DENY_EXACT" in main_src and "RUN_COMMAND_ALLOWLIST" in main_src
     for denied in ('"lua"', '"luap"', '"script"', '"die"', '"exterminate"', '"dig-now"', '"build-now"'):
@@ -374,6 +398,106 @@ def test_server_side_lua_module_bridge_and_json_dispatch():
             assert "NO_SUCH_PLANT" in str(e)
     finally:
         LO._lua = real_lua
+
+
+def test_order_set_workshop_interpolates_workshop_id():
+    import asyncio
+    captured = {}
+
+    async def fake_lua(expr, settle=0.0):
+        captured["expr"] = expr
+        return "OK before: cat=0 mat=-1 ws=-1 | after: cat=0 mat=-1 ws=12"
+
+    real = LO._lua
+    LO._lua = fake_lua
+    try:
+        res = asyncio.run(LO.order_set_workshop(4, 12))
+    finally:
+        LO._lua = real
+    assert "target.workshop_id = 12" in captured["expr"]
+    assert "{int(workshop_id)}" not in captured["expr"]
+    assert res["order_id"] == 4
+
+
+def test_place_building_nominal_controls_dims():
+    import asyncio
+    captured = []
+
+    async def fake_lua(expr, settle=0.0):
+        captured.append(expr)
+        return "OK building='Chair' bt=0 type=building_chairst id=99 rect=10..10,10..10"
+
+    real = LO._lua
+    LO._lua = fake_lua
+    try:
+        asyncio.run(LO.place_building(FakeDec(), "Chair", 10, 10, 37, w=1, h=1, nominal=True))
+        asyncio.run(LO.place_building(FakeDec(), "Chair", 10, 10, 37, w=1, h=1, nominal=False))
+    finally:
+        LO._lua = real
+    assert "width=" not in captured[0] and "height=" not in captured[0]
+    assert "width=1, height=1" in captured[1]
+
+
+def test_dfhack_mcp_lua_fixes_nobles_professions_and_labors():
+    lua_src = LO.LUA_MODULE_PATH.read_text(encoding="utf-8")
+    assert "aptaludes" not in lua_src
+    assert "current_soul.skills" in lua_src
+    assert "collect_known_professions" in lua_src
+    assert lua_src.index("local function collect_known_professions()") < lua_src.index('if action == "list" then', lua_src.index("function OPS.unit_profession"))
+    assert "local want = {}" in lua_src
+    assert "unknown labor '" in lua_src
+
+
+def test_workshop_job_and_noble_candidates_in_lua_module():
+    import asyncio
+    lua_src = LO.LUA_MODULE_PATH.read_text(encoding="utf-8")
+    for req in (
+        "function OPS.workshop_job(", "ConstructThrone", "MakeBarrel", "ITEM_TOOL_LARGE_POT",
+        "dfhack.job.createLinked", "dfhack.job.assignToWorkshop",
+        'action == "candidates"', "reassign_unskilled",
+    ):
+        assert req in lua_src, f"dfhack_mcp.lua missing {req}"
+
+    async def fake_lua(expr, settle=0.0):
+        if "load(" in expr and "dfhack_mcp.lua" in expr:
+            return 'MCP_JSON|{"ok":true,"result":{"bootstrapped":true,"version":"2026.11.24"}}'
+        if '"workshop_job"' in expr:
+            return 'MCP_JSON|{"ok":true,"op":"workshop_job","result":{"action":"queue","building_id":5,"task":"chair","job_type":"ConstructThrone","queued_count":1}}'
+        if '"manage_nobles"' in expr:
+            return 'MCP_JSON|{"ok":true,"op":"manage_nobles","result":{"action":"candidates","candidates":{"MANAGER":[{"unit_id":6494,"skill_score":6}]}}}'
+        raise AssertionError(f"unexpected lua: {expr[:120]}")
+
+    real = LO._lua
+    LO._lua = fake_lua
+    LO._module_gen = -1
+    LO._module_sha = ""
+    try:
+        wj = asyncio.run(LO.workshop_job(action="queue", task="chair", count=1))
+        assert wj["job_type"] == "ConstructThrone" and wj["queued_count"] == 1
+        nb = asyncio.run(LO.manage_nobles(action="candidates", position="MANAGER"))
+        assert nb["candidates"]["MANAGER"][0]["unit_id"] == 6494
+    finally:
+        LO._lua = real
+
+
+def test_place_building_uses_crafted_furniture_item_by_default():
+    import asyncio
+    captured = []
+
+    async def fake_lua(expr, settle=0.0):
+        captured.append(expr)
+        return "OK building='Chair' bt=0 type=building_chairst id=101 rect=10..10,10..10"
+
+    real = LO._lua
+    LO._lua = fake_lua
+    try:
+        asyncio.run(LO.place_building(FakeDec(), "Chair", 10, 10, 37))
+        asyncio.run(LO.place_building(FakeDec(), "Chair", 10, 10, 37, material="log"))
+    finally:
+        LO._lua = real
+    assert 'resolve_crafted_item("CHAIR", "chair"' in captured[0]
+    assert 'resolve_material("log"' not in captured[0]
+    assert 'resolve_material("log"' in captured[1]
 
 
 if __name__ == "__main__":

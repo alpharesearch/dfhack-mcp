@@ -4,14 +4,14 @@ description: The Dwarf Fortress Quickstart Dependency Graph & Execution Playbook
 whenToUse: When starting a new fortress, deciding what to dig/build/queue next in the Quickstart sequence, diagnosing why a downstream workshop or noble is blocked by a missing upstream input, or progressing from embark to farming, brewing, furniture, offices, healthcare, trading, metalworking, and fortress defense.
 metadata:
   source: https://dwarffortresswiki.org/images/e/e6/FlowchartDF.png and https://dwarffortresswiki.org/index.php/Quickstart_guide
-  tools: look, fort_progress, alerts_and_wellbeing, set_pause_state, list_units, work_details, unit_labors, unit_professions, gather_and_items, manage_nobles, send_dig_command, transitions, find_trees, cut_trees, place_building, building_status, configure_farmplot, create_zone, assign_zone_owner, assign_pasture, create_stockpile, configure_stockpile, work_order, trade_depot, magma_depth, hazards, depth_profile
+  tools: look, fort_progress, alerts_and_wellbeing, set_pause_state, world_map, survey, fort_strata, fort_plan, send_dig_command, find_trees, cut_trees, find_water, gather_and_items, place_building, remove_building, building_status, configure_farmplot, workshop_job, create_stockpile, configure_stockpile, list_stockpiles, create_zone, list_zones, assign_zone_owner, assign_pasture, work_details, manage_nobles, work_order, trade_depot, dfhack_automation
 ---
 
 # Dwarf Fortress Quickstart Dependency Graph & Execution Playbook
 
 Source flowchart: <https://dwarffortresswiki.org/images/e/e6/FlowchartDF.png> (companion to <https://dwarffortresswiki.org/index.php/Quickstart_guide>).
 
-You are controlling a live Dwarf Fortress fortress via `dfhack-mcp`. **Never build or queue a downstream node before its upstream prerequisites in this dependency graph exist.** Before acting, run `look`, `fort_progress`, and `alerts_and_wellbeing`; after acting, verify completion with `transitions` (for digging), `building_status` (for construction), `work_order(action="list")` (for production), or `trade_depot(action="status")` (for trade).
+You are controlling a live Dwarf Fortress fortress via `dfhack-mcp` (32 MCP tools). **Never build or queue a downstream node before its upstream prerequisites in this dependency graph exist.** Before acting, run `look`, `fort_progress`, and `alerts_and_wellbeing`; after acting, verify completion with `survey` (for digging), `building_status(only_incomplete=True)` (for construction—ignores completed zones/stockpiles), `work_order(action="list")` (for production), or `trade_depot(action="status")` (for trade). (`transitions`, `hazards`, `depth_profile`, `unit_labors` are HTTP-only diagnostics; see `docs/tool-notes.md`.)
 
 ---
 
@@ -30,8 +30,16 @@ You are controlling a live Dwarf Fortress fortress via `dfhack-mcp`. **Never bui
    - `MINE` (2–3 dwarves; check `building_status` `diagnostics.crew.picks` so every miner has a pick)
    - `CUTWOOD` (1 dwarf; requires a battle axe)
    - `CARPENTER`, `MASON`, `PLANT` (farming), `HERBALISM` (plant gathering), `BREWER`, `COOK`, `BUTCHER`, `MECHANIC`, and stone/wood crafting.
-3. **Standing Orders & Seed Protection**: Call `gather_and_items(action="protect_seeds", ban_brew=True)` immediately so `Kitchen` jobs never cook `Plump helmets` or seeds.
-4. **Appoint Core Nobles (`(n)oble menu`)**: Call `manage_nobles(action="auto_assign")` to appoint citizens to `MANAGER` (required for `work_order`), `BOOKKEEPER` (`bookkeeper_settings=4`), `BROKER` (required for `Trade`), and `CHIEF_MEDICAL_DWARF` (required for `Hospital`).
+3. **Enable Safe DFHack Automation & Protect Seeds**: Call `dfhack_automation(action="apply_preset", preset="early_fort")` immediately. This enables `autofarm`, `seedwatch`, `ban-cooking` (seeds & brew, equivalent to `gather_and_items(action="protect_seeds")`), `suspendmanager`, `buildingplan`, `autonestbox`, `autoslab`, `prioritize`, and `tailor`.
+4. **Appoint Skilled Core Nobles (`(n)oble menu`)**: Call `manage_nobles(action="candidates")` to inspect citizen skill scores (`ORGANIZATION` for `MANAGER`, `APPRAISAL`/`NEGOTIATION` for `BROKER`, `RECORD_KEEPING` for `BOOKKEEPER`, medical skills for `CHIEF_MEDICAL_DWARF`), then call `manage_nobles(action="auto_assign", reassign_unskilled=True)` so skilled dwarves are appointed instead of round-robin picks.
+
+### Early-Game Manager & Barrel Bootstrap (before `work_order` can run)
+Manager work orders cannot validate until a **Manager** has an **Office** with a **Chair**, and placing a Chair requires a **crafted Chair item** in stock:
+1. **Get early wood if needed**: break up the Wagon (`remove_building(building_id=0)`) for 3 wood logs (~6s unpaused; immediate reply may say `still present` until dwarves disassemble it—confirm `WOOD >= 3` via `workshop_job(action="stock")`), or fell nearby trees (`find_trees(..., near_x=..., near_y=...)` + `cut_trees`).
+2. **Build starter workshops**: find clean dug/flat `3x3` sites via `fort_plan(action="find_site", elev=..., width=3, height=3)` and place `Carpenter`, `Stoneworker`, and `Still` (`place_building`).
+3. **Craft Chair & Barrels/Pots directly**: queue at the workshop via `workshop_job(action="queue", task="chair", material="wood", count=1)` and `workshop_job(action="queue", task="barrel", count=2)` (or `MakeRockPot` at Stoneworker's). `workshop_job(action="stock")` counts free furniture AND usable contained `DRINK`/`FOOD`/`SEEDS`.
+4. **Place Chair & assign Office**: once `items.CHAIR >= 1`, place the crafted chair (`place_building(building="Chair", ...)`—attaches the crafted item and rejects raw boulders), create an `office` zone (`create_zone(kind="office", ..., acknowledge_risk=True)`), and assign the skilled `MANAGER` (`assign_zone_owner(building_id=..., unit_id=...)`).
+5. **Queue orders & scale**: queue `work_order(action="create", job="MakeBarrel", material="wood", amount=2)` (validated on the Manager's next office check tick), and use `fort_plan(action="qf_status")` / `qf_run` once ready for Quickfort blueprints.
 
 ---
 
@@ -40,11 +48,11 @@ You are controlling a live Dwarf Fortress fortress via `dfhack-mcp`. **Never bui
 Every production chain in the flowchart stems from two initial designations:
 
 - **`Dig`** (`Labor: Mining` → produces **`Stone`** + underground rooms):
-  - **Tool**: `send_dig_command` (use `box`, `boxes` with `middle_first=True`, or `stair_shaft` for multi-z stairwells).
-  - **Gate & Verify**: Check `hazards` (`DAMP=0, HOT=0`) and `depth_profile` (`overburden >= 2`) before digging; verify excavation via `transitions` (`wall/fog -> floor/stair`).
+  - **Tool**: `fort_strata` -> `fort_plan` (`bootstrap_camp` first -> `find_site` -> Quickfort `qf_status`/`qf_run` once bootstrapped) or `send_dig_command` (`box`/`boxes` with `middle_first=True`, or `stair_shaft`).
+  - **Gate & Verify**: Check `fort_strata` (aquifer/water/magma/soil) and `survey` before digging; verify excavation via `survey` (`dug > 0 and to_dig == 0`).
   - **Unlocks**: Underground soil/mud rooms for **`Farm plot`**, plus raw **`Stone`** boulders for **`Wall`**, **`Stoneworker's workshop`**, **`Mechanic's shop`**, and **`Craftdwarf's workshop`**.
 - **`Chop trees`** (`Labor: Wood cutting` → produces **`Wood`**):
-  - **Tool**: `find_trees` → `cut_trees(x0=..., y0=..., x1=..., y1=..., elev=..., limit=10)`.
+  - **Tool**: `find_trees(elev0=..., elev1=..., near_x=..., near_y=...)` (sorts closest clusters first) → `cut_trees(x0=..., y0=..., x1=..., y1=..., elev=..., limit=10)`.
   - **Unlocks**: Raw **`Wood`** logs for **`Carpenter's workshop`** and **`Wood furnace`**.
 
 ---
@@ -57,8 +65,8 @@ Every production chain in the flowchart stems from two initial designations:
    - **Build**: `place_building(building="Carpenter", x=..., y=..., elev=..., w=3, h=3)`
    - **Downstream Items (queue via `work_order`)**:
      - **`Barrel`** (`work_order(job="MakeBarrel", amount=10)`) → **Required by `Still` to brew `Booze`** and by `Food pile`
-     - **`Beds`** (`work_order(job="MakeBed", amount=8)`) → **Required by `Bedrooms` and `Hospital`**
-     - **`Bins`** (`work_order(job="MakeBin", amount=10)`) → **Required by `All stockpiles`**
+     - **`Beds`** (`work_order(job="ConstructBed", amount=8)`) → **Required by `Bedrooms` and `Hospital`**
+     - **`Bins`** (`work_order(job="ConstructBin", material="wood", amount=10)`) → **Required by `All stockpiles`**
      - **`Buckets`** (`MakeBucket`) & **`Splint/Crutches`** (`ConstructSplint`, `ConstructCrutch`) → **Required by `Hospital`**
      - **`Training weapons`** (`MakeTrainingWeapon`) → **Required by `Squad`**
 2. **`Wood furnace`** (`Labor: Furnace operating`)
@@ -102,7 +110,7 @@ Every production chain in the flowchart stems from two initial designations:
 
 1. **`Stoneworker's workshop`** (`Mason`, `Labor: Masonry`)
    - **Build**: `place_building(building="Mason", x=..., y=..., elev=..., w=3, h=3)`
-   - **Produce `Furniture` via `work_order`**: **`Tables`** (`MakeTable`), **`Thrones`** (`MakeChair`), **`Doors`** (`MakeDoor`), **`Armor stands / Weapon racks`** (`MakeArmorStand`, `MakeWeaponRack` → **`Barracks`**), **`Coffins`** (`MakeCoffin`), **`Cabinets`** (`MakeCabinet`), **`Chests`** (`MakeBox`).
+   - **Produce `Furniture` via `work_order`**: **`Tables`** (`ConstructTable`), **`Thrones`** (`ConstructThrone`), **`Doors`** (`ConstructDoor`), **`Armor stands / Weapon racks`** (`ConstructArmorStand`, `ConstructWeaponRack` → **`Barracks`**), **`Coffins`** (`ConstructCoffin`), **`Cabinets`** (`ConstructCabinet`), **`Chests`** (`ConstructChest`).
    - **Store**: **`Furniture pile`** (`create_stockpile(..., allow=["furniture"])`).
 2. **Zones, Nobles & Early Goals (Green, Purple & Red Nodes)**:
    - **`Office`**: Place a `Table` + `Chair` via `place_building`, then `create_zone(kind="office", x=..., y=..., elev=..., w=3, h=3, owner_unit_id=<manager_unit_id>, acknowledge_risk=True)` (or `assign_zone_owner`) for **`Manager`** and **`Bookkeeper`**.

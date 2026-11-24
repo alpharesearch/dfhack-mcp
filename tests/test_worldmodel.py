@@ -1138,6 +1138,249 @@ def test_site_gate_and_idempotency_on_place_building_create_zone_and_stockpile()
     assert 'operation_id="transitions"' in main
 
 
+def test_reach_map_connects_stairs_and_ramps_symmetrically():
+    import asyncio
+    w = WM.WorldModel()
+    band = {
+        (5, 5): {37: ".", 36: " ", 35: " "},
+        (6, 5): {37: ">", 36: "=", 35: "<"},
+        (7, 5): {37: "#", 36: "#", 35: "."},
+        (8, 5): {37: "#", 36: "^", 35: "/"},
+        (8, 6): {37: "#", 36: ".", 35: "."},
+        (9, 6): {37: "#", 36: "g", 35: "#"},
+    }
+
+    async def fake_stack(e0, e1, gen=None):
+        return band, []
+
+    real_stack = w._stack
+    w._stack = fake_stack
+    try:
+        rm = asyncio.run(w.reach_map(35, 37))
+        comp = rm["components"]
+        c_start = comp.get((5, 5, 37))
+        assert c_start is not None
+        assert comp.get((6, 5, 37)) == c_start
+        assert comp.get((6, 5, 36)) == c_start
+        assert comp.get((6, 5, 35)) == c_start
+        assert comp.get((7, 5, 35)) == c_start
+        assert comp.get((8, 5, 35)) == c_start
+        assert comp.get((9, 6, 36)) == c_start
+        dr = asyncio.run(w.dig_reachable(9, 7, 36, 5, 5, 37))
+        assert dr["reachable"] is True
+        dr_above = asyncio.run(w.dig_reachable(6, 5, 34, 5, 5, 37))
+        assert dr_above["reachable"] is True
+    finally:
+        w._stack = real_stack
+
+
+def test_wagon_path_requires_3x3_clearance_and_uses_ramps_only():
+    import asyncio
+    w = WM.WorldModel()
+    w.cache.tile_x, w.cache.tile_y, w.cache.z_count = 16, 16, 200
+    band = {}
+    for x in range(16):
+        for y in range(16):
+            band[(x, y)] = {38: "#", 37: "#"}
+    # 1-wide path from (8,8) to edge x=0 at elev 38 -> should fail 3x3 wagon check
+    for x in range(0, 9):
+        band[(x, 8)][38] = "."
+
+    async def fake_stack(e0, e1, gen=None):
+        return band, []
+
+    real_stack = w._stack
+    w._stack = fake_stack
+    try:
+        res_narrow = asyncio.run(w.wagon_path(8, 8, 38))
+        assert res_narrow["reaches_map_edge"] is False
+        # Widen to 3x3 corridor (y=7..9)
+        for x in range(0, 10):
+            for y in (7, 8, 9):
+                band[(x, y)][38] = "."
+        res_wide = asyncio.run(w.wagon_path(8, 8, 38))
+        assert res_wide["reaches_map_edge"] is True
+        assert res_wide["clearance"] == "3x3"
+        # No vertical teleportation to elev 37 without a ramp
+        band[(8, 8)][37] = "."
+        res_no_tp = asyncio.run(w.wagon_path(8, 8, 38))
+        assert all(cz == 38 for _, _, cz in res_no_tp["edge_tiles"])
+    finally:
+        w._stack = real_stack
+
+
+def test_tunnel_sites_handles_unknown_surface_and_all_directions():
+    import asyncio
+    w = WM.WorldModel()
+    lv = WM.LevelModel(35 + WM.GAME_Z_OFFSET, None)
+    lv.origin = (0, 0)
+    lv.rows, lv.cols = 10, 10
+    lv.grid = [["#"] * 10 for _ in range(10)]
+    # West-facing walkable entrance at (1, 4) leading east into rock (2..5, 3..5)
+    lv.grid[4][1] = "."
+    # Chasm at (7, 7) must not be treated as diggable
+    lv.grid[7][7] = "O"
+    surf = {(x, y): (38 if x >= 2 else None) for x in range(10) for y in range(10)}
+
+    async def fake_band():
+        return 35 + WM.GAME_Z_OFFSET, 35 + WM.GAME_Z_OFFSET
+
+    async def fake_surf(e0=None, e1=None):
+        return surf
+
+    async def fake_levels(e0, e1, force=False):
+        return [lv]
+
+    async def fake_hz(e0=None, e1=None):
+        return {}
+
+    w.fort_band = fake_band
+    w.surface_map = fake_surf
+    w.levels = fake_levels
+    w.hazard_map = fake_hz
+    sites = asyncio.run(w.tunnel_sites(length=4, width=3, min_depth=2))
+    assert any(s["direction"] == "E" and s["entrance"] == [1, 4, 35] for s in sites)
+    assert not any(s["x0"] <= 7 <= s["x1"] and s["y0"] <= 7 <= s["y1"] for s in sites)
+
+
+def test_remove_building_refuses_zones_and_verifies_via_buildings_live():
+    import asyncio
+    import main as M
+    import luaops as LO
+
+    class Req:
+        def __init__(self, b):
+            self._b = b
+        async def json(self):
+            return self._b
+
+    real_gen = M.world._gen
+    real_dec = M.world._dec
+    real_zones = LO.list_zones
+    real_piles = LO.list_stockpiles
+    real_live = LO.buildings_live
+    real_rm = LO.remove_building
+    real_reset = M.world.cache.reset
+
+    async def fake_gen():
+        return 1
+
+    async def fake_dec(g):
+        return None
+
+    async def fake_zones(dec):
+        return [{"id": 50, "type_name": "MeetingHall", "x0": 10, "x1": 14, "y0": 10, "y1": 14, "elev": 36}]
+
+    async def fake_piles(dec):
+        return []
+
+    live_list = [{"building_id": 77, "type": "Carpenter's Workshop", "x": 20, "y": 20, "elev": 36}]
+
+    async def fake_live(elev0=None, elev1=None, type=None):
+        return {"buildings": list(live_list)}
+
+    async def fake_rm(x, y, elev):
+        live_list.clear()
+        return {"verdict": "gone", "building_id": 77}
+
+    M.world._gen = fake_gen
+    M.world._dec = fake_dec
+    LO.list_zones = fake_zones
+    LO.list_stockpiles = fake_piles
+    LO.buildings_live = fake_live
+    LO.remove_building = fake_rm
+    M.world.cache.reset = lambda: None
+    try:
+        z_res = asyncio.run(M.remove_building(Req({"building_id": 50})))
+        assert z_res["success"] is False and z_res["verdict"] == "refused_zone"
+        assert "remove_zone" in z_res["hint"]
+        b_res = asyncio.run(M.remove_building(Req({"building_id": 77})))
+        assert b_res["success"] is True and b_res["verdict"] == "removed"
+        assert "buildings_live" in b_res["verified_by"]
+    finally:
+        M.world._gen = real_gen
+        M.world._dec = real_dec
+        LO.list_zones = real_zones
+        LO.list_stockpiles = real_piles
+        LO.buildings_live = real_live
+        LO.remove_building = real_rm
+        M.world.cache.reset = real_reset
+
+
+def test_work_order_normalizes_materials_and_furniture_aliases():
+    import asyncio, json
+    import main as M
+    import luaops as LO
+
+    class Req:
+        def __init__(self, b):
+            self._b = b
+        async def json(self):
+            return self._b
+
+    sent = []
+    real_rc = M.RunCommand
+    real_mwo = LO.manage_work_orders
+
+    async def fake_rc(input=None):
+        sent.append(json.loads(input.arguments[0]))
+
+    async def fake_mwo(action="list", order_id=None, job=None):
+        return {"has_manager": True, "count": len(sent), "orders": []}
+
+    M.RunCommand = fake_rc
+    LO.manage_work_orders = fake_mwo
+    try:
+        asyncio.run(M.work_order(Req({"job": "MakeChair", "material": "wood", "amount": 2})))
+        asyncio.run(M.work_order(Req({"job": "MakeDoor", "material": "stone", "amount": 3})))
+        asyncio.run(M.work_order(Req({"job": "BrewDrink", "amount": 5})))
+    finally:
+        M.RunCommand = real_rc
+        LO.manage_work_orders = real_mwo
+
+    assert sent[0]["job"] == "ConstructThrone" and sent[0]["material_category"] == ["wood"] and "material" not in sent[0]
+    assert sent[1]["job"] == "ConstructDoor" and sent[1]["material"] == "INORGANIC"
+    assert sent[2]["job"] == "CustomReaction" and sent[2]["reaction"] == "BREW_DRINK_FROM_PLANT"
+
+
+def test_dfhack_automation_enforces_safe_allowlist_and_presets():
+    import asyncio
+    import main as M
+
+    class Req:
+        def __init__(self, b):
+            self._b = b
+        async def json(self):
+            return self._b
+
+    cmds = []
+    real_rc = M.RunCommand
+    real_drain = M.drain_replies
+
+    async def fake_rc(input=None):
+        cmds.append((input.command, list(input.arguments)))
+
+    M.RunCommand = fake_rc
+    M.drain_replies = lambda: ["ok"]
+    try:
+        bad = asyncio.run(M.dfhack_automation(Req({"action": "enable", "plugin": "fastdwarf"})))
+        assert bad["success"] is False and bad["blocked"] is True
+        bad2 = asyncio.run(M.dfhack_automation(Req({"action": "enable", "plugin": "reveal"})))
+        assert bad2["success"] is False and bad2["blocked"] is True
+        ok_af = asyncio.run(M.dfhack_automation(Req({"action": "enable", "plugin": "autofarm"})))
+        assert ok_af["success"] is True
+        pre = asyncio.run(M.dfhack_automation(Req({"action": "apply_preset", "preset": "early_fort"})))
+        assert pre["success"] is True
+        ran = {(c, tuple(a)) for c, a in cmds}
+        assert ("enable", ("autofarm",)) in ran
+        assert ("enable", ("seedwatch",)) in ran
+        assert ("enable", ("suspendmanager",)) in ran
+        assert ("ban-cooking", ("seeds",)) in ran
+    finally:
+        M.RunCommand = real_rc
+        M.drain_replies = real_drain
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

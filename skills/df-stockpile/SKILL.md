@@ -4,8 +4,7 @@ description: Set up Dwarf Fortress stockpiles that work - the general pile off t
 whenToUse: When the fort needs storage: items lie scattered, workshops clutter, hauling never finishes, a pile "exists" but nothing goes to it, or you are placing the first stockpiles of a new embark.
 metadata:
   source: measured on DF 53.17-r1 (STEAM) with the dfhack-mcp layer, during play on region1
-  tools: create_stockpile, configure_stockpile, resize_building, remove_building, stockpiles,
-    zones, survey, box_state, tile_at, items_at, world_objects, unit_list
+  tools: create_stockpile, configure_stockpile, list_stockpiles, remove_building, list_zones, survey, fort_plan, world_map, workshop_job
 ---
 
 
@@ -216,3 +215,9 @@ Same pile, same screen, same operation that had crashed twice (with sizes 0, the
 fallback). With the measured 1327/113 arrays allocated in the create call, the screen opens. The
 rule this leaves behind: **allocate to the game's own measured lengths, and verify by having the
 player open the screen that crashes** - a passing `check` is necessary, not sufficient.
+
+## §19 - Clean site finding & contained supply counts (32-tool MCP surface)
+
+- **Find clean pile footprints first**: call `fort_plan(action="find_site", elev=..., width=..., height=...)` before `create_stockpile` so the site gate passes on the first attempt.
+- **Check free containers and contained supplies**: `workshop_job(action="stock")` counts free `BARREL`/`BIN`/`LARGE_POT` containers AND usable contained `DRINK`, `FOOD`, and `SEEDS` (including stacks inside barrels and bags).
+- **HTTP-only diagnostics**: `resize_building` and `pile_arrays` are excluded from the 32-tool MCP surface and remain available over HTTP (`docs/tool-notes.md`).

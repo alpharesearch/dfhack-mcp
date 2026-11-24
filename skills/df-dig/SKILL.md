@@ -4,7 +4,7 @@ description: Dig tunnels, rooms and stair shafts in Dwarf Fortress with real lab
 whenToUse: Use when planning or executing any mining - entrance tunnels, rooms, stairwells, farm/industry halls - and whenever a dig "completed" but nothing appears, a designation vanished, or a plan sits in unexplored rock.
 metadata:
   source: measured on DF 53.17-r1 (STEAM) with the dfhack-mcp layer, during play tests on region1
-  tools: send_dig_command, work_details, unit_labors, overburden, depth_profile, column, cross_section, hazards, probe_plan, tunnel_sites, warnings, tile_at, world_map, world_objects, dig_run.py, watch_dig.py, sink_shaft.py, dig_adit.py
+  tools: fort_strata, fort_plan, send_dig_command, survey, world_map, work_details, building_status
 ---
 
 # Digging: tunnels, rooms, shafts
@@ -345,3 +345,13 @@ Watched the player designate it in-game, measured from the tile reads:
 
 Measured proof that it works: with the staircase running, `stone 18 -> 29` and designations were
 consumed (`pending` moving), where the fog room alone moved nothing for 12+ minutes.
+
+## §28 - Underground CAD & Quickfort workflow (32-tool MCP surface)
+
+- **`fort_strata` replaces the pruned micro-probes** (`overburden`, `depth_profile`, `column`, `cross_section`, `hazards`, `magma_depth`, `find_soil` remain HTTP-only; see `docs/tool-notes.md`): scan once to get `soil_walls`, `potential_soil`, `stone_walls`, `aquifer_tiles`, `water_tiles`, `magma_tiles`, and covered underground (`open_space == 0`) recommendations for `farm_elev`, `workshop_elev`, and `bedroom_elev`.
+- **Plan and commit with `fort_plan`**:
+  - `set_hub` (`radius=1`) creates a 2x2 central shaft inside a 3x3 hub.
+  - Start small in early game with `add_template(template="bootstrap_camp")` (~47 tiles) so miners finish quickly instead of queueing an 800-tile Quickfort dig on day 1.
+  - `commit(phase="auto")` runs `shaft` -> `hub_and_corridors` (hub-attached corridors/halls only, zero disconnected child doorways) -> `rooms` (topological parent-before-child).
+  - Use `action="find_site"` to locate clean, dry, already-dug footprints (`pending_dig_tiles` tells you if miners are still excavating).
+  - Use `qf_status`, `qf_list`, `qf_run`, and `qf_orders` for DFHack Quickfort blueprints once the bootstrap fort (workshops + Chair + Office + Manager + `buildingplan`) is ready.

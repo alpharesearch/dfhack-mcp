@@ -137,6 +137,21 @@ def resolve_building(dec, name: str):
                      f"get one from get_building_def_list")
 
 
+_FURNITURE_ITEM_TYPES = {
+    "chair": ("CHAIR", "chair"),
+    "table": ("TABLE", "table"),
+    "bed": ("BED", "bed"),
+    "door": ("DOOR", "door"),
+    "cabinet": ("CABINET", "cabinet"),
+    "box": ("BOX", "chest"),
+    "coffin": ("COFFIN", "coffin"),
+    "armor stand": ("ARMORSTAND", "armor_stand"),
+    "weapon rack": ("WEAPONRACK", "weapon_rack"),
+    "statue": ("STATUE", "statue"),
+    "slab": ("SLAB", "slab"),
+}
+
+
 async def place_building(dec, name: str, x: int, y: int, elev: int,
                          w: int | None = None, h: int | None = None,
                          complete: bool = True, abstract: bool | None = None,
@@ -156,16 +171,18 @@ async def place_building(dec, name: str, x: int, y: int, elev: int,
     bt, sub, cus, resolved = resolve_building(dec, name)
     z = int(elev) + GAME_Z_OFFSET
     dims = ""
-    if w:
-        dims += f"width={int(w)}, "
-    if h:
-        dims += f"height={int(h)}, "
+    if not nominal or (w is not None and int(w) > 1) or (h is not None and int(h) > 1):
+        if w:
+            dims += f"width={int(w)}, "
+        if h:
+            dims += f"height={int(h)}, "
     # Verified against hack/lua/dfhack/buildings.lua:493: constructBuilding refuses to
     # build without one of items / filters / abstract. Stockpiles and zones are ABSTRACT
     # (no construction materials); furniture and doors need real item ids in `items`.
     if abstract is None:
         abstract = resolved.lower() in ("stockpile", "zone")
     extra = ""
+    furn_spec = _FURNITURE_ITEM_TYPES.get(resolved.lower())
     if material:
         kind = str(material).lower().strip()
         extra = f'items=resolve_material("{kind}", {int(count)}, {int(x)}, {int(y)}, {int(elev)}), '
@@ -177,6 +194,9 @@ async def place_building(dec, name: str, x: int, y: int, elev: int,
         # must hold item objects, so resolve each id with dfhack.items.findItem.
         ids = ", ".join(str(int(i)) for i in items)
         extra = f"items=resolve_items({{{ids}}}), "
+    elif furn_spec is not None:
+        item_vec, task_hint = furn_spec
+        extra = f'items=resolve_crafted_item("{item_vec}", "{task_hint}", {int(x)}, {int(y)}, {int(elev)}), '
     expr = f'''
 local function resolve_items(ids)
   local out = {{}}
@@ -185,6 +205,32 @@ local function resolve_items(ids)
     if ok and it then out[#out + 1] = it end
   end
   return out
+end
+local function resolve_crafted_item(vec_name, task_hint, nearx, neary, nearz)
+  local cand = {{}}
+  local vec = df.global.world.items.other[vec_name]
+  if vec ~= nil then
+    for _, it in ipairs(vec) do
+      local okf, free = pcall(function()
+        local f = it.flags
+        return not f.in_building and not f.in_job and not f.forbid and not f.dump
+           and not f.in_inventory and not f.trader and not f.garbage_collect
+           and not f.removed
+      end)
+      if okf and free then
+        local okp, pos = pcall(function() return it.pos end)
+        local dx, dy, dz = 9999, 9999, 9999
+        if okp and pos then dx, dy, dz = pos.x - nearx, pos.y - neary, (pos.z - {GAME_Z_OFFSET}) - nearz end
+        cand[#cand + 1] = {{it = it, d2 = dx*dx + dy*dy + dz*dz}}
+      end
+    end
+  end
+  if #cand == 0 then
+    print("FAIL no crafted " .. tostring(vec_name) .. " item in stock; craft one first with workshop_job(action='queue', task='" .. tostring(task_hint) .. "')")
+    return nil
+  end
+  table.sort(cand, function(a, b) return a.d2 < b.d2 end)
+  return {{cand[1].it}}
 end
 local function resolve_material(kind, want, nearx, neary, nearz)
   -- Measured: RFR Item.id does NOT resolve via dfhack.items.findItem, and DF53 map-block
@@ -202,7 +248,7 @@ local function resolve_material(kind, want, nearx, neary, nearz)
     if okd and d and tostring(d):lower():find(kind, 1, true) then
       local okp, pos = pcall(function() return it.pos end)
       local dx, dy, dz = 9999, 9999, 9999
-      if okp and pos then dx, dy, dz = pos.x - nearx, pos.y - neary, (pos.z - 129) - nearz end
+      if okp and pos then dx, dy, dz = pos.x - nearx, pos.y - neary, (pos.z - {GAME_Z_OFFSET}) - nearz end
       cand[#cand + 1] = {{it = it, d2 = dx*dx + dy*dy + dz*dz}}
     end
   end
@@ -212,6 +258,9 @@ local function resolve_material(kind, want, nearx, neary, nearz)
   return out
 end
 local b = nil
+-- If resolve_crafted_item printed FAIL and returned nil, abort before constructBuilding
+local _extra = {{{dims}{extra}}}
+if {str(furn_spec is not None and not material and not abstract and not items).lower()} and _extra.items == nil then return end
 -- Measured 2026-11-22 (hack/lua/dfhack/buildings.lua:485-541): constructBuilding returns
 -- `nil, "cannot place at this position"` / `nil, "could not construct the building"` - THE REASON IS
 -- THE SECOND RETURN VALUE, and my old code captured only the first, so every workshop refusal came
@@ -353,7 +402,7 @@ for _, u in ipairs(df.global.world.units.active) do
   if n < {LIMIT} then
     local uid = tonumber(u.id)
     local line = "UA| id=" .. tostring(uid)
-    pcall(function() line = line .. " pos=" .. string.format("%d,%d,%d", u.pos.x, u.pos.y, u.pos.z - 129) end)
+    pcall(function() line = line .. " pos=" .. string.format("%d,%d,%d", u.pos.x, u.pos.y, u.pos.z - {GAME_Z_OFFSET}) end)
     pcall(function() line = line .. " jobs=" .. tostring(#u.jobs) end)
     pcall(function()
       local names = {}
@@ -366,7 +415,7 @@ for _, u in ipairs(df.global.world.units.active) do
     pcall(function() line = line .. " dest=" .. (function()
       local p = u.id.path
       if p and #p > 0 then local last = p[#p]
-        return string.format("%d,%d,%d", last.x, last.y, last.z - 129) end
+        return string.format("%d,%d,%d", last.x, last.y, last.z - {GAME_Z_OFFSET}) end
       return "none" end)() end)
     pcall(function() line = line .. " mine=" .. tostring(u.status.labors.MINE) end)
     pcall(function() line = line .. " haul=" .. tostring(u.status.labors.HAUL_WOOD) end)
@@ -400,7 +449,7 @@ end
 if target == nil then print("FAIL order {int(order_id)} not found (orders: "..tostring(#l)..")") return end
 local before = "cat="..tostring(target.material_category).." mat="..tostring(target.mat_type).." ws="..tostring(target.workshop_id)
 
-{"" if workshop_id is None else "pcall(function() target.workshop_id = {int(workshop_id)} end)"}
+{"" if workshop_id is None else f"pcall(function() target.workshop_id = {int(workshop_id)} end)"}
 local after = "cat="..tostring(target.material_category).." mat="..tostring(target.mat_type).." ws="..tostring(target.workshop_id)
 if before == after then
   print("FAIL write did not change the order (before == after: "..before..") - the assignment was refused; workshop_id/material cannot be set by simple field write on this build")
@@ -426,7 +475,10 @@ async def unit_activity(unit_ids: list[int] | None = None, limit: int = 20) -> d
     Aban at (37,119)@39 with MINE on while the room stayed undug).
     """
     wanted = "{" + ", ".join(str(int(i)) for i in unit_ids) + "}" if unit_ids else "nil"
-    lua = _LUA_UNIT_ACTIVITY.replace("{WANT}", wanted).replace("{LIMIT}", str(int(limit)))
+    lua = (_LUA_UNIT_ACTIVITY
+           .replace("{WANT}", wanted)
+           .replace("{LIMIT}", str(int(limit)))
+           .replace("{GAME_Z_OFFSET}", str(GAME_Z_OFFSET)))
     out = await _lua(lua.strip(), settle=1.2)
     rows = []
     counted = 0
@@ -484,7 +536,7 @@ local function add_job(j, src, fallback_unit)
   local pos_s = ""
   pcall(function()
     if j.pos and j.pos.x >= 0 then
-      pos_s = string.format(" at (%d,%d,%d)", j.pos.x, j.pos.y, j.pos.z - 129)
+      pos_s = string.format(" at (%d,%d,%d)", j.pos.x, j.pos.y, j.pos.z - {GAME_Z_OFFSET})
     end
   end)
   rows[#rows + 1] = string.format("%s by %s jtype=%s%s%s", desc, un, jtype, pos_s, susp and " [SUSPENDED]" or "")
@@ -1540,9 +1592,10 @@ async def _ensure_lua_module(force: bool = False) -> None:
         return
     # Load the module chunk into _G.__dfhack_mcp and print a confirmation line
     bootstrap = (
-        f"local fn, err = load({json.dumps(src)}, 'dfhack_mcp.lua')\n"
+        f"local fn, err = load({json.dumps(src, ensure_ascii=False)}, 'dfhack_mcp.lua')\n"
         "if not fn then print('MCP_JSON|{\"ok\":false,\"error\":' .. string.format('%q', tostring(err)) .. '}') return end\n"
         "local m = fn()\n"
+        f"if m then m.GAME_Z_OFFSET = {int(GAME_Z_OFFSET)} end\n"
         "_G.__dfhack_mcp = m\n"
         "print('MCP_JSON|{\"ok\":true,\"result\":{\"bootstrapped\":true,\"version\":' .. string.format('%q', tostring(m and m.VERSION or '?')) .. '}}')"
     )
@@ -1659,10 +1712,11 @@ async def assign_pasture(building_id: int | None = None,
 async def manage_nobles(action: str = "list",
                         position: str | None = None,
                         unit_id: int | None = None,
-                        bookkeeper_settings: int | None = None) -> dict:
-    """List, assign, or auto-assign fortress noble positions (`MANAGER`, `BOOKKEEPER`,
-    `BROKER`, `CHIEF_MEDICAL_DWARF`, etc.) and bookkeeper precision via `dfhack_mcp.lua`."""
-    payload: dict = {"action": str(action)}
+                        bookkeeper_settings: int | None = None,
+                        reassign_unskilled: bool = False) -> dict:
+    """List, rank candidates, assign, or auto-assign fortress noble positions (`MANAGER`,
+    `BOOKKEEPER`, `BROKER`, `CHIEF_MEDICAL_DWARF`, etc.) and bookkeeper precision via `dfhack_mcp.lua`."""
+    payload: dict = {"action": str(action), "reassign_unskilled": bool(reassign_unskilled)}
     if position is not None:
         payload["position"] = str(position)
     if unit_id is not None:
@@ -1835,5 +1889,31 @@ async def trade_depot(action: str = "status",
     if anyone_can_trade is not None:
         payload["anyone_can_trade"] = bool(anyone_can_trade)
     return await call_module("trade_depot", payload)
+
+
+async def workshop_job(action: str = "list",
+                       task: str | None = None,
+                       building_id: int | None = None,
+                       material: str | None = None,
+                       count: int = 1,
+                       repeat_job: bool = False,
+                       job_id: int | None = None) -> dict:
+    """Queue, inspect, or cancel jobs directly at a workshop, or check crafted item stock
+    via `dfhack_mcp.lua`."""
+    payload: dict = {
+        "action": str(action),
+        "count": int(count),
+        "repeat_job": bool(repeat_job),
+    }
+    if task is not None:
+        payload["task"] = str(task)
+    if building_id is not None:
+        payload["building_id"] = int(building_id)
+    if material is not None:
+        payload["material"] = str(material)
+    if job_id is not None:
+        payload["job_id"] = int(job_id)
+    return await call_module("workshop_job", payload)
+
 
 
