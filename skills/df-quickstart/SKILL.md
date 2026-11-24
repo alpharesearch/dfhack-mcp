@@ -87,9 +87,13 @@ Every production chain in the flowchart stems from two initial designations:
    - **Surface Gathering Supplement**: Call `gather_and_items(action="gather_plants", x0=..., y0=..., x1=..., y1=..., elev=...)` on surface shrubs while waiting for the first harvest.
 
 ### Branch 3A: `Plump helmets` + `Animal pasture` → `Booze` & `Meals`
+- **Underground Farm Plot (exact 4-step workflow)**:
+  1. Call `fort_plan(action="find_site", kind="farm", elev=<farm_elev>, width=3, height=3)` to get ready soil `sites` or `dig_to_soil_sites` (one level below soil, where digging reveals soil).
+  2. If needed, dig a connecting tunnel + one `dig_to_soil_sites` box (`send_dig_command`), wait for miners, then `place_building(building="Farm Plot", x=..., y=..., elev=..., w=3, h=3)`.
+  3. Set seasonal crops: `configure_farmplot(building_id=..., crop="MUSHROOM_HELMET_PLUMP", all_seasons=True)` (and keep `autofarm` enabled via `dfhack_automation`).
 - **`Still`** (`Labor: Brewing` → produces **`Booze`**):
-  - **Prerequisites**: `Plump helmets` + empty **`Barrel`** (from `Carpenter's workshop`) or **`Stone pots`** (from `Craftdwarf's workshop`).
-  - **Build & Queue**: `place_building(building="Still", x=..., y=..., elev=..., w=3, h=3)` → `work_order(job="BrewDrink", amount=15)`.
+  - **Prerequisites**: `Plump helmets` + empty **`Barrel`** (from `Carpenter's workshop`) or **`Stone pots`** (from `Stoneworker's` / `Craftdwarf's`).
+  - **Build & Queue**: `place_building(building="Still", x=..., y=..., elev=..., w=3, h=3)` → `work_order(action="create", job="brew", amount=5)` (`BREW_DRINK_FROM_PLANT`), or `workshop_job(action="queue", task="brew")` before a Manager exists.
 - **`Animal pasture` → `Butcher's shop` & `Kitchen` → `Meals`**:
   - **Pasture Grazing Animals**: `create_zone(kind="pen", x=..., y=..., elev=..., w=10, h=10, acknowledge_risk=True)` on **surface grass** (`grass_tiles > 0` — never on bare stone or dug underground floor, which starves grazing animals; `create_zone` rejects 0-grass sites) → `assign_pasture(action="assign", all_grazers=True)`.
   - **`Butcher's shop`** (`Labor: Butchery`) & **`Kitchen`** (`Labor: Cooking`): `place_building(building="Butcher" | "Kitchen", w=3, h=3)` → `work_order(job="PrepareMeal", amount=10)`.

@@ -462,6 +462,41 @@ class TestMainEndpoints(unittest.TestCase):
             self.assertFalse(FP.rect_overlaps((s["x"], s["y"], s["x1"], s["y1"]), (22, 16, 24, 18)))
             self.assertFalse(FP.rect_overlaps((s["x"], s["y"], s["x1"], s["y1"]), (16, 16, 16, 16)))
 
+    def test_find_clean_sites_require_soil_and_dig_to_soil(self):
+        z = WM.GAME_Z_OFFSET - 2
+        # z+1 has SOIL(tt=3) everywhere; z has stone wall(tt=4) everywhere except a 4x4 stone floor(tt=2) patch at x=16..19, y=16..19
+        b_above = _make_fake_block(16, 16, z + 1, tt=3)
+        b_cur = _make_fake_block(16, 16, z, tt=4)
+        for gx in range(16, 20):
+            for gy in range(16, 20):
+                b_cur.tile_types[(gy - 16) * 16 + (gx - 16)] = 2  # stone floor (not soil)
+
+        class _GlyphDec:
+            def tile_class(self, tt):
+                return SimpleNamespace(glyph="." if tt in (2, 3) else "#")
+
+        w = _FakeWorld([b_above, b_cur])
+        async def _dec(gen):
+            return _GlyphDec()
+        w._dec = _dec
+
+        res = asyncio.run(
+            FP.find_clean_sites(
+                w,
+                x=22,
+                y=22,
+                elev=-2,
+                width=3,
+                height=3,
+                radius=6,
+                require_soil=True,
+                tiletype_materials={2: 2, 3: 1, 4: 2},  # tt=3 is SOIL(1), tt=2,4 are stone(2)
+            )
+        )
+        self.assertTrue(res["require_soil"])
+        self.assertEqual(res["sites_found"], 0)  # stone floor at 16..19 is rejected for farm!
+        self.assertGreater(len(res["dig_to_soil_sites"]), 0)  # stone wall below soil is returned!
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

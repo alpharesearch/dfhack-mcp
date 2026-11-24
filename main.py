@@ -3955,12 +3955,26 @@ async def fort_plan(request: FortPlanRequest):
             zones: list = []
             try:
                 dec = await world._dec(await world._gen())
-                zones = await LO.list_zones(dec)
+                zones.extend(await LO.list_zones(dec))
+            except Exception:
+                pass
+            try:
+                dec = await world._dec(await world._gen())
+                zones.extend(await LO.list_stockpiles(dec))
+            except Exception:
+                pass
+            try:
+                bl = await LO.buildings_live(elev0=int(ce), elev1=int(ce))
+                for b in bl.get("buildings", []):
+                    bx = int(b.get("x", 0))
+                    by = int(b.get("y", 0))
+                    zones.append({"elev": int(ce), "x0": bx - 1, "y0": by - 1, "x1": bx + 1, "y1": by + 1})
             except Exception:
                 pass
             res = await FP.find_clean_sites(
                 world, x=int(cx), y=int(cy), elev=int(ce),
                 width=w, height=h, radius=scan_rad, zones=zones,
+                require_soil=(str(body.get("kind") or "").strip().lower() == "farm"),
             )
             return {"success": True, "save_key": save_key, **res}
 

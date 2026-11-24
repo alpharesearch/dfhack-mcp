@@ -1400,6 +1400,8 @@ async def find_clean_sites(
     radius: int = 16,
     max_results: int = 8,
     zones: list[dict[str, Any]] | None = None,
+    require_soil: bool = False,
+    tiletype_materials: dict[int, int] | None = None,
 ) -> dict[str, Any]:
     """Find clean, dry, flat `width x height` walkable floor footprints near `(x, y, elev)`."""
     w = max(1, int(width))
@@ -1408,7 +1410,7 @@ async def find_clean_sites(
     cx, cy, ce = int(x), int(y), int(elev)
     z = ce + WM.GAME_Z_OFFSET
 
-    tx, ty, _tz = await world.cache.extent()
+    tx, ty, tz = await world.cache.extent()
     rx0 = max(0, cx - rad)
     rx1 = min(tx - 1, cx + rad)
     ry0 = max(0, cy - rad)
@@ -1416,11 +1418,20 @@ async def find_clean_sites(
 
     gen = await world._gen()
     dec = await world._dec(gen)
-    blocks = await world.cache.blocks(z, z + 1, gen)
+    z_hi = min(tz, z + 2) if require_soil else z + 1
+    blocks = await world.cache.blocks(z, z_hi, gen)
     hazards = await world.hazard_map(ce, ce)
+    mats = (
+        tiletype_materials
+        if tiletype_materials is not None
+        else (await _load_tiletype_materials() if require_soil else {})
+    )
 
     blocked: set[tuple[int, int]] = set()
     walkable: set[tuple[int, int]] = set()
+    soil_floor: set[tuple[int, int]] = set()
+    rock_candidates: set[tuple[int, int]] = set()
+    above_soil: set[tuple[int, int]] = set()
     pending_dig = 0
 
     for zn in (zones or []):
@@ -1433,6 +1444,23 @@ async def find_clean_sites(
         for gx in range(min(zx0, zx1), max(zx0, zx1) + 1):
             for gy in range(min(zy0, zy1), max(zy0, zy1) + 1):
                 blocked.add((gx, gy))
+
+    if require_soil:
+        for b in blocks:
+            if int(b.map_z) != z + 1:
+                continue
+            bx0, by0 = int(b.map_x), int(b.map_y)
+            if bx0 + 15 < rx0 or bx0 > rx1 or by0 + 15 < ry0 or by0 > ry1:
+                continue
+            tts = getattr(b, "tiles", None)
+            if tts is None:
+                tts = getattr(b, "tile_types", [])
+            for i in range(min(256, len(tts))):
+                gx = bx0 + (i % 16)
+                gy = by0 + (i // 16)
+                if rx0 <= gx <= rx1 and ry0 <= gy <= ry1:
+                    if mats.get(int(tts[i]), -1) in SOIL_MATS:
+                        above_soil.add((gx, gy))
 
     for b in blocks:
         if int(b.map_z) != z:
@@ -1460,9 +1488,6 @@ async def find_clean_sites(
                 pending_dig += 1
                 blocked.add((gx, gy))
                 continue
-            if i < len(hid_arr) and int(hid_arr[i]):
-                blocked.add((gx, gy))
-                continue
             if (i < len(wat_arr) and int(wat_arr[i]) > 0) or (i < len(mag_arr) and bool(mag_arr[i])):
                 blocked.add((gx, gy))
                 continue
@@ -1470,65 +1495,84 @@ async def find_clean_sites(
             if hz and (ce in hz.get("aquifer", []) or ce in hz.get("water", {}) or ce in hz.get("magma", [])):
                 blocked.add((gx, gy))
                 continue
-            glyph = dec.tile_class(int(tts[i])).glyph if hasattr(dec, "tile_class") else "."
+            if i < len(hid_arr) and int(hid_arr[i]):
+                blocked.add((gx, gy))
+                if require_soil and (gx, gy) in above_soil:
+                    rock_candidates.add((gx, gy))
+                continue
+            tt = int(tts[i])
+            glyph = dec.tile_class(tt).glyph if hasattr(dec, "tile_class") else "."
             if glyph in _CLEAN_FLOOR_GLYPHS and (gx, gy) not in blocked:
                 walkable.add((gx, gy))
+                if require_soil and mats.get(tt, -1) in SOIL_MATS:
+                    soil_floor.add((gx, gy))
             else:
+                if require_soil and glyph in ("#", "?") and (gx, gy) not in blocked and (gx, gy) in above_soil:
+                    rock_candidates.add((gx, gy))
                 blocked.add((gx, gy))
 
-    candidates: list[tuple[float, dict[str, Any]]] = []
-    for x0 in range(rx0, rx1 - w + 2):
-        for y0 in range(ry0, ry1 - h + 2):
-            ok = True
-            for gx in range(x0, x0 + w):
-                for gy in range(y0, y0 + h):
-                    if (gx, gy) in blocked or (gx, gy) not in walkable:
-                        ok = False
-                        break
-                if not ok:
-                    break
-            if ok:
-                rcx = x0 + (w - 1) / 2.0
-                rcy = y0 + (h - 1) / 2.0
-                d2 = (rcx - cx) ** 2 + (rcy - cy) ** 2
-                candidates.append(
-                    (
-                        d2,
-                        {
-                            "x": x0,
-                            "y": y0,
-                            "x1": x0 + w - 1,
-                            "y1": y0 + h - 1,
-                            "dist": round(d2**0.5, 1),
-                        },
+    def _pick_rects(valid_tiles: set[tuple[int, int]]) -> list[dict[str, Any]]:
+        cands: list[tuple[float, dict[str, Any]]] = []
+        for x0 in range(rx0, rx1 - w + 2):
+            for y0 in range(ry0, ry1 - h + 2):
+                if all((gx, gy) in valid_tiles for gx in range(x0, x0 + w) for gy in range(y0, y0 + h)):
+                    rcx = x0 + (w - 1) / 2.0
+                    rcy = y0 + (h - 1) / 2.0
+                    d2 = (rcx - cx) ** 2 + (rcy - cy) ** 2
+                    cands.append(
+                        (
+                            d2,
+                            {
+                                "x": x0,
+                                "y": y0,
+                                "x1": x0 + w - 1,
+                                "y1": y0 + h - 1,
+                                "dist": round(d2**0.5, 1),
+                            },
+                        )
                     )
-                )
+        cands.sort(key=lambda item: (item[0], item[1]["y"], item[1]["x"]))
+        picked: list[dict[str, Any]] = []
+        for _, cand in cands:
+            if any(
+                not (cand["x1"] < s["x"] or s["x1"] < cand["x"] or cand["y1"] < s["y"] or s["y1"] < cand["y"])
+                for s in picked
+            ):
+                continue
+            picked.append(cand)
+            if len(picked) >= max(1, int(max_results)):
+                break
+        return picked
 
-    candidates.sort(key=lambda item: (item[0], item[1]["y"], item[1]["x"]))
-    selected: list[dict[str, Any]] = []
-    for _, cand in candidates:
-        if any(
-            not (cand["x1"] < s["x"] or s["x1"] < cand["x"] or cand["y1"] < s["y"] or s["y1"] < cand["y"])
-            for s in selected
-        ):
-            continue
-        selected.append(cand)
-        if len(selected) >= max(1, int(max_results)):
-            break
+    floor_pool = soil_floor if require_soil else (walkable - blocked)
+    selected = _pick_rects(floor_pool)
+    dig_to_soil_sites = _pick_rects(rock_candidates) if require_soil else []
 
     hint = ""
-    if not selected and pending_dig > 0:
-        hint = "Wait for miners to finish excavating (pending_dig_tiles > 0) or scan another elevation."
-    elif not selected:
-        hint = "No flat dry floor footprint found in window; try another elevation or widen radius."
+    if require_soil:
+        if not selected and dig_to_soil_sites:
+            hint = "Dig one of dig_to_soil_sites to create an underground soil floor, then place_building(building='Farm Plot')."
+        elif not selected and pending_dig > 0:
+            hint = "Wait for miners to finish excavating (pending_dig_tiles > 0) or scan another elevation."
+        elif not selected:
+            hint = "No ready soil floor or dig-to-soil footprint found in window; try fort_strata farm_elev."
+    else:
+        if not selected and pending_dig > 0:
+            hint = "Wait for miners to finish excavating (pending_dig_tiles > 0) or scan another elevation."
+        elif not selected:
+            hint = "No flat dry floor footprint found in window; try another elevation or widen radius."
 
-    return {
+    out: dict[str, Any] = {
         "elev": ce,
         "size": [w, h],
         "center": [cx, cy],
         "radius": rad,
+        "require_soil": require_soil,
         "pending_dig_tiles": pending_dig,
         "sites_found": len(selected),
         "sites": selected,
         "hint": hint,
     }
+    if require_soil:
+        out["dig_to_soil_sites"] = dig_to_soil_sites
+    return out
