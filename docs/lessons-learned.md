@@ -158,6 +158,22 @@ reasonless refusal); the clean, interior site `74,125` built fine —
   prerequisite for mechanisms → floodgates/pumps, the real answer to the water breach (A51,
   `water_tiles 1088 -> 1130`). Interim dam: **Door 48 at `80,110@35`** in the 1-wide adit.
 
+## 18. A neck that slopes down is a ramp, not a doorway — you cannot door it later
+Player's ramp rule, second half. For the Broker's room I made the textbook shape: 3×3 room at
+`69..71,109..111@36` with a 1-tile neck at `70,112`, behind a real rock separator (`x65-68`).
+The result, measured: **`70,112` and `71,112` came out as ramps (`/`)** — because the tunnel at
+`y113` sits a level below, the game slopes the floor — so the entrance is a 2-wide ramp neck
+with no solid wall flanks, which is precisely what `place_building Door` refuses.
+- Manager office: neck `60,112`, rock flanks `59,112`/`61,112` → **Door 30 ✓**.
+- Bookkeeper office: neck `63,112`, rock flanks `62,112`/`64,112` → **Door 43 ✓**.
+- Broker office: Chair 50 + Table 51 + zone 52 (owner Aban) ✓, **no door** — the neck is a ramp.
+- **Rule:** plan the neck on a row where the tile below is **at the same level** (no drop), so
+  it stays flat floor with rock on both sides. A neck facing down-slope becomes an opening you
+  can never close, and dug ramps cannot be undone.
+- Tool side: `survey` reports the ramp count (`ramp: 2`) — reading the neck row *before*
+  digging the room is the check; the tools still never say "this footprint opens via a ramp"
+  (#86), and the door refusals stay reasonless (#80/#82).
+
 ## 15. Automation to keep on (read back live, not assumed)
 `autofarm` (plump 30/50), `seedwatch` (5/30 on 5 crops), `ban-cooking seeds+brew` (12+20),
 `suspendmanager`, `buildingplan`, `prioritize`, `tailor`, `autonestbox`, `autoslab`,
