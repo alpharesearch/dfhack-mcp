@@ -270,16 +270,14 @@ export function runAcceptance(todo, snapshot) {
       return { ok: !!rung.done, evidence: `rung ${rung.id} ${rung.done ? 'satisfied' : 'open'}: ${rung.title}` }
     }
     case 'water_supply': {
-      // Measured 2026-11-22 (tool_missing #56): a player-added water source is a ZONE
-      // (`/zones` id 20 WaterSource x74-76 y111-114 @36, 12 tiles), and `buildings_kw` can never see a
-      // zone. Check WaterSource zones from the `/observe` zone feed, well/cistern/pond buildings, or water tiles.
+      // Measured 2026-11-24 (tool_missing #67): raw water_tiles in the elevation band
+      // (e.g. an aquifer 71 tiles away) is NOT a water supply; require an actual WaterSource
+      // zone or a well/cistern/pond building.
       const zones = snapshot.zones ?? []
       const waterZones = zones.filter((z) => !z.marked_for_removal && /watersource/i.test(String(z.type_name ?? '')))
       const kwHits = buildings.filter((b) => /well|cistern|pond/.test(String(b.name).toLowerCase()))
-      const water = num(facts.water_tiles)
-      const ok = waterZones.length > 0 || kwHits.length >= num(accept.min, 1) || water > 0
-      return { ok, evidence: `water supply: ${waterZones.length} WaterSource zone(s), ${kwHits.length} building(s) named well/cistern/pond` +
-        ` + water_tiles ${water} in band` }
+      const ok = waterZones.length > 0 || kwHits.length >= num(accept.min, 1)
+      return { ok, evidence: `water supply: ${waterZones.length} WaterSource zone(s), ${kwHits.length} building(s) named well/cistern/pond` }
     }
     case 'zone_type': {
       const want = String(accept.zone_type ?? accept.kind ?? '').toLowerCase()
@@ -341,7 +339,7 @@ export function todoAdvice(todo) {
     return 'pile acceptance verified by the live pile read: keep its categories and container limits as the build grows (df-stockpile §3, §5)'
   }
   if (kind === 'buildings_kw') return 'building count proven by the live building read: check access and materials before relying on it (df-stockpile §2)'
-  if (kind === 'water_supply') return 'water supply proven by a named well/cistern building OR water tiles in the band; a WaterSource zone needs the /zones read (the plugin has no zone feed)'
+  if (kind === 'water_supply') return 'water supply proven by a WaterSource zone or a named well/cistern/pond building (raw water tiles in band do not count)'
   if (kind === 'rung') return 'ladder rung satisfied: take the NEXT rung from fort_progress, in order (PLAN §4)'
   return 'to-do acceptance passed on the live read: cite the evidence, do not re-probe blindly'
 }

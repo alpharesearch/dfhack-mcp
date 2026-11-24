@@ -33,6 +33,7 @@ Conventions
 from __future__ import annotations
 
 import asyncio
+import difflib
 import hashlib
 import json
 import pathlib
@@ -70,6 +71,17 @@ _BUILD_ALIASES = {
     "support": "Support", "water wheel": "Water Wheel", "windmill": "Windmill",
     "axle": "Vertical Axle", "gear assembly": "Gear Assembly",
     "screw pump": "Screw Pump", "bridge": "Bridge", "zone": "Zone",
+    "woodfurnace": "Wood Furnace", "wood furnace": "Wood Furnace",
+    "farmersworkshop": "Farmer's Workshop", "farmers": "Farmer's Workshop",
+    "metalsmithsforge": "Metalsmith's Forge", "metalsmith": "Metalsmith's Forge",
+    "craftsdwarfsworkshop": "Craftsdwarf's Workshop", "craftsdwarf": "Craftsdwarf's Workshop",
+    "mechanicsworkshop": "Mechanic's Workshop",
+    "jewelersworkshop": "Jeweler's Workshop",
+    "carpentersworkshop": "Carpenter's Workshop",
+    "masonsworkshop": "Mason's Workshop", "stoneworkersworkshop": "Stoneworker's Workshop",
+    "tradedepot": "Trade Depot", "farmplot": "Farm Plot",
+    "butchersshop": "Butcher's Shop", "tannersshop": "Tanner's Shop",
+    "clothiersshop": "Clothier's Shop", "leatherworks": "Leather Works",
 }
 
 
@@ -133,8 +145,26 @@ def resolve_building(dec, name: str):
     for bt, nm in dec.building_bt.items():
         if str(nm).strip().lower() == target:
             return bt, -1, -1, nm
-    raise LuaOpError(f"no building definition named '{key}'; "
-                     f"get one from get_building_def_list")
+    # Alphanumeric-normalized fallback (e.g. 'WoodFurnace', 'MetalsmithsForge', 'FarmersWorkshop')
+    norm_target = re.sub(r"[^a-z0-9]", "", target)
+    if norm_target:
+        for (bt, sub, cus), nm in dec.building.items():
+            if re.sub(r"[^a-z0-9]", "", str(nm).lower()) == norm_target:
+                return bt, sub, cus, nm
+        for (bt, sub), nm in dec.building_bts.items():
+            if re.sub(r"[^a-z0-9]", "", str(nm).lower()) == norm_target:
+                return bt, sub, -1, nm
+        for bt, nm in dec.building_bt.items():
+            if re.sub(r"[^a-z0-9]", "", str(nm).lower()) == norm_target:
+                return bt, -1, -1, nm
+    all_names = sorted({str(nm).strip() for nm in (
+        list(dec.building.values()) + list(dec.building_bts.values()) + list(dec.building_bt.values())
+    ) if str(nm).strip()})
+    matches = [nm for nm in all_names if target in nm.lower()][:5]
+    if not matches:
+        matches = difflib.get_close_matches(key, all_names, n=5, cutoff=0.35)
+    hint = f"closest matches: {', '.join(matches)}" if matches else "check building spelling"
+    raise LuaOpError(f"no building definition named '{key}'; {hint}")
 
 
 _FURNITURE_ITEM_TYPES = {
@@ -253,14 +283,54 @@ local function resolve_material(kind, want, nearx, neary, nearz)
     end
   end
   table.sort(cand, function(a, b) return a.d2 < b.d2 end)
+  if #cand == 0 then
+    print("FAIL material_found=0 for '" .. kind .. "' (need " .. tostring(want) .. "); craft/gather material or omit material to place a builder plan")
+    return nil
+  end
   local out = {{}}
   for i = 1, math.min(want, #cand) do out[#out + 1] = cand[i].it end
   return out
 end
+local function diagnose_tile(tx, ty, tz, btype)
+  local parts = {{}}
+  pcall(function()
+    local tt = dfhack.maps.getTileType(tx, ty, tz)
+    if tt ~= nil then
+      local a = df.tiletype.attrs[tt]
+      parts[#parts + 1] = "tile=" .. tostring(df.tiletype[tt] or tt) .. "(" .. tostring(df.tiletype_shape[a.shape] or a.shape) .. "/" .. tostring(df.tiletype_material[a.material] or a.material) .. ")"
+    end
+  end)
+  pcall(function()
+    local eb = dfhack.buildings.findAtTile(tx, ty, tz)
+    if eb ~= nil then parts[#parts + 1] = "existing_bld=#" .. tostring(eb.id) end
+  end)
+  pcall(function()
+    local blk = dfhack.maps.getTileBlock(tx, ty, tz)
+    if blk ~= nil then
+      local icnt = 0
+      for _, iid in ipairs(blk.items) do
+        local it = df.item.find(iid)
+        if it and it.pos.x == tx and it.pos.y == ty and it.pos.z == tz then icnt = icnt + 1 end
+      end
+      if icnt > 0 then parts[#parts + 1] = "items_on_tile=" .. tostring(icnt) end
+    end
+  end)
+  if btype == 8 then
+    pcall(function()
+      local function is_wall(dx, dy)
+        local ntt = dfhack.maps.getTileType(tx + dx, ty + dy, tz)
+        if ntt == nil then return false end
+        return df.tiletype.attrs[ntt].shape == df.tiletype_shape.WALL
+      end
+      parts[#parts + 1] = string.format("door_flanks(N=%s,S=%s,E=%s,W=%s)", tostring(is_wall(0, -1)), tostring(is_wall(0, 1)), tostring(is_wall(1, 0)), tostring(is_wall(-1, 0)))
+    end)
+  end
+  return table.concat(parts, " ")
+end
 local b = nil
--- If resolve_crafted_item printed FAIL and returned nil, abort before constructBuilding
+-- If resolve_crafted_item or resolve_material printed FAIL and returned nil, abort before constructBuilding
 local _extra = {{{dims}{extra}}}
-if {str(furn_spec is not None and not material and not abstract and not items).lower()} and _extra.items == nil then return end
+if {str((furn_spec is not None and not material and not abstract and not items) or bool(material)).lower()} and _extra.items == nil then return end
 -- Measured 2026-11-22 (hack/lua/dfhack/buildings.lua:485-541): constructBuilding returns
 -- `nil, "cannot place at this position"` / `nil, "could not construct the building"` - THE REASON IS
 -- THE SECOND RETURN VALUE, and my old code captured only the first, so every workshop refusal came
@@ -270,7 +340,7 @@ local ok, res, reason = pcall(function()
     x={int(x)}, y={int(y)}, z={z}, {dims}{extra}}}
   return r, why
 end)
-if not (ok and res) then print("FAIL construct: "..tostring(res).." reason="..tostring(reason)) return end
+if not (ok and res) then print("FAIL construct: "..tostring(res).." reason="..tostring(reason).." ["..diagnose_tile({int(x)}, {int(y)}, {z}, {bt}).."]") return end
 b = res
 if {str(bool(complete)).lower()} then
   local okc = pcall(function() dfhack.buildings.completeBuild(b) end)
@@ -627,7 +697,8 @@ async def configure_stockpile(dec, building_id: int, allow: list[str] | None = N
                               max_wheelbarrows: int | None = None,
                               max_barrels: int | None = None,
                               max_bins: int | None = None,
-                              allow_crash_categories: bool = False) -> dict:
+                              allow_crash_categories: bool = False,
+                              update_categories: bool = True) -> dict:
     """Set a stockpile's accepted categories by writing the game's own flags.
 
     Measured on this build (53.17-r1): building_stockpilest exposes `settings.flags`
@@ -651,42 +722,39 @@ async def configure_stockpile(dec, building_id: int, allow: list[str] | None = N
     # flag (size 0, or 1 from the fallback) leaves the screen walking an array the game never
     # filled. So they are refused here; the player's own screen is the safe path, and a measured
     # reference size is the only thing that unlocks the write.
-    CRASH_CATEGORIES = ("corpses", "refuse")
-    hit = [c for c in wanted if c in CRASH_CATEGORIES
-           and not any(int(v) > 0 for v in SETTINGS_ARRAYS.get(c, {}).values())]
-    if hit and not allow_crash_categories:
-        raise LuaOpError(
-            "categories %s are refused: opening Custom on a pile with these flags set "
-            "programmatically crashed this fort twice (crash_2026-11-22-20-02-29.txt and its "
-            "repeat on pile 3). Set them in-game (p -> pile -> Custom -> corpses/refuse), where "
-            "the game allocates the arrays its screen indexes, or pass "
-            "allow_crash_categories=true once /pile-arrays reports measured non-zero reference "
-            "sizes for them." % ", ".join(hit))
-    lines = []
-    for c in CATEGORIES:
-        on = (c in wanted and c not in denied)
-        lines.append("  s.flags.%s = %s" % (c, "true" if on else "false"))
-    writes = "\n".join(lines)
-    # Flags alone are NOT a stockpile: the game's custom-settings UI walks per-category
-    # material arrays that the UI allocates when a category is switched on. Setting a flag on
-    # top of a size-0 vector crashes the game when the player clicks Custom (measured:
-    # SIGSEGV at 0xa in render_things with overlay on the stack). So every category we switch
-    # on is initialised here, in the same pass - the repair tool is a rescue for piles built
-    # before this existed, never part of normal use.
-    alloc_lines = []
-    for c in CATEGORIES:
-        on = (c in wanted and c not in denied)
-        sizes = SETTINGS_ARRAYS.get(c, {})
-        if not on or not sizes:
-            continue
-        for field, n in sizes.items():
-            if n <= 0:
+    if update_categories:
+        CRASH_CATEGORIES = ("corpses", "refuse")
+        hit = [c for c in wanted if c in CRASH_CATEGORIES
+               and not any(int(v) > 0 for v in SETTINGS_ARRAYS.get(c, {}).values())]
+        if hit and not allow_crash_categories:
+            raise LuaOpError(
+                "categories %s are refused: opening Custom on a pile with these flags set "
+                "programmatically crashed this fort twice (crash_2026-11-22-20-02-29.txt and its "
+                "repeat on pile 3). Set them in-game (p -> pile -> Custom -> corpses/refuse), where "
+                "the game allocates the arrays its screen indexes, or pass "
+                "allow_crash_categories=true once /pile-arrays reports measured non-zero reference "
+                "sizes for them." % ", ".join(hit))
+        lines = []
+        for c in CATEGORIES:
+            on = (c in wanted and c not in denied)
+            lines.append("  s.flags.%s = %s" % (c, "true" if on else "false"))
+        writes = "\n".join(lines)
+        alloc_lines = []
+        for c in CATEGORIES:
+            on = (c in wanted and c not in denied)
+            sizes = SETTINGS_ARRAYS.get(c, {})
+            if not on or not sizes:
                 continue
-            alloc_lines.append(f"  if s.{c}.{field} ~= nil and #s.{c}.{field} < {n} then")
-            alloc_lines.append(f"    s.{c}.{field}:resize({n})")
-            alloc_lines.append(f"    for i = 0, {n - 1} do pcall(function() s.{c}.{field}[i] = 1 end) end")
-            alloc_lines.append("  end")
-    writes = writes + "\n" + "\n".join(alloc_lines)
+            for field, n in sizes.items():
+                if n <= 0:
+                    continue
+                alloc_lines.append(f"  if s.{c}.{field} ~= nil and #s.{c}.{field} < {n} then")
+                alloc_lines.append(f"    s.{c}.{field}:resize({n})")
+                alloc_lines.append(f"    for i = 0, {n - 1} do pcall(function() s.{c}.{field}[i] = 1 end) end")
+                alloc_lines.append("  end")
+        writes = writes + "\n" + "\n".join(alloc_lines)
+    else:
+        writes = ""
     # Measured: the container limits are NOT on the building - they are
     # b.storage.max_barrels / max_bins / max_wheelbarrows, and give/take links are
     # b.links.give_to_pile / take_from_pile / give_to_workshop / take_from_workshop.
@@ -1196,7 +1264,20 @@ local bld, err = dfhack.buildings.constructBuilding{
     type = __TYPE__, subtype = __SUB__, custom = __CUS__,
     pos = pos, width = W, height = H,
 }
-if not bld then print("ERR|constructBuilding refused: "..tostring(err)) return end
+if not bld then
+  local diag = ""
+  pcall(function()
+    local tt = dfhack.maps.getTileType(__X__, __Y__, __Z__)
+    if tt ~= nil then
+      local a = df.tiletype.attrs[tt]
+      diag = " tile=" .. tostring(df.tiletype[tt] or tt) .. "(" .. tostring(df.tiletype_shape[a.shape] or a.shape) .. "/" .. tostring(df.tiletype_material[a.material] or a.material) .. ")"
+    end
+    local eb = dfhack.buildings.findAtTile(__X__, __Y__, __Z__)
+    if eb ~= nil then diag = diag .. " existing_bld=#" .. tostring(eb.id) end
+  end)
+  print("ERR|constructBuilding refused: "..tostring(err)..diag)
+  return
+end
 local tiles = 0
 pcall(function() tiles = dfhack.buildings.countExtentTiles(bld) end)
 local area2 = (bld.x2 - bld.x1 + 1) * (bld.y2 - bld.y1 + 1)
@@ -1889,6 +1970,13 @@ async def trade_depot(action: str = "status",
     if anyone_can_trade is not None:
         payload["anyone_can_trade"] = bool(anyone_can_trade)
     return await call_module("trade_depot", payload)
+
+
+async def check_farm_soil(elev: int, x0: int, y0: int, x1: int, y1: int) -> dict:
+    """Inspect whether [x0..x1, y0..y1] at elev has soil or muddy tiles for a Farm Plot."""
+    return await call_module("check_farm_soil", {
+        "elev": int(elev), "x0": int(x0), "y0": int(y0), "x1": int(x1), "y1": int(y1),
+    })
 
 
 async def workshop_job(action: str = "list",

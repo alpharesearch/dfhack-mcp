@@ -2636,7 +2636,8 @@ class WorldModel:
 
     # ---- Progression ladder: how a player learns the game, evaluated live ----
     async def progress(self, e0: int | None = None, e1: int | None = None,
-                       max_tokens: int = DEFAULT_MAX_TOKENS) -> dict:
+                       max_tokens: int = DEFAULT_MAX_TOKENS,
+                       bookkeeper: dict | None = None) -> dict:
         if e0 is None or e1 is None:
             z_lo, z_hi = await self.fort_band()
             e0 = e0 if e0 is not None else z_lo - GAME_Z_OFFSET
@@ -2645,6 +2646,7 @@ class WorldModel:
         dec = await self._dec(gen)
         lv = await self.levels(e0, e1)
         facts = FortFacts(lv, await load_units(dec, gen, self._state), dec)
+        facts.bookkeeper = bookkeeper
         await self.annotate_depth(facts)        # depth >=2 floors: the tunnel truth
         # Zone kinds come from the game's own structures, which live in the layer ABOVE
         # this one (luaops imports worldmodel, not the reverse), so the host injects the
@@ -2655,6 +2657,30 @@ class WorldModel:
                 facts.zones = await self.zone_provider(dec)
             except Exception:
                 facts.zones = []
+        # #77: annotate meeting zones with indoors (no open_space directly above)
+        for z in facts.zones:
+            if "meeting" in str(z.get("type_name", "")).lower() and not z.get("marked_for_removal"):
+                try:
+                    ze = int(z.get("elev", -999))
+                    zx0, zx1 = int(z["x0"]), int(z["x1"])
+                    zy0, zy1 = int(z["y0"]), int(z["y1"])
+                    above_blks = await self.cache.blocks(ze + 1 + GAME_Z_OFFSET, ze + 2 + GAME_Z_OFFSET, gen)
+                    has_open = False
+                    for blk in above_blks:
+                        if int(blk.map_z) != ze + 1 + GAME_Z_OFFSET:
+                            continue
+                        if blk.map_x + 15 < zx0 or blk.map_x > zx1 or blk.map_y + 15 < zy0 or blk.map_y > zy1:
+                            continue
+                        for idx, tid in enumerate(blk.tiles):
+                            tx, ty = blk.map_x + (idx % 16), blk.map_y + (idx // 16)
+                            if zx0 <= tx <= zx1 and zy0 <= ty <= zy1 and dec.tile_class(int(tid)).name == "open":
+                                has_open = True
+                                break
+                        if has_open:
+                            break
+                    z["indoors"] = not has_open
+                except Exception:
+                    pass
         # One building pool for every rung path. The band census misses buildings outside the
         # surveyed band (measured: 9 Farm Plots at 41 read as no farm in the ladder, while
         # /observe - which already used the map-wide pool - read `farm` satisfied). Same
@@ -2666,6 +2692,33 @@ class WorldModel:
                 facts.built_names = [b["name"].lower() for b in _pool]
         except Exception as e:
             notes.append(f"map-wide building scan unavailable: {e}; rungs read the band census only")
+        # #75: check whether any built Farm Plot sits on furrowed/soil tiles
+        farm_blds = [b for b in facts.buildings if "farm plot" in b["name"].lower() or b["name"].lower() == "plot"]
+        if farm_blds:
+            try:
+                any_soil = False
+                for fb in farm_blds:
+                    fz = int(fb["elev"]) + GAME_Z_OFFSET
+                    blks = await self.cache.blocks(fz, fz + 1, gen)
+                    for blk in blks:
+                        if int(blk.map_z) != fz:
+                            continue
+                        if blk.map_x + 15 < fb["x0"] or blk.map_x > fb["x1"] or blk.map_y + 15 < fb["y0"] or blk.map_y > fb["y1"]:
+                            continue
+                        for idx, tid in enumerate(blk.tiles):
+                            tx, ty = blk.map_x + (idx % 16), blk.map_y + (idx // 16)
+                            if fb["x0"] <= tx <= fb["x1"] and fb["y0"] <= ty <= fb["y1"]:
+                                tc = dec.tile_class(int(tid))
+                                if tc.name == "furrowed" or "soil" in dec.tile.get(int(tid), "").lower():
+                                    any_soil = True
+                                    break
+                        if any_soil:
+                            break
+                    if any_soil:
+                        break
+                facts.farm_on_soil = any_soil
+            except Exception:
+                pass
         # Pile categories are only visible in the game's own structures, so the host injects
         # that reader too. No reader / failed read = NO DATA: the pile rungs stay open rather
         # than asserting a pile nobody measured.
@@ -2858,12 +2911,27 @@ class FortFacts:
         # meeting / dump / pen - lives only in z.type, read separately.
         self.zones: list[dict] = []
         self.piles: list[dict] = []   # id, extent, accepts, elev - straight from the game
+        self.farm_on_soil: bool | None = None
+        self.bookkeeper: dict | None = None
 
     def count_built(self, *keywords) -> int:
         return sum(1 for n in self.built_names if any(k in n for k in keywords))
 
     def built(self, *keywords) -> bool:
         return self.count_built(*keywords) > 0
+
+    def farm_built(self) -> bool:
+        if getattr(self, "farm_on_soil", None) is False:
+            return False
+        return self.built("farm plot", "plot")
+
+    def workshops_status(self) -> dict[str, bool]:
+        return {
+            "mechanic": self.built("mechanic"),
+            "stoneworker": self.built("stoneworker", "mason"),
+            "carpenter": self.built("carpenter"),
+            "jeweler": self.built("jeweler"),
+        }
 
     def pile_general(self, min_categories: int = 8,
                      exclude=("stone", "wood", "corpses", "refuse", "gems")) -> bool:
@@ -2911,9 +2979,12 @@ class FortFacts:
         # getattr, not self.zones: FortFacts is also built by stubs (tests, the observe
         # pool path) that never touch __init__, and an absent list is the same NO DATA
         # as an empty one - the rung stays open, it does not guess.
-        return any(k in str(z.get("type_name", "")).lower()
-                   and int(z.get("tiles", 0)) >= min_tiles
-                   and not z.get("marked_for_removal") for z in getattr(self, "zones", []))
+        for z in getattr(self, "zones", []):
+            if k in str(z.get("type_name", "")).lower() and int(z.get("tiles", 0)) >= min_tiles and not z.get("marked_for_removal"):
+                if k == "meeting" and z.get("indoors") is False:
+                    continue
+                return True
+        return False
 
 
 def fort_center(facts: FortFacts) -> tuple[int, int, int] | None:
@@ -3000,7 +3071,7 @@ _LADDER = [
      "p -> outside the entrance, 5x5+, Custom -> only corpses + refuse",
      "refuse inside the fort rots and miasma kills"),
     ("farm", "Farm plot (3x3 in a 5x5 soil room), plump helmets in ALL seasons",
-     lambda f: f.built("farm plot", "plot"), "b -> o -> f -> p, then click the plot and enable plump helmets in every season tab",
+     lambda f: f.farm_built(), "b -> o -> f -> p, then click the plot and enable plump helmets in every season tab",
      "a plot planted in one season idles 3/4 of the year"),
     ("wood", "Trees felled (3-5) and a wood stockpile near the entrance",
      lambda f: f.wood >= 1, "l -> designate 3-5 trees; p -> 5x3 wood pile outside",
@@ -3012,7 +3083,7 @@ _LADDER = [
      lambda f: f.built("pen", "pasture"), "z -> Pen/Pasture -> draw over grass -> assign animals",
      "draft animals starve away from grass"),
     ("workshops", "Mechanic's, Stoneworker's, Carpenter's, Jeweler's workshops",
-     lambda f: f.count_built("workshop") >= 3, "b -> o -> h (mechanic), t (stoneworker), p (carpenter), j (jeweler)",
+     lambda f: all(f.workshops_status().values()), "b -> o -> h (mechanic), t (stoneworker), p (carpenter), j (jeweler)",
      "each is 3x3 and needs 1 building material; keep material piles adjacent"),
     ("furniture", "2 tables + 2 chairs queued at the stoneworker/carpenter",
      lambda f: f.built("table") and f.built("chair"), "click the shop -> queue Table, Chair",
@@ -3053,14 +3124,25 @@ def progress_lines(facts: FortFacts, with_next: bool = True) -> list[str]:
         dug_note = (f" | transition-verified dug: {getattr(facts, 'dug_floors', 0)} floors, "
                     f"{getattr(facts, 'dug_stairs', 0)} stairs")
     lines = [f"LADDER (quickstart order) | pop {facts.pop}, soldiers {facts.soldiers}, "
-             f"hostile {facts.hostile} | food {facts.food}, drink {facts.drink}, "
+             f"hostile {facts.hostile} | pile/band stock: food {facts.food}, drink {facts.drink}, "
              f"wood {facts.wood}, stone {facts.stone}, metal {facts.metal} | "
              f"miners {facts.miners}, pending dig {facts.designations}",
              f"underground floors (depth>=2): {getattr(facts, 'underground_floors', 0)}{dug_note}"]
+    bk = getattr(facts, "bookkeeper", None)
+    if isinstance(bk, dict):
+        if bk.get("holder_name"):
+            lines.append(f"bookkeeper: {bk['holder_name']} (precision={bk.get('bookkeeper_settings', '?')}/4)")
+        else:
+            lines.append("bookkeeper: UNASSIGNED (stock numbers are approximate)")
     missing = []
     for rid, rung, done, keys, why in _LADDER:
         ok = done(facts)
-        lines.append(f"[{'x' if ok else ' '}] {rung}")
+        extra = ""
+        if not ok and rid == "workshops" and hasattr(facts, "workshops_status"):
+            miss_ws = [k for k, v in facts.workshops_status().items() if not v]
+            if miss_ws:
+                extra = f" (missing: {', '.join(miss_ws)})"
+        lines.append(f"[{'x' if ok else ' '}] {rung}{extra}")
         if not ok:
             missing.append((rid, rung, keys, why))
     if with_next and missing:

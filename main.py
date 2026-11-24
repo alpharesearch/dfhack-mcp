@@ -147,14 +147,18 @@ Known DFHack RPC quirks (learned the hard way, encoded into the tools below):
 """
 
 import asyncio
+import os
+import shlex
 import shutil
 import time
 from collections import Counter
 from contextlib import asynccontextmanager
 from typing import Any
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi_mcp import FastApiMCP
+from fastapi_mcp.transport.http import FastApiHttpSessionManager
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel, ConfigDict, Field
 from dfhack_client_python.dfhack_remote import (connect, close, ensure_connection, drop_connection,
                                                 connection_state, DFHackError, DFHackTransportError,
@@ -173,6 +177,8 @@ Coord, SingleBool, KeyboardEvent)
 import worldmodel as WM
 import luaops as LO
 import fortplan as FP
+
+MCP_STATELESS_HTTP = os.getenv("DFHACK_MCP_STATELESS_HTTP", "1").strip().lower() not in ("0", "false", "no")
 
 # SDL1.2 key codes (DF runs on SDL1): KeyboardEvent mirrors SDL_Event.key
 # (type, which, state, scancode, sym, mod, unicode). scancode is unused by SDL1.
@@ -590,6 +596,10 @@ async def get_status(detail: str = Query("brief", description="'brief' or 'full'
         if sig:
             out["worldSignature"] = {k: sig.get(k) for k in
                                      ("save", "world", "mode", "tiles", "year", "tick")}
+        world_loaded = bool(sig and sig.get("tiles") and sig.get("tiles") != "0x0x0")
+        out["world_loaded"] = world_loaded
+        out["ready"] = bool(out.get("connected") and world_loaded)
+        out["mcpStatelessHttp"] = MCP_STATELESS_HTTP
         out["reloads"] = world.reloads
         pending = world.take_reload()
         if pending:
@@ -610,6 +620,9 @@ async def get_status(detail: str = Query("brief", description="'brief' or 'full'
     except DFHackTransportError as e:
         out = dict(connection_state())
         out["connected"] = False
+        out["world_loaded"] = False
+        out["ready"] = False
+        out["mcpStatelessHttp"] = MCP_STATELESS_HTTP
         out["error"] = str(e)
     return out
 
@@ -765,6 +778,11 @@ async def run_command(request: RunCommandRequest):
     # dead socket; both arrived as unhandled exceptions (HTTP 500 + a stack trace in the
     # log). Report them as data so the caller can read the failure and move on.
     drain_replies()                                   # drop anything from an earlier call
+    if cmd_norm == "prioritize":
+        expanded: list[str] = []
+        for a in arguments:
+            expanded.extend(shlex.split(a) if any(ch.isspace() for ch in a) else [a])
+        arguments = expanded
     try:
         await RunCommand(input = CoreRunCommandRequest(command = command, arguments = arguments))
     except DFHackError as e:
@@ -778,8 +796,14 @@ async def run_command(request: RunCommandRequest):
         return {"command": command, "arguments": list(arguments), "success": False,
                 "error": f"transport: {e}", "hint": "the game died mid-command; the next "
                                                      "call reconnects by itself"}
+    output_text = "\n".join(drain_replies())
+    if cmd_norm == "prioritize" and "ignoring unknown job type" in output_text.lower():
+        return {"command": command, "arguments": list(arguments), "success": False,
+                "error": "prioritize ignored unknown job type(s)",
+                "output": output_text,
+                "hint": "Valid examples: Dig, CarveUpDownStaircase, ConstructBuilding, CustomReaction --reaction-name BREW_DRINK_FROM_PLANT (prioritize is on/off, no numeric level)"}
     return {"command": command, "arguments": list(arguments), "success": True,
-            "output": "\n".join(drain_replies()),
+            "output": output_text,
             "note": "RunCommand's reply body is EmptyMessage; DFHack's console text is "
                     "captured from RPC_REPLY_TEXT frames into 'output'"}
 
@@ -1168,17 +1192,18 @@ def _expand_dig_box(x0: int, y0: int, x1: int, y1: int, e0: int, e1: int | None 
 
 
 _SAFE_DIG_GLYPHS = {"#", "?", "B", "p"}
+_PROTECTED_DIG_DESIGNATIONS = {2, 3, 4, 5, 6}  # UP_DOWN_STAIR, CHANNEL, RAMP, DOWN_STAIR, UP_STAIR
 
 
 async def _filter_safe_dig_points(pts: list[list[int]]) -> tuple[list[list[int]], dict]:
-    """Filter out tiles that are not rock/fog (floors, stairs, ramps, buildings) or have water/aquifer."""
+    """Filter out tiles that are not rock/fog (floors, stairs, ramps, buildings), have water/aquifer, or already hold stair/channel/ramp designations."""
     if not pts:
         return [], {}
     by_z: dict[int, list[list[int]]] = {}
     for p in pts:
         by_z.setdefault(int(p[2]), []).append(p)
     kept: list[list[int]] = []
-    skipped = {"non_rock": 0, "building": 0, "water_or_aquifer": 0}
+    skipped = {"non_rock": 0, "building": 0, "water_or_aquifer": 0, "existing_stair_or_channel": 0}
     try:
         gen = await world._gen()
         dec = await world._dec(gen)
@@ -1195,6 +1220,7 @@ async def _filter_safe_dig_points(pts: list[list[int]]) -> tuple[list[list[int]]
         bld: set[tuple[int, int]] = set()
         live: dict[tuple[int, int], str] = {}
         fog: set[tuple[int, int]] = set()
+        des_map: dict[tuple[int, int], int] = {}
         for b in blocks:
             if int(b.map_z) != z:
                 continue
@@ -1207,10 +1233,16 @@ async def _filter_safe_dig_points(pts: list[list[int]]) -> tuple[list[list[int]]
                     fog.add((b.map_x + (i % 16), b.map_y + (i // 16)))
             for i, tid in enumerate(b.tiles):
                 live[(b.map_x + (i % 16), b.map_y + (i // 16))] = dec.tile_class(int(tid)).glyph
+            for i, dval in enumerate(b.tile_dig_designation):
+                if int(dval):
+                    des_map[(b.map_x + (i % 16), b.map_y + (i // 16))] = int(dval)
         for p in z_pts:
             x, y = int(p[0]), int(p[1])
             if (x, y) in bld:
                 skipped["building"] += 1
+                continue
+            if des_map.get((x, y), 0) in _PROTECTED_DIG_DESIGNATIONS:
+                skipped["existing_stair_or_channel"] += 1
                 continue
             rec = hz.get((x, y))
             if rec and (any(e >= elev for e in rec.get("aquifer", [])) or any(e >= elev for e in rec.get("water", {}))):
@@ -1303,6 +1335,7 @@ async def send_dig_command(request: SendDigCommandRequest):
     total_sent = 0
     boxes_applied = []
     skipped_summary: dict[str, int] = {}
+    sent_pts_for_verify: list[list[int]] = []
     for bx in boxes_in:
         b_des = str(bx.get("designation") or designation).upper()
         if b_des not in DIG_DESIGNATIONS:
@@ -1317,6 +1350,8 @@ async def send_dig_command(request: SendDigCommandRequest):
                 skipped_summary[k] = skipped_summary.get(k, 0) + v
         n_box = await _designate(b_des, pts) if pts else 0
         total_sent += n_box
+        if b_des != "NO_DIG" and n_box > 0:
+            sent_pts_for_verify.extend(pts)
         boxes_applied.append({
             "x0": int(bx["x0"]), "y0": int(bx["y0"]),
             "x1": int(bx["x1"]), "y1": int(bx["y1"]),
@@ -1335,17 +1370,49 @@ async def send_dig_command(request: SendDigCommandRequest):
             loc_pts, sk = await _filter_safe_dig_points(loc_pts)
             for k, v in sk.items():
                 skipped_summary[k] = skipped_summary.get(k, 0) + v
-        total_sent += await _designate(designation, loc_pts) if loc_pts else 0
+        n_loc = await _designate(designation, loc_pts) if loc_pts else 0
+        total_sent += n_loc
+        if designation != "NO_DIG" and n_loc > 0:
+            sent_pts_for_verify.extend(loc_pts)
 
     if not boxes_in and not body.get("locations"):
         return {"success": False,
                 "error": "provide 'box' ({x0,y0,x1,y1,elev}), 'boxes', 'stair_shaft', or 'locations' ([[x,y,z],...])"}
 
-    out_res = {"designation": designation, "tiles": total_sent, "success": True}
+    out_res: dict[str, Any] = {"designation": designation, "tiles": total_sent, "success": True}
     if boxes_applied:
         out_res["boxes_applied"] = boxes_applied
     if skipped_summary:
         out_res["skipped_tiles"] = skipped_summary
+        if skipped_summary.get("non_rock", 0) > 0:
+            out_res["warning"] = f"skipped {skipped_summary['non_rock']} already-dug/non-rock tile(s) in partially dug box (safe=True)"
+    if sent_pts_for_verify:
+        try:
+            world.cache.reset()
+            gen = await world._gen()
+            by_z_v: dict[int, set[tuple[int, int]]] = {}
+            for p in sent_pts_for_verify:
+                by_z_v.setdefault(int(p[2]), set()).add((int(p[0]), int(p[1])))
+            kept_after = 0
+            for zv, coords in by_z_v.items():
+                blks = await world.cache.blocks(zv, zv + 1, gen)
+                for blk in blks:
+                    if int(blk.map_z) != zv:
+                        continue
+                    for i, dval in enumerate(blk.tile_dig_designation):
+                        if int(dval) != 0 and (blk.map_x + (i % 16), blk.map_y + (i // 16)) in coords:
+                            kept_after += 1
+            cancelled_now = max(0, len(sent_pts_for_verify) - kept_after)
+            out_res["designated_after_write"] = kept_after
+            if cancelled_now > 0:
+                out_res["cancelled_immediately"] = cancelled_now
+                cancel_msg = (
+                    f"{cancelled_now} of {len(sent_pts_for_verify)} designation(s) were cancelled immediately "
+                    "(likely damp/aquifer tile or unreachable from fort)"
+                )
+                out_res["warning"] = (out_res["warning"] + "; " + cancel_msg) if "warning" in out_res else cancel_msg
+        except Exception:
+            pass
     return out_res
 
 @app.post("/get-block-list", operation_id="get_block_list")
@@ -1445,7 +1512,19 @@ async def fort_progress(e0: int = Query(-999, description="start game elevation;
     """Evaluate the Quickstart milestone ladder against the live fort (tunnel, stairs, stockpiles, farms, workshops, nobles, military) and return the next unsatisfied rung with actionable guidance."""
     e0 = None if e0 == -999 else e0
     e1 = None if e1 == -999 else e1
-    return await world.progress(e0, e1, max_tokens=max_tokens)
+    bk_info = None
+    try:
+        nb = await LO.manage_nobles(action="list")
+        for pos_row in nb.get("positions", []):
+            if str(pos_row.get("code", "")).upper() == "BOOKKEEPER":
+                bk_info = pos_row
+                break
+        if bk_info is not None:
+            bk_info = dict(bk_info)
+            bk_info["bookkeeper_settings"] = nb.get("bookkeeper_settings")
+    except Exception:
+        bk_info = None
+    return await world.progress(e0, e1, max_tokens=max_tokens, bookkeeper=bk_info)
 
 @app.get("/world-minimap", operation_id="world_minimap")
 async def world_minimap(all_levels: bool = Query(False, description="every z-level (heavy: ~120 MB of RPC replies)"),
@@ -1580,6 +1659,19 @@ async def place_building(request: PlaceBuildingRequest):
             gate_err = await _verify_footprint_ground(_e, _x0, _y0, _w, _h, label="building")
             if gate_err is not None:
                 return gate_err
+        if _bname in ("farm plot", "plot", "farmplot"):
+            try:
+                soil_info = await LO.check_farm_soil(_e, _x0, _y0, _x0 + _w - 1, _y0 + _h - 1)
+                if int(soil_info.get("plantable_tiles", 0)) < int(soil_info.get("total_tiles", 1)):
+                    return {
+                        "success": False,
+                        "error": f"farm plot at x{_x0}..{_x0+_w-1} y{_y0}..{_y0+_h-1} @elev{_e} has only {soil_info.get('plantable_tiles', 0)}/{soil_info.get('total_tiles', 1)} soil/muddy tiles (stone_tiles={soil_info.get('stone_tiles')})",
+                        "hint": "use fort_plan(action='find_site', kind='farm') to locate soil or dig-to-soil tiles, or pass check_site=false to override",
+                        "gate": "farm plot requires soil or muddy floor",
+                        "measured": soil_info,
+                    }
+            except Exception:
+                pass
     dec = await world._dec(await world._gen())
     try:
         # ANY multi-tile request goes through the game's own setSize path. Not just
@@ -2972,11 +3064,15 @@ async def configure_stockpile(request: ConfigureStockpileRequest, raw_request: R
         raw_body = await raw_request.json()
     except Exception:
         raw_body = {}
-    if isinstance(raw_body, dict) and not any(k in raw_body for k in ("allow", "deny", "all_categories")):
+    has_cat_keys = isinstance(raw_body, dict) and any(k in raw_body for k in ("allow", "deny", "all_categories"))
+    has_container_keys = isinstance(raw_body, dict) and any(
+        k in raw_body for k in ("max_wheelbarrows", "max_barrels", "max_bins")
+    )
+    if isinstance(raw_body, dict) and not has_cat_keys and not has_container_keys:
         return {"success": False,
                 "error": "say what to accept: allow=[...], deny=[...] (with all_categories=true), "
-                         "or all_categories=true. An empty request means TAKE NOTHING and is not "
-                         "sent.",
+                         "all_categories=true, or container limits (max_bins/max_barrels/max_wheelbarrows). "
+                         "An empty request means TAKE NOTHING and is not sent.",
                 "received_keys": sorted(raw_body.keys()) if isinstance(raw_body, dict) else [],
                 "known_keys": ["allow", "deny", "all_categories", "max_wheelbarrows",
                                "max_barrels", "max_bins", "building_id"],
@@ -2993,7 +3089,8 @@ async def configure_stockpile(request: ConfigureStockpileRequest, raw_request: R
             all_categories=bool(body.get("all_categories", False)),
             max_wheelbarrows=body.get("max_wheelbarrows"),
             max_barrels=body.get("max_barrels"), max_bins=body.get("max_bins"),
-            allow_crash_categories=bool(body.get("allow_crash_categories", False)))
+            allow_crash_categories=bool(body.get("allow_crash_categories", False)),
+            update_categories=has_cat_keys)
     except LO.LuaOpError as e:
         return {"success": False, "error": str(e)}
     # VERDICT BY READING THE GAME: the write's own reply is not evidence.
@@ -3007,7 +3104,9 @@ async def configure_stockpile(request: ConfigureStockpileRequest, raw_request: R
                 "error": "the pile reads produced NO DATA: the configuration is not proven",
                 "write_reply": write_note}
     return {"success": True, "verdict": "configured (verified against the live pile read)",
-            "building_id": bid, "accepts": row.get("accepts"), "write_reply": write_note}
+            "building_id": bid, "accepts": row.get("accepts"),
+            "max_bins": row.get("max_bins"), "max_barrels": row.get("max_barrels"),
+            "max_wheelbarrows": row.get("max_wheelbarrows"), "write_reply": write_note}
 
 
 @app.get("/survey", operation_id="survey")
@@ -3195,22 +3294,94 @@ async def create_zone(request: CreateZoneRequest):
                 pass
     try:
         dec = await world._dec(await world._gen())
+        existing_zones: list[dict] = []
+        try:
+            existing_zones = await LO.list_zones(dec)
+        except Exception:
+            existing_zones = []
         # Idempotency check (tool_missing.md #16): if an active zone already occupies
         # this exact footprint, return it instead of creating a duplicate zone.
-        try:
-            for zz in await LO.list_zones(dec):
-                if (not zz.get("marked_for_removal")
-                        and int(zz["x0"]) == x0 and int(zz["x1"]) == x1
-                        and int(zz["y0"]) == y0 and int(zz["y1"]) == y1
-                        and int(zz["elev"]) == e):
-                    return {"success": True, "already_exists": True,
-                            "building_id": int(zz["id"]), "kind": kind_str,
-                            "zone_type": zz.get("type_name"),
-                            "extent": f"{x0}..{x1},{y0}..{y1}",
-                            "rect_tiles": w * h}
-        except Exception:
-            pass
+        for zz in existing_zones:
+            if (not zz.get("marked_for_removal")
+                    and int(zz["x0"]) == x0 and int(zz["x1"]) == x1
+                    and int(zz["y0"]) == y0 and int(zz["y1"]) == y1
+                    and int(zz["elev"]) == e):
+                return {"success": True, "already_exists": True,
+                        "building_id": int(zz["id"]), "kind": kind_str,
+                        "zone_type": zz.get("type_name"),
+                        "extent": f"{x0}..{x1},{y0}..{y1}",
+                        "rect_tiles": w * h}
+        _ROOM_ZONE_KINDS = {
+            "office", "study", "bedroom", "dining", "dininghall",
+            "tomb", "meeting", "meetingarea", "tavern", "temple", "hospital", "guildhall",
+        }
+        _INDOOR_REQUIRED_KINDS = {
+            "office", "study", "bedroom", "dining", "dininghall",
+            "meeting", "meetingarea", "hospital", "temple", "tavern", "guildhall",
+        }
+        enclosure_info: dict[str, Any] | None = None
+        if kind_str in _ROOM_ZONE_KINDS:
+            # #85: refuse overlapping another active room zone (especially owned noble rooms)
+            if body.get("allow_overlap") is not True:
+                for zz in existing_zones:
+                    if zz.get("marked_for_removal") or int(zz.get("elev", -999)) != e:
+                        continue
+                    ztype = str(zz.get("type_name") or "").lower()
+                    if not any(rk in ztype for rk in ("office", "bedroom", "dining", "tomb", "meeting", "tavern", "temple", "hospital", "guild")):
+                        continue
+                    zx0, zx1 = int(zz["x0"]), int(zz["x1"])
+                    zy0, zy1 = int(zz["y0"]), int(zz["y1"])
+                    if not (x1 < zx0 or x0 > zx1 or y1 < zy0 or y0 > zy1):
+                        return {
+                            "success": False,
+                            "gate": "overlapping room zone",
+                            "error": (
+                                f"zone x{x0}..{x1} y{y0}..{y1} @elev{e} overlaps existing zone #{zz['id']} "
+                                f"({zz.get('type_name')} {zx0}..{zx1},{zy0}..{zy1})"
+                            ),
+                            "hint": "give each noble/room its own enclosed space separated by >=1 wall tile, or pass allow_overlap=true",
+                            "overlapping_zone": zz,
+                        }
+            # #77 & #86: check roof above (elev+1) and perimeter walls/ramps
+            open_above = 0
+            indoors = True
+            ramp_in_box = 0
+            perim_non_wall = None
+            try:
+                sv_above = await world.survey(e + 1, x0, y0, x1, y1)
+                open_above = int((sv_above.get("counts") or {}).get("open", 0))
+                indoors = (open_above == 0)
+            except Exception:
+                pass
+            if kind_str in _INDOOR_REQUIRED_KINDS and not indoors and body.get("check_site", True) is not False and body.get("allow_outdoors") is not True:
+                return {
+                    "success": False,
+                    "gate": "indoor room requires solid roof above",
+                    "error": f"{kind_str} zone x{x0}..{x1} y{y0}..{y1} @elev{e} has {open_above} open-air tiles above it (outdoors)",
+                    "hint": "dig underground under solid rock (e.g. elev <= surface - 2) or pass allow_outdoors=true to override",
+                    "open_above": open_above,
+                }
+            try:
+                sv_in = await world.survey(e, x0, y0, x1, y1)
+                ramp_in_box = int((sv_in.get("counts") or {}).get("ramp", 0))
+                sv_perim = await world.survey(e, x0 - 1, y0 - 1, x1 + 1, y1 + 1)
+                c_in = sv_in.get("counts") or {}
+                c_all = sv_perim.get("counts") or {}
+                wall_all = int(c_all.get("rock", 0)) + int(c_all.get("wall", 0)) + int(c_all.get("hidden", 0))
+                wall_in = int(c_in.get("rock", 0)) + int(c_in.get("wall", 0)) + int(c_in.get("hidden", 0))
+                perim_total = (w + 2) * (h + 2) - (w * h)
+                perim_non_wall = max(0, perim_total - max(0, wall_all - wall_in))
+            except Exception:
+                pass
+            enclosure_info = {
+                "indoors": indoors,
+                "open_above": open_above,
+                "ramp_tiles_in_box": ramp_in_box,
+                "perimeter_non_wall_tiles": perim_non_wall,
+            }
         res = await LO.create_zone(dec, str(body["kind"]), x0, y0, e, w, h)
+        if enclosure_info is not None:
+            res["enclosure"] = enclosure_info
         if body.get("owner_unit_id") is not None and res.get("building_id") is not None:
             own = await LO.assign_zone_owner(int(res["building_id"]), int(body["owner_unit_id"]))
             res["owner"] = {
@@ -3402,15 +3573,30 @@ async def building_status(building_id: int | None = Query(None, description="Spe
         except Exception:
             pass
         picks = obs_st.get("picks")
+        crew_health = res.get("crew_health") or {}
+        miners_wounded = int(crew_health.get("miners_wounded", 0))
+        miners_avail = int(crew_health.get("miners_available", miners))
+        cits_wounded = int(crew_health.get("citizens_wounded", 0))
         diagnostics["crew"] = {
             "dwarves": len(citizens),
             "miners": miners,
+            "miners_available": miners_avail,
+            "miners_wounded": miners_wounded,
+            "citizens_wounded": cits_wounded,
             "picks": picks,
             "masons": masons,
             "carpenters": carpenters,
         }
+        if crew_health.get("wounded_citizens"):
+            diagnostics["crew"]["wounded_citizens"] = crew_health["wounded_citizens"]
         if miners == 0:
             diagnostics["bottlenecks"].append("no miners assigned (MINE labor = 0)")
+        if miners > 0 and miners_wounded > 0 and miners_avail == 0:
+            diagnostics["bottlenecks"].append(f"ALL miners are wounded ({miners_wounded}/{miners}) — no healthy miner can dig")
+        elif miners_wounded > 0:
+            diagnostics["bottlenecks"].append(f"{miners_wounded} of {miners} miners are wounded")
+        if cits_wounded > 0:
+            diagnostics["bottlenecks"].append(f"{cits_wounded} of {len(citizens)} citizens are wounded")
         if picks is not None and picks < miners:
             diagnostics["bottlenecks"].append(f"pick shortage: {picks} pick(s) for {miners} designated miner(s)")
         for b in res.get("buildings", []):
@@ -3536,10 +3722,23 @@ async def workshop_job(request: WorkshopJobRequest):
 async def _run_dfhack_cmd(cmd: str, arguments: list[str] | None = None) -> dict:
     drain_replies()
     args = [str(a) for a in (arguments or [])]
+    if str(cmd).strip().lower() == "prioritize":
+        expanded: list[str] = []
+        for a in args:
+            expanded.extend(shlex.split(a) if any(ch.isspace() for ch in a) else [a])
+        args = expanded
     try:
         await RunCommand(input=CoreRunCommandRequest(command=cmd, arguments=args))
-        return {"command": f"{cmd} {' '.join(args)}".strip(), "ok": True,
-                "output": "\n".join(drain_replies()).strip()}
+        output_text = "\n".join(drain_replies()).strip()
+        if str(cmd).strip().lower() == "prioritize" and "ignoring unknown job type" in output_text.lower():
+            return {
+                "command": f"{cmd} {' '.join(args)}".strip(),
+                "ok": False,
+                "error": "prioritize ignored unknown job type(s)",
+                "output": output_text,
+                "hint": "Valid examples: Dig, CarveUpDownStaircase, ConstructBuilding, CustomReaction --reaction-name BREW_DRINK_FROM_PLANT",
+            }
+        return {"command": f"{cmd} {' '.join(args)}".strip(), "ok": True, "output": output_text}
     except (DFHackError, DFHackTransportError) as e:
         out = getattr(e, "replies", None) or drain_replies()
         return {"command": f"{cmd} {' '.join(args)}".strip(), "ok": False,
@@ -3675,6 +3874,19 @@ async def trade_depot(request: TradeDepotRequest):
             side=str(body.get("side", "fortress")),
             selected=bool(body.get("selected", True)),
         )
+        if str(body.get("action", "status")).lower() == "status" and res.get("accessible") is False and res.get("x0") is not None:
+            try:
+                cx = (int(res["x0"]) + int(res["x1"])) // 2
+                cy = (int(res["y0"]) + int(res["y1"])) // 2
+                ce = int(res["elev"])
+                wp = await world.wagon_path(cx, cy, ce)
+                res["wagon_access_check"] = wp
+                if wp.get("passable"):
+                    res["accessibility_note"] = "wagon_path to map edge is clear; DF updates depot.accessible when a caravan/map path check ticks or if depot is on surface"
+                else:
+                    res["accessibility_note"] = f"no 3-wide wagon path from ({cx},{cy},elev {ce}) to map edge: {wp.get('why') or wp.get('blocked_by') or 'blocked'}"
+            except Exception:
+                pass
         return {"success": True, **res}
     except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
         return {"success": False, "error": str(e)}
@@ -4077,7 +4289,57 @@ async def fort_plan(request: FortPlanRequest):
         return {"success": False, "error": str(e)}
 
 
-mcp = FastApiMCP(
+class StatelessFastApiHttpSessionManager(FastApiHttpSessionManager):
+    """StreamableHTTP session manager with stateless=True so server restarts do not invalidate client mcp-session-id headers."""
+
+    async def _ensure_session_manager_started(self) -> None:
+        if self._manager_started:
+            return
+        async with self._startup_lock:
+            if self._manager_started:
+                return
+            self._session_manager = StreamableHTTPSessionManager(
+                app=self.mcp_server,
+                event_store=self.event_store,
+                json_response=self.json_response,
+                stateless=True,
+                security_settings=self.security_settings,
+            )
+
+            async def run_session_manager():
+                try:
+                    async with self._session_manager.run():
+                        await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    raise
+
+            self._manager_task = asyncio.create_task(run_session_manager())
+            self._manager_started = True
+            await asyncio.sleep(0.1)
+
+
+class ResilientFastApiMCP(FastApiMCP):
+    """FastApiMCP subclass using StatelessFastApiHttpSessionManager when DFHACK_MCP_STATELESS_HTTP is enabled."""
+
+    def mount_http(self, router=None, mount_path: str = "/mcp") -> None:
+        if not MCP_STATELESS_HTTP:
+            return super().mount_http(router=router, mount_path=mount_path)
+        if not mount_path.startswith("/"):
+            mount_path = f"/{mount_path}"
+        if mount_path.endswith("/"):
+            mount_path = mount_path[:-1]
+        if not router:
+            router = self.fastapi
+        http_transport = StatelessFastApiHttpSessionManager(mcp_server=self.server)
+        dependencies = self._auth_config.dependencies if self._auth_config else None
+        self._register_mcp_endpoints_http(router, http_transport, mount_path, dependencies)
+        self._setup_auth()
+        self._http_transport = http_transport
+        if hasattr(router, "prefix"):
+            self.fastapi.include_router(router)
+
+
+mcp = ResilientFastApiMCP(
     app,
     name="Dwarf Fortress MCP Server",
     description="A MCP server that uses the dfhack_client_python package to connect to a locally running Dwarf Fortress game through DFHack's RPC connection.",

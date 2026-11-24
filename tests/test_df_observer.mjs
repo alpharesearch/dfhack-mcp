@@ -2435,6 +2435,29 @@ test('the filter reuses one session and can never leak chats', () => {
   assert(/const rows = await controller\.list\(\{\}, this\.abort\.signal\)/.test(index),
          "the cwd comes from the documented SessionSummary rows (agents do not expose the header)")
 })
+
+test('water_supply requires a WaterSource zone or Well/Cistern building, not raw water_tiles (#67)', () => {
+  const m = freshModel()
+  const well = m.todos.find((t) => t.accept?.kind === 'water_supply')
+  assert.ok(well, 'seeded water_supply todo exists')
+  m.ingestFast({
+    ...m.lastFast,
+    facts: { ...(m.lastFast?.facts ?? {}), water_tiles: 1030 },
+    buildings: [],
+    zones: [],
+  })
+  m.evaluate(m.cfg)
+  assert.notEqual(well.state, 'done', 'raw water_tiles=1030 alone must NOT mark water_supply done')
+
+  m.ingestFast({
+    ...m.lastFast,
+    facts: { ...(m.lastFast?.facts ?? {}), water_tiles: 0 },
+    buildings: [{ name: 'Well', count: 1 }],
+    zones: [],
+  })
+  m.evaluate(m.cfg)
+  assert.equal(well.state, 'done', 'a Well building marks water_supply done')
+})
 for (const [name, fn] of queue) {
   try {
     const out = await fn()

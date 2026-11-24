@@ -500,6 +500,91 @@ def test_place_building_uses_crafted_furniture_item_by_default():
     assert 'resolve_material("log"' in captured[1]
 
 
+def test_wave1_lua_wheelbarrow_cancel_and_tasks():
+    lua_src = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
+    # #71: 0-based loop directly on itemdefs.tools (never i - 1)
+    assert "for i = 0, #df.global.world.raws.itemdefs.tools - 1 do" in lua_src
+    assert "tool_sub = i - 1" not in lua_src
+    assert "items.WHEELBARROW = wheelbarrows" in lua_src
+    # #95: capture saved_id before removeJob(j)
+    assert "local saved_id = tonumber(j.id)" in lua_src
+    assert "job_id = saved_id" in lua_src
+    # #79: missing early-game workshop tasks
+    for task_key in ("cloth =", "thread =", "process_plants =", "charcoal =", "weapon_rack =", "armor_stand =", "splint =", "crutch =", "training_weapon ="):
+        assert task_key in lua_src, f"missing task {task_key}"
+    # #75: farm soil helper
+    assert "function OPS.check_farm_soil" in lua_src
+
+
+def test_wave1_building_aliases_material_guard_and_container_stockpile():
+    import asyncio
+    # #74: CamelCase aliases + normalized fallback + closest-match hint
+    for alias in ("TradeDepot", "trade depot", "Still", "Chair", "Bed", "Stockpile", "Zone"):
+        bt, sub, cus, nm = LO.resolve_building(FakeDec(), alias)
+        assert bt >= 0 and nm
+    try:
+        LO.resolve_building(FakeDec(), "TradeDepo")
+        assert False, "expected LuaOpError"
+    except LO.LuaOpError as e:
+        msg = str(e)
+        assert "get_building_def_list" not in msg
+        assert "closest matches:" in msg and "Trade Depot" in msg
+
+    # #70 & #89: material=0 guard and container-only configure_stockpile
+    captured = []
+
+    async def fake_lua(expr, settle=0.0):
+        captured.append(expr)
+        if "STOCKPILE" in expr:
+            return "OK id=1 | after: food=true | arrays: "
+        return "OK building='Chair' bt=0 type=building_chairst id=101 rect=10..10,10..10"
+
+    real = LO._lua
+    LO._lua = fake_lua
+    try:
+        asyncio.run(LO.place_building(FakeDec(), "Still", 10, 10, 36, material="boulder", count=1))
+        asyncio.run(LO.configure_stockpile(FakeDec(), 1, max_bins=4, max_barrels=4, update_categories=False))
+    finally:
+        LO._lua = real
+    assert "FAIL material_found=0" in captured[0]
+    assert "s.flags." not in captured[1]
+    assert "b.storage.max_bins = 4" in captured[1]
+
+
+def test_wave3_stateless_mcp_http_survives_stale_session_id():
+    from fastapi.testclient import TestClient
+    import main as M
+    assert M.MCP_STATELESS_HTTP is True
+    with TestClient(M.app) as client:
+        r_init = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "1.0"},
+                },
+            },
+            headers={"Accept": "application/json, text/event-stream"},
+        )
+        assert r_init.status_code == 200, f"init failed: {r_init.status_code} {r_init.text}"
+        # Simulate a client presenting a stale mcp-session-id from a previous server process
+        r_stale = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "mcp-session-id": "stale-session-id-from-previous-process",
+            },
+        )
+        assert r_stale.status_code == 200, f"stale session failed: {r_stale.status_code} {r_stale.text}"
+        body = r_stale.json()
+        assert "result" in body and len(body["result"].get("tools", [])) <= 32
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

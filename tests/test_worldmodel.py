@@ -506,8 +506,10 @@ def test_configure_stockpile_refuses_a_body_that_says_nothing_and_verifies_the_w
     main = pathlib.Path("main.py").read_text()
     i = main.index('@app.post("/configure-stockpile"')
     seg = main[i:main.index("@app.", i + 30)]
-    assert 'not any(k in raw_body for k in ("allow", "deny", "all_categories"))' in seg, \
-        "an empty/unknown body is refused against the RAW request, not translated into take-nothing"
+    assert '("allow", "deny", "all_categories")' in seg \
+        and '("max_wheelbarrows", "max_barrels", "max_bins")' in seg \
+        and 'not has_cat_keys and not has_container_keys' in seg, \
+        "an empty/unknown body is refused against the RAW request, while container-only updates are allowed (#89)"
     assert '"verdict": "UNVERIFIED"' in seg and "list_stockpiles" in seg, \
         "the answer is the read-back verdict against the live pile read"
     # the repair tool's Lua must not contain the literal two-character sequence backslash-n
@@ -1376,6 +1378,57 @@ def test_dfhack_automation_enforces_safe_allowlist_and_presets():
         assert ("enable", ("seedwatch",)) in ran
         assert ("enable", ("suspendmanager",)) in ran
         assert ("ban-cooking", ("seeds",)) in ran
+    finally:
+        M.RunCommand = real_rc
+        M.drain_replies = real_drain
+
+
+def test_wave3_ladder_farm_soil_meeting_indoors_and_workshops():
+    f = WM.FortFacts.__new__(WM.FortFacts)
+    f.built_names = ["farm plot", "carpenter's workshop", "stoneworker's workshop"]
+    f.zones = [{"type_name": "Meeting", "tiles": 25, "marked_for_removal": False, "indoors": False}]
+    f.farm_on_soil = False
+    assert f.farm_built() is False, "dead stone farm plot must not satisfy farm rung"
+    f.farm_on_soil = True
+    assert f.farm_built() is True
+    assert f.zone_built("meeting", 25) is False, "outdoor meeting zone must not satisfy meeting rung"
+    f.zones[0]["indoors"] = True
+    assert f.zone_built("meeting", 25) is True
+    ws = f.workshops_status()
+    assert ws["carpenter"] is True and ws["stoneworker"] is True
+    assert ws["mechanic"] is False and ws["jeweler"] is False
+
+
+def test_wave1_prioritize_unknown_job_fails_and_splits_reaction_args():
+    import asyncio
+    import main as M
+
+    class Req:
+        def __init__(self, d):
+            self._d = d
+        def model_dump(self, exclude_none=True):
+            return dict(self._d)
+
+    real_rc = M.RunCommand
+    real_drain = M.drain_replies
+    seen_args = []
+    replies = []
+
+    async def fake_rc(input):
+        seen_args.append((input.command, list(input.arguments)))
+        if input.arguments == ["Mine"]:
+            replies.append('Ignoring unknown job type: "Mine"')
+        else:
+            replies.append("Prioritized 2 jobs.")
+
+    M.RunCommand = fake_rc
+    M.drain_replies = lambda: [replies.pop(0)] if replies else []
+    try:
+        bad = asyncio.run(M.run_command({"command": "prioritize", "arguments": ["Mine"]}))
+        assert bad["success"] is False, f"unknown prioritize job must fail: {bad}"
+        good = asyncio.run(M.run_command({"command": "prioritize", "arguments": ["CustomReaction --reaction-name BREW_DRINK_FROM_PLANT"]}))
+        assert good["success"] is True
+        assert seen_args[-1] == ("prioritize", ["CustomReaction", "--reaction-name", "BREW_DRINK_FROM_PLANT"])
     finally:
         M.RunCommand = real_rc
         M.drain_replies = real_drain

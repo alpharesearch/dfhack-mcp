@@ -4,7 +4,7 @@
 --@ module = true
 
 local M = {}
-M.VERSION = "2026.11.24-v1"
+M.VERSION = "2026.11.24-v2"
 M.GAME_Z_OFFSET = 129
 
 local ok_json, df_json = pcall(require, "json")
@@ -274,11 +274,53 @@ function OPS.building_status(args)
       end
     end
   end)
+  local crew_health = {
+    citizens_total = 0,
+    citizens_wounded = 0,
+    miners_total = 0,
+    miners_wounded = 0,
+    miners_available = 0,
+    wounded_citizens = {},
+  }
+  pcall(function()
+    for _, u in ipairs(df.global.world.units.active) do
+      local alive, cit = false, false
+      pcall(function() alive = dfhack.units.isAlive(u) end)
+      pcall(function() cit = dfhack.units.isCitizen(u) end)
+      if alive and cit then
+        crew_health.citizens_total = crew_health.citizens_total + 1
+        local wnd = 0
+        pcall(function() wnd = #u.body.wounds end)
+        local is_miner = false
+        pcall(function() is_miner = (u.status.labors.MINE == true) end)
+        if is_miner then crew_health.miners_total = crew_health.miners_total + 1 end
+        if wnd > 0 then
+          crew_health.citizens_wounded = crew_health.citizens_wounded + 1
+          if is_miner then crew_health.miners_wounded = crew_health.miners_wounded + 1 end
+          if #crew_health.wounded_citizens < 10 then
+            local nm = "?"
+            pcall(function() nm = dfhack.units.getReadableName(u) or "?" end)
+            crew_health.wounded_citizens[#crew_health.wounded_citizens + 1] = {
+              unit_id = tonumber(u.id),
+              name = nm,
+              wounds = wnd,
+              is_miner = is_miner,
+              elev = tonumber(u.pos.z) - M.GAME_Z_OFFSET,
+            }
+          end
+        elseif is_miner then
+          crew_health.miners_available = crew_health.miners_available + 1
+        end
+      end
+    end
+  end)
+
   return {
     count = #rows,
     only_incomplete = only_incomplete,
     buildings = rows,
     material_demands = demands,
+    crew_health = crew_health,
   }
 end
 
@@ -317,6 +359,70 @@ function OPS.check_pasture_grass(args)
     bare_or_non_grass_tiles = bare_floor,
     hidden_tiles = hidden,
   }
+end
+
+-- Helper: inspect whether tiles in a rectangle are soil or muddy (plantable for Farm Plots)
+local function inspect_farm_ground(x0, y0, x1, y1, z)
+  local total, soil_tiles, muddy_tiles, stone_tiles, plantable_tiles = 0, 0, 0, 0, 0
+  local SOIL_MATS = {
+    SOIL = true, GRASS_LIGHT = true, GRASS_DARK = true,
+    GRASS_DRY = true, GRASS_DEAD = true, PLANT = true, ROOT = true, MUD = true,
+  }
+  for y = y0, y1 do
+    for x = x0, x1 do
+      total = total + 1
+      local tt = dfhack.maps.getTileType(x, y, z)
+      local is_soil, is_mud = false, false
+      if tt ~= nil then
+        local mname = ""
+        pcall(function()
+          local mat = df.tiletype.attrs[tt].material
+          mname = tostring(df.tiletype_material[mat] or "")
+        end)
+        if SOIL_MATS[mname] then is_soil = true end
+      end
+      if not is_soil then
+        pcall(function()
+          local blk = dfhack.maps.getTileBlock(x, y, z)
+          if blk ~= nil and blk.block_events ~= nil then
+            local lx, ly = x % 16, y % 16
+            for _, ev in ipairs(blk.block_events) do
+              if df.block_square_event_material_spatterst:is_instance(ev) then
+                if ev.mat_type == 12 and ev.amount[lx][ly] > 0 then
+                  is_mud = true
+                  break
+                end
+              end
+            end
+          end
+        end)
+      end
+      if is_soil then
+        soil_tiles = soil_tiles + 1
+        plantable_tiles = plantable_tiles + 1
+      elseif is_mud then
+        muddy_tiles = muddy_tiles + 1
+        plantable_tiles = plantable_tiles + 1
+      else
+        stone_tiles = stone_tiles + 1
+      end
+    end
+  end
+  return {
+    total_tiles = total,
+    soil_tiles = soil_tiles,
+    muddy_tiles = muddy_tiles,
+    stone_tiles = stone_tiles,
+    plantable_tiles = plantable_tiles,
+    plantable = (plantable_tiles > 0),
+  }
+end
+
+function OPS.check_farm_soil(args)
+  local x0 = tonumber(args.x0); local y0 = tonumber(args.y0)
+  local x1 = tonumber(args.x1); local y1 = tonumber(args.y1)
+  local elev = tonumber(args.elev)
+  return inspect_farm_ground(x0, y0, x1, y1, elev + M.GAME_Z_OFFSET)
 end
 
 -- 4. configure_farmplot: read/set seasonal crops on a farm plot (solves tool_missing.md #6)
@@ -384,7 +490,8 @@ function OPS.configure_farmplot(args)
     end
     season_crops[s_names[s_idx]] = { plant_index = pid_num, plant_id = pname }
   end
-  return {
+  local ground = inspect_farm_ground(tonumber(b.x1), tonumber(b.y1), tonumber(b.x2), tonumber(b.y2), tonumber(b.z))
+  local out = {
     building_id = tonumber(b.id),
     x0 = tonumber(b.x1),
     x1 = tonumber(b.x2),
@@ -396,7 +503,14 @@ function OPS.configure_farmplot(args)
     seasons_updated = seasons_changed,
     seasons = season_crops,
     available_crops = available_crops,
+    ground = ground,
+    soil_tiles = ground.soil_tiles,
+    plantable = ground.plantable,
   }
+  if not ground.plantable then
+    out.warning = "UNPLANTABLE: 0 soil/muddy tiles under this farm plot (stone_tiles=" .. tostring(ground.stone_tiles) .. ")"
+  end
+  return out
 end
 
 local function unit_readable_name(u)
@@ -1063,6 +1177,8 @@ function OPS.alerts_and_wellbeing(_args)
   local citizen_issues = {}
   local hostiles = {}
   local unassigned_grazers = 0
+  local citizen_elevs = {}
+  local non_tame_creatures = {}
 
   for _, u in ipairs(df.global.world.units.active) do
     local alive = false
@@ -1072,6 +1188,8 @@ function OPS.alerts_and_wellbeing(_args)
       pcall(function() cit = dfhack.units.isCitizen(u) end)
       if cit then
         citizens = citizens + 1
+        local ue = tonumber(u.pos.z) - M.GAME_Z_OFFSET
+        citizen_elevs[ue] = true
         local th, hu, sl, st, md, wnd = 0, 0, 0, 0, -1, 0
         pcall(function() th = tonumber(u.counters2.thirst_timer) or 0 end)
         pcall(function() hu = tonumber(u.counters2.hunger_timer) or 0 end)
@@ -1098,6 +1216,9 @@ function OPS.alerts_and_wellbeing(_args)
           citizen_issues[#citizen_issues + 1] = {
             unit_id = tonumber(u.id),
             name = unit_readable_name(u),
+            x = tonumber(u.pos.x),
+            y = tonumber(u.pos.y),
+            elev = ue,
             issues = flags,
           }
         end
@@ -1121,23 +1242,50 @@ function OPS.alerts_and_wellbeing(_args)
           end
         else
           local inv = false
+          local merch_or_dip = false
           pcall(function()
             inv = (u.flags1.active_invader == true) or (u.flags1.marauder == true)
                or (u.flags1.invader_origin == true) or (u.flags2.visitor_uninvited == true)
+            merch_or_dip = (u.flags1.merchant == true) or (u.flags1.diplomat == true)
+               or (u.flags1.forest == true)
           end)
+          local sp = "?"
+          pcall(function() sp = tostring(dfhack.units.getRaceName(u) or "?") end)
+          local ue = tonumber(u.pos.z) - M.GAME_Z_OFFSET
           if inv and #hostiles < 15 then
             hostiles[#hostiles + 1] = {
               unit_id = tonumber(u.id),
-              species = tostring(dfhack.units.getRaceName(u)),
+              species = sp,
               x = tonumber(u.pos.x),
               y = tonumber(u.pos.y),
-              elev = tonumber(u.pos.z) - M.GAME_Z_OFFSET,
+              elev = ue,
             }
+          elseif not merch_or_dip then
+            non_tame_creatures[#non_tame_creatures + 1] = { species = sp, elev = ue }
           end
         end
       end
     end
   end
+
+  local wildlife_counts = {}
+  for _, c in ipairs(non_tame_creatures) do
+    if citizen_elevs[c.elev] or citizen_elevs[c.elev - 1] or citizen_elevs[c.elev + 1] then
+      local key = tostring(c.elev) .. "|" .. c.species
+      if not wildlife_counts[key] then
+        wildlife_counts[key] = { elev = c.elev, species = c.species, count = 0 }
+      end
+      wildlife_counts[key].count = wildlife_counts[key].count + 1
+    end
+  end
+  local wildlife_near_citizens = {}
+  for _, row in pairs(wildlife_counts) do
+    wildlife_near_citizens[#wildlife_near_citizens + 1] = row
+  end
+  table.sort(wildlife_near_citizens, function(a, b)
+    if a.count ~= b.count then return a.count > b.count end
+    return a.elev < b.elev
+  end)
 
   if #hostiles > 0 then
     alerts[#alerts + 1] = {
@@ -1172,12 +1320,27 @@ function OPS.alerts_and_wellbeing(_args)
     }
   end
 
+  if #wildlife_near_citizens > 0 then
+    local top_w = {}
+    for i = 1, math.min(5, #wildlife_near_citizens) do
+      local w = wildlife_near_citizens[i]
+      top_w[#top_w + 1] = tostring(w.count) .. " " .. tostring(w.species) .. "@elev" .. tostring(w.elev)
+    end
+    alerts[#alerts + 1] = {
+      kind = "wildlife_on_work_level",
+      severity = "warning",
+      detail = "Wild/non-tame creatures near citizen elevations: " .. table.concat(top_w, ", "),
+      suggested_action = "wall off caverns or draft a squad",
+    }
+  end
+
   return {
     alerts_count = #alerts,
     alerts = alerts,
     popups_open = popup_count,
     caravans_present = caravan_count,
     hostiles = hostiles,
+    wildlife_near_citizens = wildlife_near_citizens,
     unassigned_grazers = unassigned_grazers,
     wellbeing = {
       citizens = citizens,
@@ -1497,9 +1660,12 @@ function OPS.trade_depot(args)
     local function summarize_side(s_idx)
       local list = {}
       local total_selected_val = 0
+      local total_items = 0
+      local cap = math.max(40, math.min(200, max_items))
       pcall(function()
         local goods = tr.good[s_idx]
         local flags = tr.goodflag[s_idx]
+        total_items = #goods
         for i = 0, #goods - 1 do
           local it = goods[i]
           local gf = flags[i]
@@ -1507,11 +1673,14 @@ function OPS.trade_depot(args)
           pcall(function() val = tonumber(dfhack.items.getValue(it)) or 0 end)
           local desc = ""
           pcall(function() desc = tostring(dfhack.items.getDescription(it, 0) or "") end)
+          local itype = tostring(df.item_type[it:getType()] or it:getType())
           if gf.selected then total_selected_val = total_selected_val + val end
-          if #list < 40 or gf.selected then
+          local match_filter = (filter == nil) or (desc:lower():find(filter, 1, true) ~= nil) or (itype:lower():find(filter, 1, true) ~= nil)
+          if (match_filter and #list < cap) or gf.selected then
             list[#list + 1] = {
               index = i,
               item_id = tonumber(it.id),
+              type = itype,
               description = desc,
               value = val,
               selected = (gf.selected == true),
@@ -1520,7 +1689,7 @@ function OPS.trade_depot(args)
           end
         end
       end)
-      return { items = list, selected_value = total_selected_val }
+      return { items = list, shown_items = #list, total_items = total_items, selected_value = total_selected_val }
     end
     return {
       action = action,
@@ -2320,6 +2489,7 @@ function OPS.workshop_job(args)
     local vec_names = {
       "CHAIR", "TABLE", "BED", "DOOR", "CABINET", "BOX", "COFFIN",
       "BARREL", "BIN", "BUCKET", "TRAPPARTS", "WOOD", "BOULDER",
+      "CLOTH", "ARMORSTAND", "WEAPONRACK", "SPLINT", "CRUTCH",
     }
     for _, vn in ipairs(vec_names) do
       local cnt = 0
@@ -2343,24 +2513,44 @@ function OPS.workshop_job(args)
       end)
       items[vn] = cnt
     end
-    local pots = 0
+    local pots, wheelbarrows = 0, 0
     pcall(function()
       for _, it in ipairs(df.global.world.items.other.TOOL) do
         if is_free_item(it) then
           local sid = ""
           pcall(function() sid = tostring(it.subtype.id or "") end)
-          if sid == "ITEM_TOOL_LARGE_POT" then pots = pots + 1 end
+          if sid == "ITEM_TOOL_LARGE_POT" then
+            pots = pots + 1
+          elseif sid == "ITEM_TOOL_WHEELBARROW" then
+            wheelbarrows = wheelbarrows + 1
+          end
         end
       end
     end)
     items.LARGE_POT = pots
+    items.WHEELBARROW = wheelbarrows
+    local charcoal = 0
+    pcall(function()
+      for _, it in ipairs(df.global.world.items.other.BAR) do
+        if is_free_item(it) then
+          local d = ""
+          pcall(function() d = tostring(dfhack.items.getDescription(it, 0) or ""):lower() end)
+          if d:find("charcoal", 1, true) then charcoal = charcoal + 1 end
+        end
+      end
+    end)
+    items.CHARCOAL = charcoal
     local buildings = {}
-    for _, bn in ipairs({ "CHAIR", "TABLE", "BED", "DOOR", "WORKSHOP_ANY", "FARM_PLOT" }) do
+    for _, bn in ipairs({ "CHAIR", "TABLE", "BED", "DOOR", "WORKSHOP_ANY", "FURNACE_ANY", "FARM_PLOT" }) do
       local cnt = 0
       pcall(function() cnt = #df.global.world.buildings.other[bn] end)
       buildings[bn] = cnt
     end
-    return { items = items, buildings = buildings }
+    return {
+      scope = "in_play_item_scan (free items; DRINK/FOOD/SEEDS include contained stack sizes)",
+      items = items,
+      buildings = buildings,
+    }
   end
 
   local function summarize_ws_jobs(ws)
@@ -2393,28 +2583,53 @@ function OPS.workshop_job(args)
     return jobs
   end
 
-  local function list_workshops()
+  local function get_shop_type(ws)
+    local wtype = "?"
+    pcall(function()
+      if df.building_furnacest:is_instance(ws) then
+        wtype = tostring(df.furnace_type[ws:getSubtype()] or ws:getSubtype())
+      else
+        wtype = tostring(df.workshop_type[ws:getSubtype()] or ws:getSubtype())
+      end
+    end)
+    return wtype
+  end
+
+  local function iter_all_shops()
+    local all = {}
+    for _, vec_name in ipairs({ "WORKSHOP_ANY", "FURNACE_ANY" }) do
+      pcall(function()
+        for _, ws in ipairs(df.global.world.buildings.other[vec_name]) do
+          all[#all + 1] = ws
+        end
+      end)
+    end
+    return all
+  end
+
+  local function list_workshops(filter_bid)
     local out = {}
-    for _, ws in ipairs(df.global.world.buildings.other.WORKSHOP_ANY) do
-      local wtype = "?"
-      pcall(function() wtype = tostring(df.workshop_type[ws:getSubtype()] or ws:getSubtype()) end)
-      local wname = wtype
-      pcall(function() wname = tostring(dfhack.buildings.getName(ws) or wtype) end)
-      local stage, max_stage = 0, 0
-      pcall(function() stage = ws:getBuildStage() end)
-      pcall(function() max_stage = ws:getMaxBuildStage() end)
-      local jobs = summarize_ws_jobs(ws)
-      out[#out + 1] = {
-        building_id = tonumber(ws.id),
-        name = wname,
-        workshop_type = wtype,
-        x = tonumber(ws.centerx),
-        y = tonumber(ws.centery),
-        elev = tonumber(ws.z) - M.GAME_Z_OFFSET,
-        complete = (max_stage == 0 or stage >= max_stage),
-        jobs_count = #jobs,
-        jobs = jobs,
-      }
+    for _, ws in ipairs(iter_all_shops()) do
+      if filter_bid == nil or tonumber(ws.id) == filter_bid then
+        local wtype = get_shop_type(ws)
+        local wname = wtype
+        pcall(function() wname = tostring(dfhack.buildings.getName(ws) or wtype) end)
+        local stage, max_stage = 0, 0
+        pcall(function() stage = ws:getBuildStage() end)
+        pcall(function() max_stage = ws:getMaxBuildStage() end)
+        local jobs = summarize_ws_jobs(ws)
+        out[#out + 1] = {
+          building_id = tonumber(ws.id),
+          name = wname,
+          workshop_type = wtype,
+          x = tonumber(ws.centerx),
+          y = tonumber(ws.centery),
+          elev = tonumber(ws.z) - M.GAME_Z_OFFSET,
+          complete = (max_stage == 0 or stage >= max_stage),
+          jobs_count = #jobs,
+          jobs = jobs,
+        }
+      end
     end
     table.sort(out, function(a, b) return a.building_id < b.building_id end)
     return out
@@ -2423,7 +2638,8 @@ function OPS.workshop_job(args)
   if action == "stock" then
     return { action = "stock", stock = collect_crafted_stock() }
   elseif action == "list" then
-    return { action = "list", workshops = list_workshops(), stock = collect_crafted_stock() }
+    local filter_bid = args and tonumber(args.building_id) or nil
+    return { action = "list", workshops = list_workshops(filter_bid), stock = collect_crafted_stock() }
   elseif action == "cancel" then
     local bid = args and tonumber(args.building_id) or nil
     local jid = args and tonumber(args.job_id) or nil
@@ -2432,17 +2648,18 @@ function OPS.workshop_job(args)
     end
     local cancelled = {}
     local target_ws = nil
-    for _, ws in ipairs(df.global.world.buildings.other.WORKSHOP_ANY) do
+    for _, ws in ipairs(iter_all_shops()) do
       if bid == nil or tonumber(ws.id) == bid then
         if bid ~= nil then target_ws = ws end
         for idx = #ws.jobs - 1, 0, -1 do
           local j = ws.jobs[idx]
           if jid == nil or tonumber(j.id) == jid then
+            local saved_id = tonumber(j.id)
             local desc = "?"
             pcall(function() desc = tostring(dfhack.job.getName(j) or "?") end)
             local ok_rm = pcall(function() dfhack.job.removeJob(j) end)
             if ok_rm then
-              cancelled[#cancelled + 1] = { job_id = tonumber(j.id), building_id = tonumber(ws.id), description = desc }
+              cancelled[#cancelled + 1] = { job_id = saved_id, building_id = tonumber(ws.id), description = desc }
             end
           end
         end
@@ -2507,11 +2724,39 @@ function OPS.workshop_job(args)
     brew_drink = { job_type = "CustomReaction", reaction_name = "BREW_DRINK_FROM_PLANT", allowed = { "Still" }, no_mat = true },
     meal = { job_type = "PrepareMeal", allowed = { "Kitchen" }, no_mat = true },
     prepare_meal = { job_type = "PrepareMeal", allowed = { "Kitchen" }, no_mat = true },
+    cloth = { job_type = "WeaveCloth", allowed = { "Loom" }, no_mat = true },
+    weave_cloth = { job_type = "WeaveCloth", allowed = { "Loom" }, no_mat = true },
+    thread = { job_type = "SpinThread", allowed = { "Loom" }, no_mat = true },
+    spin_thread = { job_type = "SpinThread", allowed = { "Loom" }, no_mat = true },
+    process_plants = { job_type = "ProcessPlants", allowed = { "Farmers" }, no_mat = true },
+    processplants = { job_type = "ProcessPlants", allowed = { "Farmers" }, no_mat = true },
+    charcoal = { job_type = "MakeCharcoal", allowed = { "WoodFurnace" }, default_mat = "wood" },
+    make_charcoal = { job_type = "MakeCharcoal", allowed = { "WoodFurnace" }, default_mat = "wood" },
+    weapon_rack = { job_type = "ConstructWeaponRack", allowed = { "Carpenters", "Masons" } },
+    weaponrack = { job_type = "ConstructWeaponRack", allowed = { "Carpenters", "Masons" } },
+    construct_weapon_rack = { job_type = "ConstructWeaponRack", allowed = { "Carpenters", "Masons" } },
+    armor_stand = { job_type = "ConstructArmorStand", allowed = { "Carpenters", "Masons" } },
+    armorstand = { job_type = "ConstructArmorStand", allowed = { "Carpenters", "Masons" } },
+    construct_armor_stand = { job_type = "ConstructArmorStand", allowed = { "Carpenters", "Masons" } },
+    splint = { job_type = "ConstructSplint", allowed = { "Carpenters" }, default_mat = "wood" },
+    construct_splint = { job_type = "ConstructSplint", allowed = { "Carpenters" }, default_mat = "wood" },
+    crutch = { job_type = "ConstructCrutch", allowed = { "Carpenters" }, default_mat = "wood" },
+    construct_crutch = { job_type = "ConstructCrutch", allowed = { "Carpenters" }, default_mat = "wood" },
+    bag = { job_type = "MakeBag", allowed = { "Clothiers", "Leatherworks" }, no_mat = true },
+    make_bag = { job_type = "MakeBag", allowed = { "Clothiers", "Leatherworks" }, no_mat = true },
+    rope = { job_type = "MakeChain", allowed = { "Clothiers" }, no_mat = true },
+    make_rope = { job_type = "MakeChain", allowed = { "Clothiers" }, no_mat = true },
+    training_weapon = { job_type = "MakeWeapon", weapon_training = true, allowed = { "Carpenters" }, default_mat = "wood" },
+    trainingweapon = { job_type = "MakeWeapon", weapon_training = true, allowed = { "Carpenters" }, default_mat = "wood" },
+    make_training_weapon = { job_type = "MakeWeapon", weapon_training = true, allowed = { "Carpenters" }, default_mat = "wood" },
   }
 
   local spec = TASKS[raw_task]
   if not spec then
-    error("unknown workshop task '" .. tostring(raw_task) .. "'")
+    local known_tasks = {}
+    for k, _ in pairs(TASKS) do known_tasks[#known_tasks + 1] = k end
+    table.sort(known_tasks)
+    error("unknown workshop task '" .. tostring(raw_task) .. "'; known tasks include: " .. table.concat(known_tasks, ", "))
   end
 
   local mat = args and args.material and tostring(args.material):lower() or spec.default_mat
@@ -2529,10 +2774,10 @@ function OPS.workshop_job(args)
   local target_ws = nil
   local target_wtype = nil
   if bid ~= nil then
-    for _, ws in ipairs(df.global.world.buildings.other.WORKSHOP_ANY) do
+    for _, ws in ipairs(iter_all_shops()) do
       if tonumber(ws.id) == bid then
         target_ws = ws
-        pcall(function() target_wtype = tostring(df.workshop_type[ws:getSubtype()] or ws:getSubtype()) end)
+        target_wtype = get_shop_type(ws)
         break
       end
     end
@@ -2549,9 +2794,8 @@ function OPS.workshop_job(args)
   else
     local prefer_wtype = (mat == "wood") and "Carpenters" or ((mat == "stone") and "Masons" or nil)
     for pass = 1, 2 do
-      for _, ws in ipairs(df.global.world.buildings.other.WORKSHOP_ANY) do
-        local wtype = ""
-        pcall(function() wtype = tostring(df.workshop_type[ws:getSubtype()] or ws:getSubtype()) end)
+      for _, ws in ipairs(iter_all_shops()) do
+        local wtype = get_shop_type(ws)
         local stage, max_stage = 0, 0
         pcall(function() stage = ws:getBuildStage() end)
         pcall(function() max_stage = ws:getMaxBuildStage() end)
@@ -2579,17 +2823,30 @@ function OPS.workshop_job(args)
   local tool_sub = nil
   if spec.tool_id then
     pcall(function()
-      for i, td in ipairs(df.global.world.raws.itemdefs.tools) do
-        if tostring(td.id) == spec.tool_id then tool_sub = i - 1; break end
-      end
-      if tool_sub == nil then
-        for i = 0, #df.global.world.raws.itemdefs.tools - 1 do
-          local td = df.global.world.raws.itemdefs.tools[i]
-          if tostring(td.id) == spec.tool_id then tool_sub = i; break end
-        end
+      for i = 0, #df.global.world.raws.itemdefs.tools - 1 do
+        local td = df.global.world.raws.itemdefs.tools[i]
+        if td and tostring(td.id) == spec.tool_id then tool_sub = i; break end
       end
     end)
     if tool_sub == nil then error("tool subtype not found for " .. tostring(spec.tool_id)) end
+  elseif spec.weapon_training then
+    pcall(function()
+      local prefs = { "ITEM_WEAPON_AXE_TRAINING", "ITEM_WEAPON_SWORD_SHORT_TRAINING", "ITEM_WEAPON_SPEAR_TRAINING" }
+      for _, pid in ipairs(prefs) do
+        for i = 0, #df.global.world.raws.itemdefs.weapons - 1 do
+          local wd = df.global.world.raws.itemdefs.weapons[i]
+          if wd and tostring(wd.id) == pid then tool_sub = i; break end
+        end
+        if tool_sub ~= nil then break end
+      end
+      if tool_sub == nil then
+        for i = 0, #df.global.world.raws.itemdefs.weapons - 1 do
+          local wd = df.global.world.raws.itemdefs.weapons[i]
+          if wd and tostring(wd.id):find("TRAINING", 1, true) then tool_sub = i; break end
+        end
+      end
+    end)
+    if tool_sub == nil then error("no training weapon subtype found in itemdefs.weapons") end
   end
 
   local queued = 0
@@ -2641,6 +2898,8 @@ function OPS.workshop_job(args)
     workshop_type = target_wtype,
     task = raw_task,
     job_type = spec.job_type,
+    tool_id = spec.tool_id,
+    item_subtype = tool_sub,
     material = mat,
     queued_count = queued,
     jobs_after = summarize_ws_jobs(target_ws),
