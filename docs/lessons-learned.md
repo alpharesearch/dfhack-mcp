@@ -117,6 +117,26 @@ Pause only when the crew is genuinely idle. Wounds heal with time, jobs need tim
 with time — with 7 wounded, 82 queued jobs and growing plots the right call was **unpaused**,
 re-running the game whenever it self-paused with work queued.
 
+## 16. A separator needs at least one unexcavated row — my "three rooms" were one room
+Player: *"to have a separator you need to keep at least one row of fog"*. My noble rooms at
+elev36 were laid back to back with **no rock between them**: Manager `59..61,109..111`,
+Bookkeeper `62..64,109..111`, Broker `65..67,109..111` — contiguous dug columns, so the three
+"rooms" plus their `y112` necks form **one connected space with three doors**, not three
+enclosed rooms. A door only separates what walls enclose.
+- Fix applied: `NO_DIG` on `x65-67,y109-112` (12 tiles → that block becomes the separator
+  wall) and the Broker's room re-sited to **`x69-71,109..111`** with a 1-tile neck at `70,112`.
+  Between Bookkeeper (`x62-64`) and Broker (`x69-71`) the rock stays unexcavated (`x65..68`) —
+  a real 4-column separator.
+- Honest residue: Manager `x59-61` and Bookkeeper `x62-64` are already contiguous, so those two
+  **share** one room; I do not claim them as separate enclosed rooms.
+- **Rule:** leave **≥1 unexcavated column/row between rooms** (fog is the material you are not
+  removing). Check it before designating, not after.
+- **Tool gap (#86):** nothing in my surface reports room enclosure. `create_zone` accepts a
+  room-typed zone anywhere dug (#85); `survey`/`look` never say "these two dug areas are
+  contiguous"; `place_building Door` answers only a bare refusal (#80/#82). Requested: an
+  enclosure/separation verdict per zone footprint (which sides are solid rock, separator
+  width, neck width, door count, contiguous neighbours), at `create_zone` time and as a pre-dig gate.
+
 ## 15. Automation to keep on (read back live, not assumed)
 `autofarm` (plump 30/50), `seedwatch` (5/30 on 5 crops), `ban-cooking seeds+brew` (12+20),
 `suspendmanager`, `buildingplan`, `prioritize`, `tailor`, `autonestbox`, `autoslab`,
