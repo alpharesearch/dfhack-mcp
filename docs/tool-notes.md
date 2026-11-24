@@ -278,6 +278,15 @@ All 56 endpoints below remain live on the FastAPI HTTP server for `df-observer`,
 - Measured 2026-11-24: MCP-surface caveat - every endpoint listed in §5 is HTTP-only, so "the
   capability exists" is not "the agent can call it": `get_building_def_list` closed gap #2 and the
   32-tool pruning re-opened it as #74 (#2, #74; main.py `exclude_operations`).
+- Measured 2026-11-24 (A/B on the same workshop, read over REST while the MCP session was dead):
+  the player's in-game job at the Carpenter is **`1462 "Make wooden wheelbarrow"`** (`job_type
+  MakeTool`), while `workshop_job(task="wheelbarrow", building_id=12)` queued **`1461 "Make wooden
+  minecart"`** (`job_type MakeTool`) in the same workshop. Same shop, same job type, opposite
+  item - so Dwarf Fortress has no wheelbarrow problem and the defect is purely what the tool
+  submits; this also proves the #71 mapping hypothesis unnecessary: the game path exists.
+  Note `workshop_job(action="list", building_id=12)` filters to one workshop (cheap read), and
+  `workshop_job stock` has no `TOOL` key, so wheelbarrow output cannot be counted by it (#59/#71
+  read-back request).
 - Measured 2026-11-24: `./start.sh` has **no `reload`** - its actions are `(default)`, `setup`, `fg`, `status`, `stop`, `restart` ("stop + start"), `logs`. `restart` (and any kill of `main.py`) **wipes the server-side streamable-HTTP sessions**, so after it the harness client keeps presenting an old `mcp-session-id` and every call 404s with "Session not found" (#94). The half `start.sh` does own is the DFHack/RPC side, and its header states it correctly: *"the server connects lazily... tool calls connect on demand and a game restart reconnects by itself"* - measured as `boundMethods` rising 0 → 5 with no in-game action.
 - Measured 2026-11-24: `./start.sh` writes `./dfhack-mcp.log`, which `./start.sh logs` follows. When the server is started as a harness background job (`python main.py` directly) that log file is not written, so the server's own request log is only visible through the job's output - one reason my first "no log file found" probe came up empty.
 - Measured 2026-11-24: a low `boundMethods` is warm-up, not a broken plugin - after a server restart it rose `0 -> 5` on its own within about two minutes, with no in-game action; telling the player to
