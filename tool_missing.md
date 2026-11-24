@@ -11,12 +11,10 @@ Measured session 2026-11-21, fort `start`, world *The Universes of Destiny*, DF 
 
 | # | Task I was blocked on | Tool that did not exist | What raw Lua cost me | Resolution |
 |---|---|---|---|---|
-| 1 | **Create an activity zone** (ladder rung #5, the wiki's meeting area; also pasture, dump, refuse zone) | `create_zone` - planned in `PLAN-TOOLS.md:104`, never built. `SETUP-LINUX.md:466` records why it mattered: the `zone` plugin "does not implement any commands", so zones were UI-only | 7 probes to find the shape: `buildings.other.ZONE` -> "not found"; `df.enums` -> nil; `df.activity_zone_type` -> nil; `t:base_type()` -> "attempt to call a nil value"; `buildings.building_defs` -> "not found"; `dfhack.buildings.getBuildingNames` -> nil. The mapping finally came from the game's own file `hack/scripts/internal/quickfort/zone.lua` (`type=df.civzone_type.MeetingHall`) | Built `/create-zone`, `/zones`, `/remove-zone`. Kind = `z.type`, set after `allocInstance -> setSize -> constructAbstract` |
 | 2 | **Discover buildable names** | `get_building_def_list` - the resolver's own rejection text told me to call it and **no such endpoint existed** ("no building definition named 'Meeting Area'; get one from get_building_def_list") | 4 wasted `place_building` calls (the resolver rejects cleanly, so no harm; the cost was the dead end) | Built `/building-def-list` (substring filter, returns name + building_type/subtype/custom) |
 | 5 | **Locate the install** (crash logs, quickfort sheets, the zone mapping) | no `/game-paths` tool: `get-status` gives the world signature, not the filesystem paths | `dfhack.getDFPath()` / `dfhack.getSavePath()` by hand -> `/mnt/DATA/SteamLibrary/steamapps/common/Dwarf Fortress` | **CLOSED (2026-11-22).** Built `GET /game-paths` backed by `deployables/scripts/dfhack_mcp.lua` (`OPS.game_paths`), returning `df_path`, `save_path`, `crashlogs_dir`, `blueprints_dir`, `scripts_dir`, and `script_deployed` |
 | 7 | **Read the zone flags struct** (`zone_settings.flags`) | - | `T_zone_settings.flags` -> "not found"; the struct is `whole{i1,i2}` raw bitfields + `gather/pen/pond/archery/tomb` sub-structs | Deliberately **not** written by hand. Bitfield guessing on a live fort is how the last crash happened; `create_zone` uses only the named enum (`df.civzone_type.<KIND>`) |
 
-| 8 | **Configure a pile's categories** (the wiki's general pile) | nothing returns a stockpile's **building id**: `building-at` answered null on the pile's own tile, `get-block-list` carries no buildings, `world-objects` prints name+dims only | 2 raw scans of `buildings.other.STOCKPILE` to find the field layout: `pairs(settings.flags)` THROWS on this build, container limits live on `sp.storage`, `building_flags` has **no `marked_for_removal`**, and Lua vector indexing is 0-based | Built `/stockpiles` (id + accepted categories + bins/barrels/wheelbarrows). Verified: 4 piles read back with the wiki's filters (id 1 general, 2 refuse/corpses outdoors, 3 stone + wheelbarrows 3, 4 wood) |
 
 
 
@@ -142,6 +140,9 @@ Measured session 2026-11-21, fort `start`, world *The Universes of Destiny*, DF 
 
 | 92 | **A box that read `dug 39` went to `dug 0` after my "safe" dig write - positive tile state destroyed** | Bedroom room `x64-72, y112-120@36`. Round 145: `DEFAULT_DIG(safe=true)` → `tiles 42, skipped non_rock 39`; round 150: more columns → `tiles 22, skipped non_rock 14`. Both writes reported skipping non-rock, i.e. the tool claimed it touched rock only. Then the observer fired **A89 `tile_state_lost`: "box x64-72 y112-120 elev36: dug 39 -> 0 (-39) - positive tile state was REMOVED"**, and the follow-up survey of the box shows the floors gone (my new write took `tiles: 81` - every tile in the box is rock again). 39 finished floor tiles, plus whatever the room's ramps/stairs were, are destroyed, and the room has to be re-dug from scratch. Nothing in the tool's write reply warned that designating a box whose neighbours are floor can remove existing floors; `safe=true` only filtered the tiles it designated, not the effect of the dig on the rest of the box. | `main.py`: (a) `send_dig_command` must refuse to designate a box containing `dug > 0` state and require an explicit override (the observer's rule "designate rock tiles only" should be enforced by the write, not printed as advice); (b) report `dug_before`/`dug_after` for the box on every dig write, so state loss is visible in the tool reply and not only in a later alert; (c) `survey` must name the tile state that a designation will destroy (floor/ramp/stair/building). | OPEN 2026-11-24. Play rule adopted: for a partially-dug box, designate per-tile from a fresh survey of rock only - never a whole box |
 
+| 82 | **Trade Depot refuses on proven dug floor, three times, with no cause - the wiki rung is undriveable blind** | The wiki's "Trade depot with 3-wide wagon access". Terrace `x58-62,y121-125@38` measured `dug 20 / to_dig 5`, corridor `x58-64,y115-118@38` measured `to_dig 0`, all floor with zones (walkable). Attempts: (1) 4×5 at `59,121` → `constructBuilding refused: cannot place at this position`; (2) 3×3 at `59,122` → same text; (3) earlier 5×5 at `66,119` → the site gate did state its reason (`{'open': 8}`), so the gate CAN explain refusals when it runs - the construct path cannot. Hypothesis tested and killed: boulders on the pad. `gather_and_items(action="dump", item_filter="boulder", box 59-62,121-125@38)` answered **`matched: 0`** - the survey's `item_tiles: 6` are not boulders, and I have no item census to see what they are (#59). Three rejected writes, zero readable requirements (wagon path? 3-wide access check? item clearance? depot's own placement rule?). | `main.py`/`luaops.py`: `place_building` must run its site gate on the FINAL footprint and report the same `measured` dict it prints for zones (rock/fog/open/water/item/building counts per tile class), plus for TradeDepot specifically a `wagon_path` verdict (3-wide walkable route to the map edge, which the ladder rung tests) - refusals must name the failing rule, not echo `constructBuilding`'s nil reason. | OPEN 2026-11-24. Trade rung (#13) stays open: I will not keep spending write attempts on guesses **Round 120 - the surface build did it all and the flag is still silent:**** I moved the depot to the surface exactly as the ladder demands - pad `x46-50,116-120@40` flattened (`to_dig 0, dug 25`), **Trade Depot 57 built** (`complete: true, build_stage 3/3`), and a **3-wide route fully dug** (`x40-45,116-118@40`: `to_dig 0, dug 18`). `trade_depot(building_id=57, action="status")` → **`accessible: false`**, `caravans_present: 0`, `marked_now_count: 0`, and **no reason of any kind**: not "no path to edge", not "path too narrow", not "not on the surface", not "blocked by X tiles at Y". Two depots, four digs, ~10 writes, and the one boolean that gates the rung stays opaque - this is the strongest case for the `wagon_path` verdict requested above. |
+| 83 | **Designations on one box are cancelled within a tick, three times running, and no read can tell me why** | Bookkeeper's room `x56-58, y109-112@36` (12 tiles, walls, right off the finished Manager's office at `59..61,109..111` and the tunnel at y113-115). Round 27: `send_dig_command` reported `tiles: 10` success; next survey `designated 0, dug 0, undesignated_diggable 12`. Round 28: re-designated `tiles: 12` success; next survey **`designated 0, dug 0, undesignated_diggable 12`** again. Three writes, three silent un-writes, zero diagnostics: `building_status` answers `recent_cancellations: []`, `survey` only says `designated 0`, and there is no designation read (#69) so the cancellation is invisible in every tool I have. Neighbouring boxes dig normally (`x59-61` office room cleared, terrace `dug 20`, adit legs `dug 14/17`), so this is specific to this footprint, not the crew. | `main.py`: (a) `GET /designations?box=` with per-tile designation enum and cancel flags (`dest`/`setup`/`flux_state`/damp/magma flags) — the read #69 requests; (b) `send_dig_command` must re-read the designations it just wrote (write-then-verify, the standing rule) and report `designated_after_write: N` with the tiles it measured as cancelled, so a "success: 12 tiles" that survives 0 tiles is self-reporting as a failure; (c) report the cancel reason when the game exposes it (damp/magma/unreachable). | OPEN 2026-11-24. Play rule adopted: a box that cancels twice is abandoned and logged, not re-designated forever. **Round 31 - second footprint, same result, and the reachability clue: `x52-54,y115-117@35` designated `tiles: 9` → next survey `designated 0, dug 0`; `look`'s region census for elev35 lists region B = 81 walkable tiles at `x59-80,y100-120`, i.e. the western pocket (x52-58) is NOT in any walkable region, so no miner can reach those faces. The most likely game rule is "unreachable designations are cancelled" - which makes my cancelled boxes *not* a bug in designation writing, but proof that my fort's elev35 west side is disconnected from the fort. Strongest form of the request: `send_dig_command` must report `designated_after_write` + name unreachable as a cancel reason, and `look`'s region list should be surfaced as a gate before designating, so I stop spending writes on pockets my dwarves cannot walk to.** **Round 119 - third symptom points at DAMP, not order:**** the 3-wide wagon corridor `x51-57, y119-121@38` written as five 1-wide spine boxes starting on a tile that touches dug floor (`55,119` next to floor `56,119`) → next survey **`designated 0, dug 6 (the older opening), undesignated_diggable 15`**. Reachability is satisfied here. The tool's own alert text supplies the likelier rule: *"1030 water tiles in this band - leave one wall tile between a dig and water; **damp tiles auto-cancel designations**"* - and elev38 x51-55 sits in that aquifer band. So the underground depot's west wagon corridor is not diggable where I want it, and every read I have (survey, building_status) reports it as a bare `designated 0`. |
+
 ## Standing rule from these entries
 
 - A ladder rung that no typed tool can satisfy is a **tool bug**, not a play problem: log it here,
@@ -174,55 +175,70 @@ Measured session 2026-11-21, fort `start`, world *The Universes of Destiny*, DF 
 
 ## Pruned as obsolete (2026-11-24)
 
-Removed 27 rows whose gap no longer exists - each was CLOSED by a shipped, verified tool path that
-is present in today's code (endpoint in `main.py`/`luaops.py`, helper in `dfhack_mcp.lua`, plugin
-accept kind, or a pinned test), plus one duplicate. Ids are **not** renumbered; the holes are kept
-so old citations still resolve. The `## Standing rule` section above intentionally still cites
-entries 35 and 36 (the rules survive; only the closed records were pruned).
+Rows are deleted only when BOTH proofs hold: the row's status column is CLOSED/FIXED/RESOLVED (not
+OPEN, not PARTIAL, not OPEN+ANSWERED), **and** the replacement capability is reachable through the
+MCP tool surface, i.e. its endpoint is NOT in `main.py`'s `exclude_operations` list (the 56-id MCP
+pruning at the end of `main.py`). Anything closed by an HTTP-only endpoint stays: for an
+MCP-connected agent that gap is still live. Ids are **not** renumbered; holes are kept so old
+citations resolve. The `## Standing rule` section above intentionally still cites entries 35 and 36
+(the rules survive; only closed records were pruned).
 
-| id | why removed |
+### Removed (22 rows)
+
+| id | proof: status = CLOSED-equivalent, replacement reachable over MCP |
 |---|---|
-| 3 | zone verification exists: `list_zones` walks `ANY_ZONE` and matches footprint + id (live on the MCP surface) |
-| 4 | orphan disposal exists: every create path `pcall(deconstruct(inst))`, pinned by `test_a_failed_build_must_not_leave_an_orphan_building` |
-| 6 | crop setting exists: `configure_farmplot` writes `plant_id[0..3]` with full seasonal read-back |
-| 9 | duplicate of #13 - it says `/cut-trees` is "STILL MISSING" while #13 records it built; `POST /cut-trees` + `/find-trees` exist and are on the MCP surface |
-| 10 | multi-tile workshop route proven working (plan route; e.g. Still 11, Mechanic's 49, Mason/Craftsdwarf plans) |
-| 13 | `/find-trees` + `/cut-trees` shipped and verified live (wood 3 -> 10 from designated felling) |
-| 15 | `building_status` exists and reports `build_stage`/`suspended`/missing materials + crew diagnostics |
-| 16 | create-path write verification exists: `_verify_footprint_ground` + `already_exists` idempotency gate |
-| 17 | `remove-zone` defect removed (no-arg `notifyCivzoneModified` deleted) + `acknowledge_risk` gate and read-back verdict |
-| 18 | first #18 (RPC reply cross-talk) closed: per-call `ContextVar` capture in `dfhack_remote._invoke`, no settle sleep. The second #18 (trade screen, OPEN) is kept |
-| 19 | hauling works end-to-end via `trade_depot(action=mark_goods)` - verified by depot stock counts, not replies |
-| 21 | pause answer shape fixed: reply carries `requested` + a note naming the UI that holds the pause |
-| 22 | stockpile config defect fixed: refuses a body that says nothing (`known_keys`) and answers with a read-back `accepts` |
-| 23 | chunk builder joins with real newlines (`chr(10)`), pinned by a test that no literal `\n` survives |
-| 24 | crash root cause fixed and `pile_arrays` check/fix tool exists |
-| 25 | closed as a gate: `allow_crash_categories` refusal is implemented in `configure_stockpile`/`create_stockpile` |
-| 26 | array sizes measured (1327/113) and the class verified by the player's click on a tool-made corpses+refuse pile |
-| 34 | reach band scoring fixed (civilian dwarves, view-focus weight) and an empty graph is labelled NO DATA |
-| 35 | `find-soil` reports `potential_soil_tiles`/`potential_soil_clusters` (soil-covered rock) - shipped in `main.py` |
-| 36 | work-detail menu is driven by `work_details` (list/assign/set-labor) with `assigned_after` read-back |
-| 38 | closed by removal: `/set-unit-labors` is deleted from `main.py` (the player's call) and the docs/tests were re-pinned |
-| 39 | observer chat-spawn leak plugged: stable `filterSessionId` + `filter_max_spawns` enforced before `create` |
-| 48 | manage-nobles nil-helper crash gone (helper defined in branch scope); appointment verified from `ent.positions.assignments` |
-| 49 | apostrophe defect fixed: the Lua chunk prints a fixed token, the name is supplied by python (no string spliced into Lua) |
-| 53 | create-zone replies now carry the zone id (`building_id`) plus the footprint idempotency gate |
-| 56 | accept kind shipped and proven live (`water_supply` in `plugin/df-observer/model.js`); the weakness of that kind is logged as OPEN #67 |
-| 58 | answered, not missing: the furniture census path was found (`buildings.other.CHAIR/BED/TABLE/...`; furniture are buildings on DF 50). The tool gap stays logged in #59 |
+| 1 | Built `/create-zone` + `/zones` + `/remove-zone`; `create_zone`/`list_zones`/`remove_zone` all on the MCP surface |
+| 3 | zone verification: `list_zones` walks `buildings.other.ANY_ZONE` by footprint + id - `list_zones` on MCP |
+| 4 | orphan disposal: every create path `pcall(deconstruct(inst))` (6 sites in `luaops.py`) + `test_a_failed_build_must_not_leave_an_orphan_building`; `create_zone`/`create_stockpile` on MCP |
+| 6 | crop setting: `configure_farmplot` writes `plant_id[0..3]` with seasonal read-back - on MCP |
+| 8 | stockpile id + categories: `list_stockpiles`/`configure_stockpile` verified on 4 piles - on MCP |
+| 10 | multi-tile workshop plan route proven (`place_building`); #68/#70 show it carrying 3x3/3x4 plans live |
+| 13 | `/find-trees` + `/cut-trees` shipped, verified live (wood 3 -> 10) - both on MCP |
+| 15 | `building_status` reports build_stage/suspended/missing materials/crew diagnostics - on MCP |
+| 16 | create-path write verification: `_verify_footprint_ground` + `already_exists` gate in `main.py` - on MCP |
+| 17 | `remove_zone` crash call deleted + `acknowledge_risk` gate + read-back verdict - on MCP |
+| 18 | first #18 only (RPC reply cross-talk): per-call `ContextVar` capture in `dfhack_remote._invoke`. Transport fix, no endpoint to exclude. The second #18 (trade screen, OPEN) is kept |
+| 19 | hauling proven by counts via `trade_depot(mark_goods)` - `trade_depot` on MCP |
+| 21 | pause reply carries `requested` + mechanism note - `set_pause_state`/`get_pause_state` on MCP |
+| 22 | empty-body refusal (`known_keys`) + read-back `accepts` - `configure_stockpile` on MCP |
+| 25 | CLOSED as a gate: `allow_crash_categories` implemented in `configure_stockpile`/`create_stockpile` - on MCP |
+| 26 | array sizes measured 1327/113, userdata accepted, player click verified; write path `configure_stockpile` - on MCP |
+| 36 | work-detail menu driven by `work_details` (list/assign/set-labor, `assigned_after`) - on MCP |
+| 39 | observer chat-spawn leak plugged: stable `filterSessionId` + `filter_max_spawns` in `plugin/df-observer/index.js` (14 refs) |
+| 48 | manage-nobles nil-helper crash gone; appointment read back from `ent.positions.assignments` - `manage_nobles` on MCP |
+| 49 | apostrophe defect fixed: chunk prints a fixed token, python supplies the name - `place_building` on MCP |
+| 56 | CLOSED by the shipped accept kind: `water_supply` present in `plugin/df-observer/model.js`; its weakness is logged as OPEN #67 (kept) |
+| 58 | CLOSED by a proven read path: furniture census via `buildings.other.CHAIR/BED/TABLE/...`. The tool gap stays logged as OPEN #59 (kept) |
 
-Narrative-only edit (row kept): in **#83** the superseded designation-order story was deleted from the
-Round 119 block ("so my round-114 'order is load-bearing' story is incomplete"); the surviving
-conclusion in that block is the damp/auto-cancel measurement, and Round 31's unreachable-region
-finding is kept. No row was deleted for this.
+### Restored in this pass (deleted in 06cb8a4, failed the strict rule - now back in the table)
 
-Deliberately kept although they look prunable: **2, 5, 29, 31, 40, 41** (CLOSED by endpoints that are
-HTTP-only today - `building-def-list`, `game-paths`, `unit-labors`, `unit-professions`,
-`list-buildings`, `buildings-live` - so an MCP-connected agent still cannot use them; #74 records
-exactly this loss for #2); **11, 12** (#10's closure is newer proof; multi-tile plot/resize are
-still refused by measurement); **27, 43, 55** (PARTIAL/OPEN reachability semantics); **44, 46, 47, 52,
-53-adjacent disciplines** (closed by measurement/discipline, with OPEN requests still unshipped);
-**61, 63-92** and all other OPEN rows (reads, wagon_path, designation read, damp flags,
-barter_confirm, prioritize-by-reaction, military tools, item census, durability re-read, room
-enclosure/ramp exposure, container-only stockpile update, wheelbarrow task mapping).
+| id | why it stays |
+|---|---|
+| 9 | status column says **STILL MISSING** (not CLOSED). It is a duplicate of #13 in substance, so its removal was justified - kept to respect the rule, and the duplication is recorded here |
+| 23 | CLOSED, but the fix lives in `repair_stockpile_settings`, which IS in `exclude_operations` (HTTP-only) |
+| 24 | CLOSED, but the named tool `pile_arrays` IS in `exclude_operations` (HTTP-only) |
+| 34 | CLOSED, but the fixed tools `dig_reachable`/`reach_map` ARE in `exclude_operations`; OPEN #43/#55 report the same family |
+| 35 | CLOSED, but `find_soil` IS in `exclude_operations`; the soil rule also stays in the Standing-rule section |
+| 38 | CLOSED by removal, but the replacement read `unit_labors` IS in `exclude_operations` - an MCP agent cannot read the census |
+| 53 | CLOSED by verification discipline (a rule, not a shipped endpoint); `create_zone`'s footprint gate is the partial mitigation - ambiguous, kept |
+| 56, 58 | removed above; listed here only to note their OPEN companions #67/#59 remain live |
 
-Rows 84 -> 64; file 200 lines / 117,581 bytes -> 173 lines / 89,776 bytes (`wc -lc tool_missing.md`).
+Narrative-only edit (rows kept): the superseded designation-order story - "so my round-114
+'order is load-bearing' story is incomplete" - is deleted from the **#83** Round 119 block. The
+surviving conclusions in that block are the damp/auto-cancel measurement and Round 31's
+unreachable-region finding. **#82** and **#83** are now present as canonical `\| 82 \|` /
+`\| 83 \|` rows with their base text verbatim (recovered from `7dde6a1`) and their Round 120 /
+Round 119 blocks carried inside the status column; the two narrative rows that led with the Round
+blocks are kept as they were.
+
+Deliberately kept, looking prunable: **2, 5, 29, 31, 40, 41, 44, 46, 47, 52** (CLOSED by HTTP-only
+endpoints - `building-def-list`, `game-paths`, `unit_labors`, `unit_professions`, `list_buildings`,
+`buildings_live` - or by measurement/player-side action with unshipped requests; #74 records exactly
+this loss for #2); **11, 12** (multi-tile plot and resize are still refused by measurement);
+**27, 43, 55** (PARTIAL/OPEN reachability semantics); all OPEN rows - reads, `wagon_path`,
+designation read, damp flags, `barter_confirm`, prioritize-by-reaction, military tools, item census,
+furniture durability re-read, room enclosure/ramp exposure, container-only stockpile update,
+wheelbarrow task mapping.
+
+
+Rows 89 -> 62 (net; 22 obsolete rows removed, #82/#83 restored as canonical rows, 7 rows restored from the 06cb8a4 pass). File now 242 lines / 99449 bytes (`wc -lc tool_missing.md`).
