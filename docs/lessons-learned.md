@@ -209,6 +209,23 @@ behind an unbroken wall. Fix this round: `DEFAULT_DIG` on `x58-59, y119-120@38` 
 - For trade specifically: `accessible: false` + `marked_now_count: 0` was my honest state, and
   I will treat the rung as decoration until `accessible: true` and a caravan is present.
 
+## 21. A depot underground can never be reached by a wagon — mine is, so the rung is meaningless
+`trade_depot status` round 85: **`complete: true, build_stage: 3/3`** — the depot is genuinely
+built — and **`accessible: false`**, with `caravans_present: 0`, `goods_at_depot_count: 0`.
+I connected it properly (connector `58-59,119-120@38` now `dug 4, to_dig 0`), which fixed
+*dwarf* reachability, and it changed nothing: the pad is at **elev 38, two levels under the
+surface**, and a caravan wagon comes along the **map surface** - it does not go down my stairs
+or through my tunnel. So the rung "Trade depot with 3-wide wagon access" being `[x]` is
+decoration: my depot cannot host a caravan where it stands.
+- **Rule:** the trade depot belongs **on the surface layer**, on flat ground, with a
+  **3-wide clear route on the surface to the map edge**. Digging a pretty terrace under a hill
+  satisfies every footprint check I have and the one check that matters not at all.
+- `accessible` is the only honest signal here, and it is a boolean with no explanation - the
+  tool never says *why* (no path? not on the surface? width?), which is what #82's
+  `wagon_path` verdict asks for.
+- Next move: re-site the depot to a surface pad (surface here is elev 40 - the pen/grazing
+  level; the plot at 41 and forest at 43 above it), keeping 3-wide surface clearance.
+
 ## 15. Automation to keep on (read back live, not assumed)
 `autofarm` (plump 30/50), `seedwatch` (5/30 on 5 crops), `ban-cooking seeds+brew` (12+20),
 `suspendmanager`, `buildingplan`, `prioritize`, `tailor`, `autonestbox`, `autoslab`,
