@@ -61,13 +61,14 @@ position`** — a door needs solid walls on two opposite sides.
 349 floors + 72 stairs transition-verified. A face reading `designated N, dug 0` across many
 reads is almost always (1) unreachable, (2) no able miner, (3) deprioritized — check in order.
 - **Rule:** build the stairs before boxing the rooms, and treat a face stuck at `designated N,
-  dug 0` as a connectivity → crew → priority question, tested in that order, not as a dead write.
+  dug 0` as a connectivity → crew → priority question, tested in that order, not as a dead write
+  (the unreachable case is the game cancelling the designation - #83).
 
 ## 5. A later DEFAULT_DIG box silently flattens stair designations
 My 7×7 farm box (`x60-66,y114-120@35`) covered the 4 tiles just designated
 `UP_DOWN_STAIR_DIG`, turning a shaft bottom into a plain dig → `dig_stalled` A12 (#69).
-- **Rule:** designate stairs first, then box the room **around** them. No designation-type read
-  exists to catch this (requested).
+- **Rule:** the hazard is the overwrite - a later box `DEFAULT_DIG` silently flattens the stair
+  designations it covers. No designation-type read exists to catch this (requested, #69).
 
 ## 6. Mining priority: the job type is `Dig`, not `Mine`
 Five rounds of frozen faces. `prioritize status` showed hauling/brewing/meals prioritized and
@@ -182,7 +183,7 @@ with no solid wall flanks, which is precisely what `place_building Door` refuses
 - Bookkeeper office: neck `63,112`, rock flanks `62,112`/`64,112` → **Door 43 ✓**.
 - Broker office: Chair 50 + Table 51 + zone 52 (owner Aban) ✓, **no door** — the neck is a ramp.
 - **Rule:** plan the neck on a row where the tile below is **at the same level** (no drop), so
-  it stays flat floor with rock on both sides. A neck facing down-slope becomes an opening you
+  it stays flat floor (rock flanks: §2). A neck facing down-slope becomes an opening you
   can never close, and dug ramps cannot be undone.
 - Tool side: `survey` reports the ramp count (`ramp: 2`) — reading the neck row *before*
   digging the room is the check; the tools still never say "this footprint opens via a ramp"
