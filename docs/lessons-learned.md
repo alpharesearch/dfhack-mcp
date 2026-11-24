@@ -137,6 +137,27 @@ enclosed rooms. A door only separates what walls enclose.
   enclosure/separation verdict per zone footprint (which sides are solid rock, separator
   width, neck width, door count, contiguous neighbours), at `create_zone` time and as a pre-dig gate.
 
+## 17. Keep buildings off the outer wall — ramps there are openings
+Player: *"building too close to the outside wall may have ramp openings"*. Confirmed on this
+fort: at elev36 the cavern side (`x73+`) is full of `^` ramp-top / `/` ramp tiles, and `look`
+reports `open 445` on elev36 with `open 149` at elev37 over that band — so a footprint near the
+edge sits on slopes that **open to the outside/cavern**, exactly where my 19 crundles live.
+Evidence from this round: `place_building Mechanic` at `x70-72,109-111@36` → site gate
+`{'rock': 3}` (it straddled the new Broker room's undug wall); moving it to `77,113` (right by
+the cavern opening) → `constructBuilding refused: cannot place at this position` (#82's
+reasonless refusal); the clean, interior site `74,125` built fine —
+**Mechanic's Workshop 49, `74..76,125..127@36`**.
+- **Rule:** place shops/piles/rooms **inward** — check the footprint for ramp/ramp-top tiles
+  and for open space above (outdoors), and prefer sites with solid rock on the outside side.
+- **Tool gap:** the site gate reports `rock/hidden/open/water` and refuses ramps for zones,
+  but nothing reports "this footprint opens to the cavern/outside via ramps", and the construct
+  path refuses without reason (#82/#80). Requested: a ramp-opening / exposure verdict per
+  footprint (ramp counts, which side opens, distance to open space), same place as the
+  enclosure check in #86.
+- Note: `Mechanic` is an accepted def name, so the Mechanic's shop is buildable — which is the
+  prerequisite for mechanisms → floodgates/pumps, the real answer to the water breach (A51,
+  `water_tiles 1088 -> 1130`). Interim dam: **Door 48 at `80,110@35`** in the 1-wide adit.
+
 ## 15. Automation to keep on (read back live, not assumed)
 `autofarm` (plump 30/50), `seedwatch` (5/30 on 5 crops), `ban-cooking seeds+brew` (12+20),
 `suspendmanager`, `buildingplan`, `prioritize`, `tailor`, `autonestbox`, `autoslab`,
