@@ -174,6 +174,26 @@ with no solid wall flanks, which is precisely what `place_building Door` refuses
   digging the room is the check; the tools still never say "this footprint opens via a ramp"
   (#86), and the door refusals stay reasonless (#80/#82).
 
+## 19. The Bookkeeper is what makes stock numbers mean anything
+Player: *"with a bookkeeper your stock numbers should be more accurate"*. True in the rules and
+visible in my own reads: every stock line I have is labelled **"ON WATCHED PILES, not the
+game's fort-wide Food/Drink bars"** — e.g. `food 17, drink 0, wood 63, stone 68` from
+`fort_progress`, and the same numbers disagree with `workshop_job stock`, which reported
+`FOOD: 0` in the same period. Both are true because they measure different scopes: pile
+contents vs an item-type scan.
+- What the Bookkeeper changes: the game keeps **stockpile records** (the `UpdateStockpileRecords`
+  job), and a Bookkeeper with a satisfied office + maximum precision makes those records
+  current. `bookkeeper_settings: 4` is already set; Minkot has office zone 44 (Chair 41 +
+  Table 42 + Door 43), so the seat is staffed with the right aptitude (`RECORD_KEEPING 5`).
+- Action taken: `prioritize UpdateStockpileRecords` → "Prioritized 0 jobs" (no record job
+  pending right now; the prioritization is registered for when they appear).
+- **Tool gap (#88):** no tool reads the game's *own* fort-wide stock statistics, nor reports
+  whether the bookkeeper is satisfied and at what precision, so my "stock" numbers stay
+  pile-scoped and mutually contradictory. Requested: `GET /fort-stock` returning the game's
+  food/alcohol/wood/stone/metal counts with the source named (fort bar vs pile census vs item
+  scan), plus `bookkeeper: {unit, satisfied, precision}` so I stop quoting numbers whose scope
+  I have to explain in prose.
+
 ## 15. Automation to keep on (read back live, not assumed)
 `autofarm` (plump 30/50), `seedwatch` (5/30 on 5 crops), `ban-cooking seeds+brew` (12+20),
 `suspendmanager`, `buildingplan`, `prioritize`, `tailor`, `autonestbox`, `autoslab`,
