@@ -263,3 +263,33 @@ segments that DID dig are the ones on the open surface line: pad `x46-50,116-120
   a designation that reads `designated 0` on the next poll can stick and be dug later, so
   cancellations are partly **timing**, and the honest rule is *re-read the box after a few
   rounds before declaring a write dead* - and never conclude a mechanism from one poll.
+
+## 23. Trade acceptance is decided by two numbers my tools do not expose: profit band and carry weight
+
+**Rule:** a trade goes through only when the merchant's **profit band** is acceptable and the goods
+fit its **carry weight** - offer value alone is not enough, and `barter_confirm`'s `confirmed: true`
+does not distinguish acceptance from refusal.
+
+The player's rules, colour-coded on their screen: **orange = loss ("this normally never works"),
+yellow = marginal, green = profit**; second gate: *"traders can not take too many heavy items"*.
+
+Measured 2026-11-24 on one screen, two attempts:
+- **Refused:** merchant side fully marked (`Mark all`, Value 800) against fortress Value 72,
+  `Trader Loss: 8`, `Allowed Weight: 24` -> the merchant said **"I must make a profit. There is
+  simply not enough value here."** My tool reported `confirmed: true, accepted_confirm_dialog: true`
+  and nothing changed (selections intact, `DRINK: 0`). (#96)
+- **Accepted:** re-read the screen first - fortress `selected_value: 124` (4 carnelians + tigereyes
+  + a 76 minecart) vs merchant `20` (sheep's milk + dwarven ale) - confirmed, and the deltas prove
+  the exchange: **`DRINK: 0 -> 25`**, **`BARREL: 15 -> 17`**, my carnelians `1184/1164/1188/1192`
+  now listed on the merchant side (`total_items: 140 -> 143`), both sides cleared to 0.
+- What my surface carries: `trade_screen_open, have_talker, fortress_side{items, selected_value,
+  shown_items, total_items}, merchant_side{...}, toggled, still_unloading`; per item
+  `contained, description, index, item_id, selected, type, value`. **No profit/loss, no band, no
+  `Allowed Weight`, no per-item weight** - the screen showed `Trader Profit: 68` and
+  `Allowed Weight: 3R` while my staged minecart is `35R` (#97).
+
+Play rules adopted: (1) **re-read `barter_status` immediately before `barter_confirm`** - a
+`Mark all` between my staging and the click silently changes the offer; (2) treat light, high-value
+goods (gems, cloth, plates) as trade currency and keep heavy tools out of small trades; (3) verify a
+trade by **item deltas** (`DRINK`, `BARREL`, the item appearing on the other side), never by the
+confirm flag.
