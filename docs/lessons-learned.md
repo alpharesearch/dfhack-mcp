@@ -285,8 +285,14 @@ Measured 2026-11-24 on one screen, two attempts:
 - What my surface carries: `trade_screen_open, have_talker, fortress_side{items, selected_value,
   shown_items, total_items}, merchant_side{...}, toggled, still_unloading`; per item
   `contained, description, index, item_id, selected, type, value`. **No profit/loss, no band, no
-  `Allowed Weight`, no per-item weight** - the screen showed `Trader Profit: 68` and
-  `Allowed Weight: 3R` while my staged minecart is `35R` (#97).
+  `Allowed Weight`, no per-item weight** (#97). The merchant closed with **"Ah, wonderful. Thank you
+  for your business."** - matching my item deltas, so the trade is genuinely verified from my side too.
+
+**Correction (player, 2026-11-24):** I first read `Allowed Weight: 3R` as a cap the 35R cart broke -
+that is wrong. **`Allowed Weight` is a countdown of the merchant's remaining carry allowance, and
+each marked item spends its own weight (35R for a minecart, 6R per rough gem)**, so the number on
+screen is the *residue after* the current selection, not a per-item threshold to compare against.
+The accepted trade proves it: the cart + 4 gems fit inside the allowance that displayed `3R`.
 
 Play rules adopted: (1) **re-read `barter_status` immediately before `barter_confirm`** - a
 `Mark all` between my staging and the click silently changes the offer; (2) treat light, high-value
