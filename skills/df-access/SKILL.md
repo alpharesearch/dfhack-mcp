@@ -4,7 +4,7 @@ description: The access-first build order - staircase, connection tunnel, then r
 whenToUse: Use when a designated room or tunnel makes no progress (dug stays 0), when a fort has no dug floors yet, when staffing "miners/hunters/brewers" has to change, or when a stall alert claims a face is idle. Generic: applies to any embark, any elevation, any world.
 metadata:
   source: demonstrated live by the player on DF 53.17-r1 and measured from the game's own reads (see dfhack-mcp tool_missing.md #19-#48)
-  tools: send_dig_command, survey, work_details, create_stockpile, configure_stockpile, place_building, fort_progress, fort_strata, fort_plan, building_status, workshop_job, manage_nobles, create_zone, assign_zone_owner, dfhack_automation
+  tools: send_dig_command, survey, work_details, create_stockpile, configure_stockpile, place_building, fort_progress, fort_strata, fort_plan, building_status, workshop_job, manage_nobles, create_zone, assign_zone_owner, unit_profile, trade_depot, dfhack_automation
 ---
 
 # Access first: staircase, connection, room

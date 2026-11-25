@@ -4,7 +4,7 @@
 --@ module = true
 
 local M = {}
-M.VERSION = "2026.11.24-v3"
+M.VERSION = "2026.11.24-v4"
 M.GAME_Z_OFFSET = 129
 
 local ok_json, df_json = pcall(require, "json")
@@ -3147,6 +3147,234 @@ function OPS.workshop_job(args)
     queued_count = queued,
     jobs_after = summarize_ws_jobs(target_ws),
     stock = collect_crafted_stock(),
+  }
+end
+
+-- 18. unit_profile: full per-dwarf profile & all-citizen skill census (#64, #65, #66)
+function OPS.unit_profile(args)
+  local action = (args and args.action and tostring(args.action):lower()) or "skills"
+  local want_uid = args and tonumber(args.unit_id) or nil
+  local skill_filter = args and args.skill and tostring(args.skill):lower() or nil
+  if skill_filter == "" then skill_filter = nil end
+  local labor_filter = args and args.labor and tostring(args.labor):upper() or nil
+  if labor_filter == "" then labor_filter = nil end
+  local min_rating = (args and args.min_rating and tonumber(args.min_rating)) or 0
+  local limit = math.max(1, math.min(100, (args and args.limit and tonumber(args.limit)) or 25))
+
+  local want_profile = (want_uid ~= nil) or (action == "profile")
+  local with_skills = want_profile or (action == "skills") or (args and args.with_skills == true)
+  if args and args.with_skills == false and not want_profile then with_skills = false end
+  local with_labors = want_profile or (args and args.with_labors == true)
+  local with_inventory = want_profile or (args and args.with_inventory == true)
+  local with_health = want_profile or (args and args.with_health == true)
+  if args and args.with_health == false and not want_profile then with_health = false end
+
+  if labor_filter ~= nil then
+    local valid_labor = false
+    pcall(function() valid_labor = (df.unit_labor[labor_filter] ~= nil) end)
+    if not valid_labor then
+      error("unknown labor '" .. tostring(labor_filter) .. "' (not in df.unit_labor)")
+    end
+  end
+
+  local field_paths = {
+    "df.global.world.units.active",
+    "dfhack.units.getProfessionName",
+    "u.job.current_job",
+  }
+  if with_skills then field_paths[#field_paths + 1] = "u.status.current_soul.skills" end
+  if with_labors then field_paths[#field_paths + 1] = "u.status.labors" end
+  if with_inventory then field_paths[#field_paths + 1] = "u.inventory" end
+  if with_health then field_paths[#field_paths + 1] = "u.body.wounds,u.counters2,u.mood" end
+
+  local citizens_scanned = 0
+  local rows = {}
+  for _, u in ipairs(df.global.world.units.active) do
+    local alive, cit = false, false
+    pcall(function() alive = dfhack.units.isAlive(u) end)
+    pcall(function() cit = dfhack.units.isCitizen(u) end)
+    if alive and cit then
+      citizens_scanned = citizens_scanned + 1
+      local uid = tonumber(u.id)
+      if want_uid == nil or uid == want_uid then
+        local has_labor = true
+        if labor_filter ~= nil then
+          has_labor = false
+          pcall(function() has_labor = (u.status.labors[labor_filter] == true) end)
+        end
+        if has_labor then
+          local skills_list = {}
+          local best_rating = -1
+          local best_xp = -1
+          local skill_matched = (skill_filter == nil)
+          pcall(function()
+            if u.status and u.status.current_soul and u.status.current_soul.skills then
+              for _, s in ipairs(u.status.current_soul.skills) do
+                local sname = tostring(df.job_skill[s.id] or s.id)
+                local rating = tonumber(s.rating) or 0
+                local rname = tostring(df.skill_rating[rating] or rating)
+                local xp = tonumber(s.experience) or 0
+                if skill_filter == nil or sname:lower():find(skill_filter, 1, true) then
+                  if rating >= min_rating then
+                    skill_matched = true
+                    if rating > best_rating or (rating == best_rating and xp > best_xp) then
+                      best_rating = rating
+                      best_xp = xp
+                    end
+                    skills_list[#skills_list + 1] = {
+                      skill = sname,
+                      rating = rating,
+                      rating_name = rname,
+                      experience = xp,
+                    }
+                  end
+                end
+              end
+            end
+          end)
+          table.sort(skills_list, function(a, b)
+            if a.rating ~= b.rating then return a.rating > b.rating end
+            if a.experience ~= b.experience then return a.experience > b.experience end
+            return a.skill < b.skill
+          end)
+
+          if skill_matched or (skill_filter ~= nil and #skills_list > 0) then
+            local prof_name = "?"
+            pcall(function() prof_name = tostring(dfhack.units.getProfessionName(u) or "?") end)
+            local age = nil
+            pcall(function() age = math.floor(tonumber(dfhack.units.getAge(u)) or 0) end)
+            local cur_job = nil
+            pcall(function()
+              if u.job and u.job.current_job then
+                local j = u.job.current_job
+                cur_job = {
+                  job_type = tostring(df.job_type[j.job_type] or j.job_type),
+                  description = tostring(dfhack.job.getName(j) or "?"),
+                }
+              end
+            end)
+            local entry = {
+              unit_id = uid,
+              name = unit_readable_name(u),
+              profession = prof_name,
+              profession_id = tonumber(u.profession),
+              age = age,
+              pos = {
+                x = tonumber(u.pos.x),
+                y = tonumber(u.pos.y),
+                elev = tonumber(u.pos.z) - M.GAME_Z_OFFSET,
+              },
+              current_job = cur_job,
+              _sort_rating = best_rating,
+              _sort_xp = best_xp,
+            }
+            if with_skills then
+              entry.skills = skills_list
+            end
+            if with_labors then
+              local labs = {}
+              pcall(function()
+                for k, v in pairs(u.status.labors) do
+                  if v == true then labs[#labs + 1] = tostring(k) end
+                end
+              end)
+              table.sort(labs)
+              entry.labors = labs
+            end
+            if with_inventory then
+              local inv = {}
+              pcall(function()
+                for _, iv in ipairs(u.inventory) do
+                  local desc = ""
+                  pcall(function() desc = tostring(dfhack.items.getDescription(iv.item, 0) or "") end)
+                  local itype = "?"
+                  pcall(function() itype = tostring(df.item_type[iv.item:getType()] or iv.item:getType()) end)
+                  local mode = tostring(df.inv_item_role_type[iv.mode] or iv.mode)
+                  inv[#inv + 1] = {
+                    mode = mode,
+                    item_id = tonumber(iv.item.id),
+                    type = itype,
+                    description = desc,
+                  }
+                end
+              end)
+              entry.inventory = inv
+            end
+            if with_health then
+              local w_count = 0
+              local wounds_summary = {}
+              pcall(function()
+                w_count = #u.body.wounds
+                for wi = 0, math.min(4, w_count - 1) do
+                  local w = u.body.wounds[wi]
+                  local parts = {}
+                  pcall(function()
+                    for _, wp in ipairs(w.parts) do
+                      parts[#parts + 1] = tostring(wp.body_part_id)
+                    end
+                  end)
+                  wounds_summary[#wounds_summary + 1] = {
+                    id = tonumber(w.id),
+                    parts_count = #parts,
+                  }
+                end
+              end)
+              local stress, blood = 0, 0
+              local th, hu, sl = 0, 0, 0
+              local mname = "None"
+              pcall(function() stress = tonumber(u.status.current_soul.personality.stress) or 0 end)
+              pcall(function() blood = tonumber(u.body.blood_count) or 0 end)
+              pcall(function() th = tonumber(u.counters2.thirst_timer) or 0 end)
+              pcall(function() hu = tonumber(u.counters2.hunger_timer) or 0 end)
+              pcall(function() sl = tonumber(u.counters2.sleepiness_timer) or 0 end)
+              pcall(function()
+                local md = tonumber(u.mood) or -1
+                mname = (md == -1) and "None" or tostring(df.mood_type[md] or md)
+              end)
+              entry.health = {
+                wounds_count = w_count,
+                wounds = wounds_summary,
+                stress = stress,
+                mood = mname,
+                thirst_timer = th,
+                hunger_timer = hu,
+                sleepiness_timer = sl,
+                blood_count = blood,
+              }
+            end
+            rows[#rows + 1] = entry
+          end
+        end
+      end
+    end
+  end
+
+  if skill_filter ~= nil then
+    table.sort(rows, function(a, b)
+      if a._sort_rating ~= b._sort_rating then return a._sort_rating > b._sort_rating end
+      if a._sort_xp ~= b._sort_xp then return a._sort_xp > b._sort_xp end
+      return a.unit_id < b.unit_id
+    end)
+  else
+    table.sort(rows, function(a, b) return a.unit_id < b.unit_id end)
+  end
+
+  local out_rows = {}
+  for i = 1, math.min(#rows, limit) do
+    local r = rows[i]
+    r._sort_rating = nil
+    r._sort_xp = nil
+    out_rows[#out_rows + 1] = r
+  end
+
+  return {
+    action = action,
+    citizens_scanned = citizens_scanned,
+    count = #out_rows,
+    total_matching = #rows,
+    no_data = (citizens_scanned == 0),
+    field_paths_read = field_paths,
+    units = out_rows,
   }
 end
 

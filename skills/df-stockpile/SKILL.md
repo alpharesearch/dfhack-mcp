@@ -63,7 +63,9 @@ Limits live in `b.storage.max_barrels / max_bins / max_wheelbarrows` - not on th
 building. Rules: **stone piles want wheelbarrows** (stones are heavy; minimise the hand-haul
 distance and keep the pile close to the mason/smelter); wood, refuse and corpse piles take
 no bins/barrels. Note the wiki's trap: entering the custom settings UI resets the
-wheelbarrow count to 1 - set it after the filters.
+wheelbarrow count to 1 - set it after the filters. `configure_stockpile` also supports
+container-only updates (`max_bins`, `max_barrels`, `max_wheelbarrows`) without re-declaring
+category flags.
 
 ## 5. Feeder piles and links (the supply chain)
 `b.links.give_to_pile / take_from_pile / give_to_workshop / take_from_workshop`.

@@ -4,24 +4,21 @@ description: The Dwarf Fortress Quickstart Dependency Graph & Execution Playbook
 whenToUse: When starting a new fortress, deciding what to dig/build/queue next in the Quickstart sequence, diagnosing why a downstream workshop or noble is blocked by a missing upstream input, or progressing from embark to farming, brewing, furniture, offices, healthcare, trading, metalworking, and fortress defense.
 metadata:
   source: https://dwarffortresswiki.org/images/e/e6/FlowchartDF.png and https://dwarffortresswiki.org/index.php/Quickstart_guide
-  tools: look, fort_progress, alerts_and_wellbeing, set_pause_state, world_map, survey, fort_strata, fort_plan, send_dig_command, find_trees, cut_trees, find_water, gather_and_items, place_building, remove_building, building_status, configure_farmplot, workshop_job, create_stockpile, configure_stockpile, list_stockpiles, create_zone, list_zones, assign_zone_owner, assign_pasture, work_details, manage_nobles, work_order, trade_depot, dfhack_automation
+  tools: look, fort_progress, alerts_and_wellbeing, set_pause_state, world_map, survey, fort_strata, fort_plan, send_dig_command, find_trees, cut_trees, find_water, gather_and_items, place_building, remove_building, building_status, configure_farmplot, workshop_job, create_stockpile, configure_stockpile, list_stockpiles, create_zone, list_zones, assign_zone_owner, assign_pasture, work_details, manage_nobles, work_order, trade_depot, unit_profile, dfhack_automation
 ---
 
 # Dwarf Fortress Quickstart Dependency Graph & Execution Playbook
 
 Source flowchart: <https://dwarffortresswiki.org/images/e/e6/FlowchartDF.png> (companion to <https://dwarffortresswiki.org/index.php/Quickstart_guide>).
 
-You are controlling a live Dwarf Fortress fortress via `dfhack-mcp` (32 MCP tools). **Never build or queue a downstream node before its upstream prerequisites in this dependency graph exist.** Before acting, run `look`, `fort_progress`, and `alerts_and_wellbeing`; after acting, verify completion with `survey` (for digging), `building_status(only_incomplete=True)` (for construction—ignores completed zones/stockpiles), `work_order(action="list")` (for production), or `trade_depot(action="status")` (for trade). (`transitions`, `hazards`, `depth_profile`, `unit_labors` are HTTP-only diagnostics; see `docs/tool-notes.md`.)
+You are controlling a live Dwarf Fortress fortress via `dfhack-mcp` (33 MCP tools). **Never build or queue a downstream node before its upstream prerequisites in this dependency graph exist.** Before acting, run `look`, `fort_progress`, and `alerts_and_wellbeing`; after acting, verify completion with `survey` (for digging), `building_status(only_incomplete=True)` (for construction—ignores completed zones/stockpiles), `work_order(action="list")` (for production), or `trade_depot(action="status")` (for trade). (`transitions`, `hazards`, `depth_profile`, `unit_labors` are HTTP-only diagnostics; see `docs/tool-notes.md`.)
 
 ---
 
 ## 0. Global Embark Setup (`Start` & Grey System Nodes)
 
 1. **Pause & Survey**: Call `set_pause_state(paused=True)`, then `look`, `fort_progress`, and `alerts_and_wellbeing`.
-2. **Staff the work details (`(y) Labor menu`, the green tick marks)**: Call `list_units` for the
-   unit ids, then `GET /work-details action=assign detail=Miners unit_id=<id> mode=add` for each
-   dwarf who should mine. `GET /work-details action=list` shows every detail with the unit ids it
-   contains, and `GET /unit-labors?labor=MINE` is the read-back of the effective flags.
+2. **Staff the work details (`(y) Labor menu`, the green tick marks)**: Call `unit_profile(action="skills")` (or `action="list", with_labors=True`) for unit ids and skills, then `work_details(action="assign", detail="Miners", unit_id=<id>, mode="add")` for each dwarf who should mine. `work_details(action="list")` shows every detail with its `assigned_units`, and `unit_profile(with_labors=True)` reads back effective labors.
    > `set_unit_labors` is **removed** (the player's decision, 2026-11-22): it wrote
    > `unit.status.labors`, a layer the game **recomputes from the work details** - measured, a census
    > of 5 `MINE` holders fell to the 2 ticked dwarves the moment a tick was added, and the tool's
@@ -145,7 +142,8 @@ Every production chain in the flowchart stems from two initial designations:
 - **Execute**:
   - Haul trade goods to the depot: `trade_depot(action="mark_goods", min_value=15, max_items=25)`.
   - When `alerts_and_wellbeing` reports `caravan_present`, summon the Broker: `trade_depot(action="request_broker", trader_requested=True)`.
-  - When the barter screen opens: `trade_depot(action="barter_status" | "barter_select")`.
+  - Once `have_talker` is ready, run the full barter flow via `trade_depot`: `action="open_trade"` → `action="barter_status"` (with optional `item_filter` and `max_items=200`) → `action="barter_select"` → `action="barter_confirm"` → `action="close_trade"`.
+  - Direct workshop production without a Manager also supports `wheelbarrow`, `cloth`, `thread`, `charcoal`, `process_plants`, `weapon_rack`, `armor_stand`, `training_weapon`, `splint`, `crutch`, `bag`, and `rope` via `workshop_job(action="queue")`.
 - **Outcome**: `Trade` builds **`Wealth`** → attracts **`Migrants`** → enables **`Specialized workforce`** and **`Squad`**.
 
 ### B. Metal Industry (`Smelter` + `Forge` → `Make metal weapons/armour`)

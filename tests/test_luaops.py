@@ -258,10 +258,10 @@ def test_pruned_mcp_surface_and_run_command_allowlist():
                "probe_plan", "tunnel_sites", "find_soil", "apply_blueprint",
                "pass_keyboard_event", "buildings_live", "list_buildings",
                "work_order_link", "pile_arrays", "tile_legend", "labor_list",
-               "get_building_def_list"):
+               "get_building_def_list", "unit_skills"):
         assert f'"{op}"' in excluded, f"{op} should be excluded from the MCP tool surface"
 
-    # Verify exposed MCP tool count (<= 32) and concise docstrings (< 9,500 chars)
+    # Verify exposed MCP tool count (<= 33) and concise docstrings (< 9,500 chars)
     import main as M
     excl_set = set(re.findall(r'"([^"]+)"', excluded))
     exposed_ops = {}
@@ -270,9 +270,9 @@ def test_pruned_mcp_surface_and_run_command_allowlist():
         if not op or op in excl_set or op == "mcp_http":
             continue
         exposed_ops[op] = (r.endpoint.__doc__ or "").strip()
-    assert len(exposed_ops) <= 32, f"expected <= 32 exposed MCP tools, got {len(exposed_ops)}: {sorted(exposed_ops)}"
+    assert len(exposed_ops) <= 33, f"expected <= 33 exposed MCP tools, got {len(exposed_ops)}: {sorted(exposed_ops)}"
     for core_op in ("fort_strata", "fort_plan", "trade_depot", "workshop_job",
-                    "dfhack_automation", "look", "send_dig_command", "place_building"):
+                    "dfhack_automation", "look", "send_dig_command", "place_building", "unit_profile"):
         assert core_op in exposed_ops, f"core tool {core_op} must remain exposed on MCP"
     total_doc_chars = sum(len(d) for d in exposed_ops.values())
     assert total_doc_chars < 9500, f"exposed docstring bloat too high: {total_doc_chars} chars"
@@ -588,7 +588,49 @@ def test_wave3_stateless_mcp_http_survives_stale_session_id():
         )
         assert r_stale.status_code == 200, f"stale session failed: {r_stale.status_code} {r_stale.text}"
         body = r_stale.json()
-        assert "result" in body and len(body["result"].get("tools", [])) <= 32
+        assert "result" in body and len(body["result"].get("tools", [])) <= 33
+
+
+def test_unit_profile_and_mcp_boolean_coercion():
+    from fastapi.testclient import TestClient
+    import main as M
+
+    lua_src = pathlib.Path("deployables/scripts/dfhack_mcp.lua").read_text()
+    for token in ("function OPS.unit_profile", "u.status.current_soul.skills", "u.inventory", "u.body.wounds", "u.status.labors", "field_paths_read"):
+        assert token in lua_src, f"dfhack_mcp.lua missing {token}"
+
+    seen_calls = []
+
+    async def fake_unit_profile(**kwargs):
+        seen_calls.append(kwargs)
+        return {"action": kwargs["action"], "citizens_scanned": 1, "count": 1, "no_data": False, "units": [{"unit_id": 6488, "labors": ["MINE"]}]}
+
+    real = LO.unit_profile
+    LO.unit_profile = fake_unit_profile
+    try:
+        # Pydantic request model coerces string booleans ("true" -> True)
+        req_str = M.UnitProfileRequest(action="list", limit=8, with_labors="true")
+        assert req_str.with_labors is True
+        with TestClient(M.app) as client:
+            r = client.post(
+                "/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 10,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "unit_profile",
+                        "arguments": {"action": "list", "limit": 8, "with_labors": True},
+                    },
+                },
+                headers={"Accept": "application/json, text/event-stream"},
+            )
+            assert r.status_code == 200, f"unit_profile with_labors=True failed: {r.text}"
+            res = r.json()["result"]
+            assert res.get("isError") is False, f"MCP tool error: {res}"
+    finally:
+        LO.unit_profile = real
+    assert len(seen_calls) == 1 and seen_calls[0]["with_labors"] is True
 
 
 if __name__ == "__main__":

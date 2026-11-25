@@ -2004,4 +2004,33 @@ async def workshop_job(action: str = "list",
     return await call_module("workshop_job", payload)
 
 
+async def unit_profile(action: str = "skills",
+                       unit_id: int | None = None,
+                       skill: str | None = None,
+                       labor: str | None = None,
+                       min_rating: int = 0,
+                       with_labors: bool = False,
+                       with_skills: bool = True,
+                       with_inventory: bool = False,
+                       with_health: bool = True,
+                       limit: int = 25) -> dict:
+    """Read per-dwarf skills, labors, inventory, and health/wounds via `dfhack_mcp.lua`."""
+    payload: dict = {
+        "action": str(action),
+        "min_rating": int(min_rating),
+        "with_labors": bool(with_labors),
+        "with_skills": bool(with_skills),
+        "with_inventory": bool(with_inventory),
+        "with_health": bool(with_health),
+        "limit": int(limit),
+    }
+    if unit_id is not None:
+        payload["unit_id"] = int(unit_id)
+    if skill is not None:
+        payload["skill"] = str(skill)
+    if labor is not None:
+        payload["labor"] = str(labor)
+    return await call_module("unit_profile", payload)
+
+
 

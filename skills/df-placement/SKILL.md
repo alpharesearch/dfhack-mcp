@@ -234,15 +234,14 @@ came out of it, in order of preference:
 
 * `manage_nobles(action='auto_assign')` appointed **MANAGER / BOOKKEEPER / BROKER** in one call
   (fresh embark: all vacant; read-back: all `vacant: false`). Trading needs the BROKER.
-* `trade-depot` actions measured: `status` (goods/queue/caravan state), `mark_goods`
+* `trade_depot` actions measured: `status` (goods/queue/caravan state + `wagon_access_check` when `accessible: false`), `mark_goods`
   (**hauling works**: marked 25 -> depot stock 227 -> 252, haul queue drained),
-  `unmark_goods`, `request_broker` (read-back `trader_requested: true`), `barter_status`.
+  `unmark_goods`, `request_broker` (read-back `trader_requested: true`), `open_trade` (opens the TradeDepot sheet and clicks `Trade` safely via UI input), `barter_status` (supports `item_filter`, up to 200 items), `barter_select`, `barter_confirm`, `close_trade`.
 * A depot the dwarves cannot walk to is a depot that cannot trade: the tool reports
   **`accessible: false`**, and that is why the barter lists stay empty (`have_talker: false`).
   Build the 3-wide wagon passage BEFORE any trade plan, and treat `accessible` as the gate.
-* The Trade **screen** is UI state: `main_interface.trade.open` is a boolean, not a function.
-  Feeding `tr.bld` + `open = true` opens it, but the good lists only fill once a fort trader
-  and a merchant are actually talking - so "open the screen" is not a route to barter.
+* **Never write `main_interface.trade.open = true` directly from Lua** (measured crash on populated trade state); always use `trade_depot(action="open_trade")`, which drives DF's UI click path once a fort trader and merchant are talking.
+* Write-time site gates: `place_building("Farm Plot")` requires soil or muddy floor (refuses bare stone), and `create_zone` for room zones (`office`, `bedroom`, `dining`, `tomb`, `meeting`) rejects overlapping owned rooms and outdoor footprints unless explicitly overridden.
 
 ## A broker in the menu is not a broker to the depot
 

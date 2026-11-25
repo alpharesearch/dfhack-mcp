@@ -159,7 +159,7 @@ from fastapi.responses import JSONResponse
 from fastapi_mcp import FastApiMCP
 from fastapi_mcp.transport.http import FastApiHttpSessionManager
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from dfhack_client_python.dfhack_remote import (connect, close, ensure_connection, drop_connection,
                                                 connection_state, DFHackError, DFHackTransportError,
                                                 drain_replies)
@@ -216,9 +216,46 @@ async def _as_dict(payload: Any) -> dict:
     return dict(payload)
 
 
+def _coerce_bool(v: Any) -> Any:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("true", "1", "yes", "on"):
+            return True
+        if s in ("false", "0", "no", "off", ""):
+            return False
+    return v
+
+
 class ListUnitsRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
     unit_ids: list[int] = Field(..., description="Unit IDs to fetch details for (from look or get_unit_list)")
+    with_labors: bool | str = Field(False, description="Optional flag accepted from callers; use unit_profile(with_labors=True) for full labor lists")
+
+    @field_validator("with_labors", mode="before")
+    @classmethod
+    def _v_bool(cls, v: Any) -> Any:
+        return _coerce_bool(v)
+
+
+class UnitProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    action: str = Field("skills", description="'skills' (all-citizen skill census), 'profile' (full per-dwarf skills/health/inventory/labors), or 'list' (compact roster)")
+    unit_id: int | None = Field(None, description="Specific citizen unit ID for full profile")
+    skill: str | None = Field(None, description="Filter/rank citizens by skill substring (e.g. 'MINING', 'FARM', 'BREW', 'APPRAIS')")
+    labor: str | None = Field(None, description="Filter citizens by validated DF labor name (e.g. 'MINE', 'CARPENTER')")
+    min_rating: int = Field(0, ge=0, description="Minimum skill rating to include")
+    with_labors: bool | str = Field(False, description="Include enabled labors per dwarf")
+    with_skills: bool | str = Field(True, description="Include skills and ratings per dwarf")
+    with_inventory: bool | str = Field(False, description="Include worn/carried equipment per dwarf")
+    with_health: bool | str = Field(True, description="Include wounds, stress, mood, and sustenance timers")
+    limit: int = Field(25, ge=1, le=100, description="Max citizens to return")
+
+    @field_validator("with_labors", "with_skills", "with_inventory", "with_health", mode="before")
+    @classmethod
+    def _v_bools(cls, v: Any) -> Any:
+        return _coerce_bool(v)
 
 
 class RunCommandRequest(BaseModel):
@@ -3700,6 +3737,38 @@ async def manage_nobles(request: ManageNoblesRequest):
         return {"success": False, "error": str(e)}
 
 
+@app.post("/unit-profile", operation_id="unit_profile")
+async def unit_profile(request: UnitProfileRequest):
+    """Read per-dwarf skills, labors, equipment, and wounds/health across citizens (`action='skills'|'profile'|'list'`, optional `unit_id`, `skill`, `labor`, `with_labors`)."""
+    body = await _as_dict(request)
+    try:
+        res = await LO.unit_profile(
+            action=str(body.get("action", "skills")),
+            unit_id=body.get("unit_id"),
+            skill=body.get("skill"),
+            labor=body.get("labor"),
+            min_rating=int(body.get("min_rating", 0)),
+            with_labors=bool(body.get("with_labors", False)),
+            with_skills=bool(body.get("with_skills", True)),
+            with_inventory=bool(body.get("with_inventory", False)),
+            with_health=bool(body.get("with_health", True)),
+            limit=int(body.get("limit", 25)),
+        )
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/unit-skills", operation_id="unit_skills")
+async def unit_skills(skill: str | None = Query(None), limit: int = Query(25, ge=1, le=100)):
+    """HTTP alias for `unit_profile(action='skills')`."""
+    try:
+        res = await LO.unit_profile(action="skills", skill=skill, limit=limit)
+        return {"success": True, **res}
+    except (LO.LuaOpError, DFHackError, DFHackTransportError) as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/workshop-job", operation_id="workshop_job")
 async def workshop_job(request: WorkshopJobRequest):
     """Manage direct workshop jobs and crafted stock (`list`, `stock`, `queue`, `cancel`). `queue` works before a Manager or Office exists (e.g. first Chair and Barrels)."""
@@ -4325,10 +4394,10 @@ class StatelessFastApiHttpSessionManager(FastApiHttpSessionManager):
     """StreamableHTTP session manager with stateless=True so server restarts do not invalidate client mcp-session-id headers."""
 
     async def _ensure_session_manager_started(self) -> None:
-        if self._manager_started:
+        if self._manager_started and self._manager_task and not self._manager_task.done():
             return
         async with self._startup_lock:
-            if self._manager_started:
+            if self._manager_started and self._manager_task and not self._manager_task.done():
                 return
             self._session_manager = StreamableHTTPSessionManager(
                 app=self.mcp_server,
@@ -4401,7 +4470,7 @@ mcp = ResilientFastApiMCP(
         "get_status", "get_pause_state", "get_reports", "tile_at", "tile_legend",
         "list_buildings", "buildings_live", "get_building_def_list", "labor_list",
         "unit_counts", "list_units", "unit_labors", "unit_professions",
-        "unit_activity", "job_queue", "work_order_link",
+        "unit_activity", "unit_skills", "job_queue", "work_order_link",
     ]
 )
 # Streamable HTTP (POST/GET /mcp) - the transport dsh-mcp-client speaks.
