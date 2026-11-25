@@ -299,3 +299,24 @@ Play rules adopted: (1) **re-read `barter_status` immediately before `barter_con
 goods (gems, cloth, plates) as trade currency and keep heavy tools out of small trades; (3) verify a
 trade by **item deltas** (`DRINK`, `BARREL`, the item appearing on the other side), never by the
 confirm flag.
+
+## 24. Rung -> help pointer map (the fields gap #98 asks to make automatic)
+
+**Rule:** act from the skill for *how*, from this map for *which tool call has been proven*, and from
+the observer for *whether it worked*. The map is deliberately tool+evidence only - section anchors are
+not invented here, they live in the skills named.
+
+| Quickstart rung | Skill to load | Tool call measured working in this run | Acceptance I measured |
+|---|---|---|---|
+| Dig shaft + stairs | `df-dig` | `send_dig_command(stair_shaft)` then per-box `DEFAULT_DIG` (spine-first) | `survey` `to_dig: 0, dug > 0` on the box |
+| Tunnel / access | `df-dig` | per-box `survey` before designating, `look` for walk regions | box `dug` rising over >=2 polls (never 1 poll, §22) |
+| Stockpiles | `df-stockpile` | `create_stockpile` + `configure_stockpile(all_categories=true, deny=[...], max_bins/barrels/wheelbarrows)` | `list_stockpiles` shows `categories_measured: true` + the limits |
+| Workshop placement | `df-placement` | `place_building` with the plan route (`nominal=false`, explicit `w/h`); def names `Mechanic`, `Trade Depot`, `Farmer's Workshop`, `Wood Furnace`, `Metalsmith's Forge` | `build_stage: 3` + `workshop_job(action="list", building_id=N)` |
+| Production (beds, bins, buckets, crafts, brew) | `df-quickstart` | `workshop_job(action="queue", task=..., repeat_job=true)`; real tools via `work_order(job="MakeTool", item_subtype="ITEM_TOOL_WHEELBARROW")` | `workshop_job stock` item keys + `jobs_after` descriptions |
+| Nobles' rooms (Manager/Bookkeeper/Broker) | `df-placement` | `create_zone(kind=office/bedroom, owner_unit_id=...)` in an enclosed rock room with a flat 1-wide neck + `place_building` Chair/Table/Door | `manage_nobles` seat satisfied; separator column left unexcavated (§16, §18) |
+| Trade depot + caravan | `df-access` | `trade_depot(open_trade -> barter_select -> barter_confirm)`; `wagon_access_check` in `status` | item deltas: `DRINK 0 -> 25`, `BARREL 15 -> 17`, sold items re-listed on the merchant side (§23) |
+| Meeting / dorm / beds | `df-placement` | `create_zone(meeting)`; `place_building` beds/chests from crafted items | `list_zones` presence + furniture census (`CHAIR: 2`, `BED: 6`) |
+| Water / well | `df-dig` | `find_water` + `place_building(Well)` on a dug, walkable floor | `fort_progress` rung flips with a named source, not on aquifer tiles alone |
+
+Read this map as *proven paths*, not as doctrine: the acceptance column is what makes it a rule -
+every row's evidence came from a live box/list/stock read, never from the write's `success` flag.
