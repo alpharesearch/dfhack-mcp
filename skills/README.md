@@ -12,12 +12,13 @@ into one harness install.
 | [`df-dig`](df-dig/SKILL.md) | tunnels, rooms, stair shafts (`box`, `boxes`, `middle_first`, `stair_shaft`), `fort_strata` + `fort_plan`: depth/overburden, damp & hot hazards, designating into fog, labour, band ordering, proving the dig |
 | [`df-placement`](df-placement/SKILL.md) | workshops, crafted furniture (`workshop_job`), trade depots (`trade_depot`), farm plots (`configure_farmplot`), zones (`create_zone`, `assign_zone_owner`), `fort_plan(action="find_site")`, `building_status`, and `dfhack_automation` |
 | [`df-stockpile`](df-stockpile/SKILL.md) | general, wood, and refuse stockpiles (`create_stockpile`, `configure_stockpile`, `list_stockpiles`), container/wheelbarrow limits, and `workshop_job(action="stock")` |
+| [`df-trade`](df-trade/SKILL.md) | Trade Depot 3-wide wagon access, Broker appointment/summoning, marking & hauling trade goods, and autonomous barter (`open_trade`, `barter_status`, `barter_select`, `barter_confirm`, `close_trade`) |
+| [`df-industry`](df-industry/SKILL.md) | `workshop_job` vs Manager `work_order`, fuel/metal and cloth/hospital chains, skill-based staffing (`unit_profile`), Bookkeeper stock scope, enclosed noble rooms, and `prioritize` |
+| [`df-crisis`](df-crisis/SKILL.md) | emergency triage (`alerts_and_wellbeing`, `building_status`, `unit_profile`), cavern/wildlife seals, wounded miners & hospital setup, drink/seed recovery, aquifer cancellations, and strange moods |
+| [`df-farm`](df-farm/SKILL.md) | soil & dig-to-soil planning (`fort_strata`, `fort_plan`), 3x3 `Farm Plot` setup, `autofarm`/`seedwatch`/`ban-cooking`, Still + barrels brewing, Kitchen meals, and surface grass pastures |
 
-Planned (the ladder in play order, one skill per discipline):
-`df-build` (stockpiles, zones, furniture, material-attached construction, depot + wagon path),
-`df-farm` (soil rooms, plump helmets, irrigation), `df-industry` (worksites, molten, shafts),
-`df-military` (squad, rooms, drafting), `df-alerts` (caravan/wave/miasma/stress reading),
-`df-plan` (survey -> probe -> designate -> watch -> re-survey loop, fallbacks, fog discipline).
+Planned:
+`df-military` (squads, drafting, patrols — once the squad/draft MCP tool `#73` is built).
 
 ## Format (DSH filesystem provider contract)
 - A skill is `skills/<name>/SKILL.md` (directory bundle) or flat `<name>.md`.
@@ -58,4 +59,4 @@ place for play knowledge, and the MCP server stays the instrument panel.
 
 `df-access` - the access-first build order (staircase, connection tunnel, room), work-detail staffing, and the reads that prove a dig is real. Generic: no coordinates, any map.
 
-See [`docs/tool-notes.md`](../docs/tool-notes.md) for historical playtest findings, DF 53.17-r1 crash postmortems, and the HTTP-only diagnostic/operator endpoint reference (the MCP surface is pruned to 32 gameplay tools including `fort_strata`, `fort_plan`, `workshop_job`, `dfhack_automation`, and `trade_depot`).
+See [`docs/tool-notes.md`](../docs/tool-notes.md) for historical playtest findings, DF 53.17-r1 crash postmortems, and the HTTP-only diagnostic/operator endpoint reference (the MCP surface is pruned to 33 gameplay tools including `fort_strata`, `fort_plan`, `workshop_job`, `dfhack_automation`, `trade_depot`, and `unit_profile`).

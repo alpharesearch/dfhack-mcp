@@ -231,7 +231,7 @@ def _coerce_bool(v: Any) -> Any:
 class ListUnitsRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
     unit_ids: list[int] = Field(..., description="Unit IDs to fetch details for (from look or get_unit_list)")
-    with_labors: bool | str = Field(False, description="Optional flag accepted from callers; use unit_profile(with_labors=True) for full labor lists")
+    with_labors: bool = Field(False, description="Optional flag accepted from callers; use unit_profile(with_labors=True) for full labor lists")
 
     @field_validator("with_labors", mode="before")
     @classmethod
@@ -246,10 +246,10 @@ class UnitProfileRequest(BaseModel):
     skill: str | None = Field(None, description="Filter/rank citizens by skill substring (e.g. 'MINING', 'FARM', 'BREW', 'APPRAIS')")
     labor: str | None = Field(None, description="Filter citizens by validated DF labor name (e.g. 'MINE', 'CARPENTER')")
     min_rating: int = Field(0, ge=0, description="Minimum skill rating to include")
-    with_labors: bool | str = Field(False, description="Include enabled labors per dwarf")
-    with_skills: bool | str = Field(True, description="Include skills and ratings per dwarf")
-    with_inventory: bool | str = Field(False, description="Include worn/carried equipment per dwarf")
-    with_health: bool | str = Field(True, description="Include wounds, stress, mood, and sustenance timers")
+    with_labors: bool = Field(False, description="Include enabled labors per dwarf")
+    with_skills: bool = Field(True, description="Include skills and ratings per dwarf")
+    with_inventory: bool = Field(False, description="Include worn/carried equipment per dwarf")
+    with_health: bool = Field(True, description="Include wounds, stress, mood, and sustenance timers")
     limit: int = Field(25, ge=1, le=100, description="Max citizens to return")
 
     @field_validator("with_labors", "with_skills", "with_inventory", "with_health", mode="before")
