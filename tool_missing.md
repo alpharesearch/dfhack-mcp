@@ -266,3 +266,14 @@ wheelbarrow task mapping.
 
 
 Rows 89 -> 71 (net; 22 obsolete rows removed, #82/#83 restored as canonical rows, 7 rows restored from the 06cb8a4 pass, #86/#88 added as canonical rows). File now 262 lines / 111879 bytes (`wc -lc tool_missing.md`).
+
+## Verified fixed by the new development (measured 2026-11-24, MCP surface)
+
+| id | Status | Evidence from this session's test |
+|---|---|---|
+| **#71** | **FIXED** | `workshop_job(task="wheelbarrow", building_id=12)` → **job 1327 "Make wooden wheelbarrow"**, reply echoes `tool_id: "ITEM_TOOL_WHEELBARROW"` + `item_subtype: 17` (was "Make wooden minecart" four times, commits `ce54a87`/`2064973`). Requested read-back implemented. Commit `37f2c79`. |
+| **#59 / #88 (partly)** | **IMPROVED** | `workshop_job stock` now lists `WHEELBARROW`, `WEAPONRACK`, `ARMORSTAND`, `CLOTH`, `CRUTCH`, `SPLINT`, `CHARCOAL` and carries `scope: "in_play_item_scan (free items; DRINK/FOOD/SEEDS include contained stack sizes)"` - the named-scope request, and the missing item keys I asked for. |
+| **#64 / #65 / #66** | **FIXED** | New `unit_profile` tool: `action="skills"` over 10 citizens returns real per-dwarf skills with rating names, wounds, stress, sustenance timers, position, and `field_paths_read` + `no_data: false` labels (e.g. Aban 6488: MINING Talented 6 @690 exp, APPRAISAL Skilled, SPEAKING Competent, BREWING Adequate). Commit `dee0386`. Client tool-list refresh needed to call it as a tool; verified over HTTP. |
+| **#94** | **FIXED (server side)** | Stateless Streamable HTTP: `tools/list` answers with **no `Mcp-Session-Id` header** and my tool calls work - the "Session not found" failure mode is gone at the server. Surface is 33 tools. Commit `37f2c79`. |
+| **#91** | **SHIPPED, untested live** | `open_trade`, `barter_confirm`, `close_trade` added to `trade_depot` (commit `ebb396d`). Needs a caravan at the depot to verify by behaviour - not done in this test. |
+| **farm siting** | **SHIPPED** | `fort_plan(action="find_site", site_kind="farm")` returns `require_soil` (false by default), 8 sites with distances, `save_key` echo (commit `f60c9c4`). |
